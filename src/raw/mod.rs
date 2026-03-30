@@ -14,45 +14,26 @@ use hash::mix_hash;
 const MAX_LOAD_FACTOR_NUM: usize = 7;
 const MAX_LOAD_FACTOR_DEN: usize = 8;
 
-/// Compute max load for a given capacity.
-#[inline]
+#[inline(always)]
 fn max_load_for_capacity(capacity: usize) -> usize {
     capacity * MAX_LOAD_FACTOR_NUM / MAX_LOAD_FACTOR_DEN
 }
 
 /// The core hash table engine.
-///
-/// Stores key-value pairs in a flat bucket array with a companion metadata
-/// array organized in groups of 15, using SIMD for fast matching.
 pub struct RawTable<K, V> {
-    /// Number of groups (always a power of 2, minimum 1 when allocated).
     pub(crate) num_groups: usize,
-
-    /// Pointer to metadata array: `num_groups + 1` groups
-    /// (extra sentinel group at the end for iteration).
     pub(crate) metadata: *mut u8,
-
-    /// Pointer to bucket array: `num_groups * GROUP_SIZE` slots.
-    /// Each slot is `MaybeUninit<(K, V)>`.
     pub(crate) buckets: *mut u8,
-
-    /// Number of occupied slots.
     pub(crate) len: usize,
-
-    /// Maximum number of elements before rehash.
-    /// Starts at max_load_for_capacity(num_groups * GROUP_SIZE) and
-    /// decreases on overflow-bit erasures (anti-drift).
     pub(crate) max_load: usize,
-
-    /// Shift amount for mapping hash → group index.
-    /// group_index = hash >> shift, where shift = 64 - log2(num_groups).
+    /// group_index = hash >> shift. For num_groups=1, shift=64 but we mask.
     pub(crate) shift: u32,
-
+    /// Precomputed num_groups - 1 for masking.
+    group_mask: usize,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> RawTable<K, V> {
-    /// Create a new empty table with no allocation.
     pub fn new() -> Self {
         RawTable {
             num_groups: 0,
@@ -61,11 +42,11 @@ impl<K, V> RawTable<K, V> {
             len: 0,
             max_load: 0,
             shift: 64,
+            group_mask: 0,
             _marker: PhantomData,
         }
     }
 
-    /// Create a table pre-allocated for at least `capacity` elements.
     pub fn with_capacity(capacity: usize) -> Self {
         if capacity == 0 {
             return Self::new();
@@ -76,36 +57,28 @@ impl<K, V> RawTable<K, V> {
         table
     }
 
-    /// Number of occupied elements.
-    #[inline]
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Is the table empty?
-    #[inline]
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Total number of bucket slots.
-    #[inline]
+    #[inline(always)]
     pub fn capacity(&self) -> usize {
         self.num_groups * GROUP_SIZE
     }
 
-    /// Compute the minimum number of groups needed for a given capacity.
     fn groups_for_capacity(capacity: usize) -> usize {
-        // We need: num_groups * GROUP_SIZE * 7/8 >= capacity
-        // So: num_groups >= capacity * 8 / (GROUP_SIZE * 7)
         let min_slots = (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1)
             / MAX_LOAD_FACTOR_NUM;
         let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
-        // Round up to power of 2
         min_groups.next_power_of_two()
     }
 
-    /// Allocate metadata and bucket arrays for `num_groups` groups.
     pub(crate) fn allocate(&mut self, num_groups: usize) {
         debug_assert!(num_groups.is_power_of_two());
 
@@ -116,12 +89,10 @@ impl<K, V> RawTable<K, V> {
         let meta_size = (num_groups + 1) * META_GROUP_BYTES;
         let meta_layout = Layout::from_size_align(meta_size, 16).unwrap();
 
-        // Buckets: num_groups * GROUP_SIZE * sizeof((K,V))
         let total_buckets = num_groups * GROUP_SIZE;
         let bucket_layout = if bucket_size > 0 {
             Layout::from_size_align(total_buckets * bucket_size, bucket_align).unwrap()
         } else {
-            // ZST buckets
             Layout::from_size_align(0, 1).unwrap()
         };
 
@@ -139,86 +110,61 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            // Initialize all metadata groups to empty
-            for i in 0..num_groups {
-                let g = Group::empty();
-                g.store(self.metadata.add(i * META_GROUP_BYTES));
-            }
-            // Sentinel group at the end
-            let sentinel = Group::sentinel();
-            sentinel.store(self.metadata.add(num_groups * META_GROUP_BYTES));
+            // Zero all metadata (empty groups) + sentinel in one memset,
+            // then write the sentinel byte.
+            ptr::write_bytes(self.metadata, 0, meta_size);
+            // Sentinel: first byte of the last group
+            *self.metadata.add(num_groups * META_GROUP_BYTES) = group::SENTINEL;
         }
 
         self.num_groups = num_groups;
+        self.group_mask = num_groups.wrapping_sub(1);
         self.max_load = max_load_for_capacity(total_buckets);
-        self.shift = if num_groups == 0 {
-            64
-        } else {
-            64 - num_groups.trailing_zeros()
-        };
+        self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
 
-    /// Free the metadata and bucket arrays.
     unsafe fn deallocate(&mut self) {
         if self.metadata.is_null() {
             return;
         }
-
         let bucket_size = std::mem::size_of::<(K, V)>();
         let bucket_align = std::mem::align_of::<(K, V)>();
-
         let meta_size = (self.num_groups + 1) * META_GROUP_BYTES;
         let meta_layout = Layout::from_size_align(meta_size, 16).unwrap();
-        unsafe {
-            alloc::dealloc(self.metadata, meta_layout);
-        }
-
+        unsafe { alloc::dealloc(self.metadata, meta_layout); }
         if bucket_size > 0 {
             let total_buckets = self.num_groups * GROUP_SIZE;
             let bucket_layout =
                 Layout::from_size_align(total_buckets * bucket_size, bucket_align).unwrap();
-            unsafe {
-                alloc::dealloc(self.buckets, bucket_layout);
-            }
+            unsafe { alloc::dealloc(self.buckets, bucket_layout); }
         }
-
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
     }
 
-    /// Map a hash value to a group index.
-    #[inline]
+    /// Map hash to group index.
+    #[inline(always)]
     fn group_index(&self, h: u64) -> usize {
-        // When num_groups == 1, shift == 64 and we want to return 0.
-        // Avoid UB/panic by clamping shift to 63 and masking with num_groups - 1.
-        if self.num_groups <= 1 {
-            return 0;
-        }
-        (h >> self.shift) as usize
+        // Shift extracts the high bits, mask constrains to valid range.
+        // When num_groups=1, group_mask=0 so result is always 0.
+        (h.wrapping_shr(self.shift) as usize) & self.group_mask
     }
 
-    /// Get a pointer to the metadata for group `gi`.
-    #[inline]
+    /// Pointer to group metadata.
+    #[inline(always)]
     unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
         unsafe { self.metadata.add(gi * META_GROUP_BYTES) }
     }
 
-    /// Get a pointer to bucket slot at (group_index, slot_index).
-    #[inline]
+    /// Pointer to bucket slot.
+    #[inline(always)]
     pub(crate) unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
         let bucket_size = std::mem::size_of::<(K, V)>();
         let idx = gi * GROUP_SIZE + si;
         unsafe { self.buckets.add(idx * bucket_size).cast::<(K, V)>() }
     }
 
-    /// Load the Group metadata for group `gi`.
-    #[inline]
-    unsafe fn load_group(&self, gi: usize) -> Group {
-        unsafe { Group::load(self.meta_ptr(gi)) }
-    }
-
-    /// Compute the hash of a key.
-    #[inline]
+    #[inline(always)]
     fn hash_key<S: BuildHasher>(key: &K, hash_builder: &S) -> u64
     where
         K: Hash,
@@ -228,7 +174,7 @@ impl<K, V> RawTable<K, V> {
         mix_hash(hasher.finish())
     }
 
-    /// Find a key in the table. Returns (group_index, slot_index) if found.
+    /// Find a key in the table.
     pub fn find<S: BuildHasher>(&self, key: &K, hash_builder: &S) -> Option<(usize, usize)>
     where
         K: Hash + Eq,
@@ -236,36 +182,10 @@ impl<K, V> RawTable<K, V> {
         if self.num_groups == 0 {
             return None;
         }
-
         let h = Self::hash_key(key, hash_builder);
-        let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-
-        loop {
-            let group = unsafe { self.load_group(gi) };
-
-            // SIMD match: find slots with matching reduced hash
-            for si in group.match_byte(reduced) {
-                let bucket = unsafe { &*self.bucket_ptr(gi, si) };
-                if bucket.0 == *key {
-                    return Some((gi, si));
-                }
-            }
-
-            // Termination: if group is not full, or overflow bit not set, key is absent
-            if !group.has_overflow_bit(ofw_bit) {
-                return None;
-            }
-
-            // Quadratic probing: next group
-            probe += 1;
-            gi = (gi + probe) & (self.num_groups - 1);
-        }
+        self.find_by_hash(h, |k| k == key)
     }
 
-    /// Find a key using a pre-computed hash. Returns (group_index, slot_index) if found.
     pub(crate) fn find_with_hash(&self, key: &K, h: u64) -> Option<(usize, usize)>
     where
         K: Eq,
@@ -273,8 +193,8 @@ impl<K, V> RawTable<K, V> {
         self.find_by_hash(h, |k| k == key)
     }
 
-    /// Find an element using a pre-computed hash and a custom equality predicate.
-    /// This supports Borrow-based lookups where Q != K.
+    /// Core lookup: SIMD match + overflow-bit probe termination.
+    #[inline(always)]
     pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
         F: Fn(&K) -> bool,
@@ -289,25 +209,24 @@ impl<K, V> RawTable<K, V> {
         let mut probe = 0usize;
 
         loop {
-            let group = unsafe { self.load_group(gi) };
+            let meta = unsafe { self.meta_ptr(gi) };
 
-            for si in group.match_byte(reduced) {
+            for si in unsafe { Group::match_byte(meta, reduced) } {
                 let bucket = unsafe { &*self.bucket_ptr(gi, si) };
                 if eq(&bucket.0) {
                     return Some((gi, si));
                 }
             }
 
-            if !group.has_overflow_bit(ofw_bit) {
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
                 return None;
             }
 
             probe += 1;
-            gi = (gi + probe) & (self.num_groups - 1);
+            gi = (gi.wrapping_add(probe)) & self.group_mask;
         }
     }
 
-    /// Remove an element using a pre-computed hash and equality predicate.
     pub(crate) fn remove_by_hash<F>(&mut self, h: u64, eq: F) -> Option<V>
     where
         F: Fn(&K) -> bool,
@@ -316,15 +235,18 @@ impl<K, V> RawTable<K, V> {
 
         unsafe {
             let bucket = self.bucket_ptr(gi, si).read();
-            let mut group = self.load_group(gi);
-            group.set(si, EMPTY);
-            group.store(self.meta_ptr(gi));
+
+            // Mark slot as empty — direct byte write, no load/store cycle
+            let meta = self.meta_ptr(gi);
+            Group::set_meta(meta, si, EMPTY);
+
             self.len -= 1;
 
+            // Anti-drift
             let initial_gi = self.group_index(h);
-            let initial_group = self.load_group(initial_gi);
+            let initial_meta = self.meta_ptr(initial_gi);
             let ofw_bit = overflow_bit(h);
-            if initial_group.has_overflow_bit(ofw_bit) {
+            if Group::has_overflow_bit(initial_meta, ofw_bit) {
                 self.max_load = self.max_load.saturating_sub(1);
             }
 
@@ -334,7 +256,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Insert without checking for duplicates or capacity.
-    /// Used during rehash and after find confirms absence.
+    #[inline(always)]
     pub(crate) fn insert_no_check(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
         let reduced = reduced_hash(h);
         let ofw_bit = overflow_bit(h);
@@ -342,31 +264,26 @@ impl<K, V> RawTable<K, V> {
         let mut probe = 0usize;
 
         loop {
-            let mut group = unsafe { self.load_group(gi) };
+            let meta = unsafe { self.meta_ptr(gi) };
 
-            if let Some(si) = group.match_empty().lowest_set_bit() {
-                // Found an empty slot
-                group.set(si, reduced);
+            if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                // Direct byte write for metadata
                 unsafe {
-                    group.store(self.meta_ptr(gi));
+                    Group::set_meta(meta, si, reduced);
                     self.bucket_ptr(gi, si).write((key, value));
                 }
                 self.len += 1;
                 return (gi, si);
             }
 
-            // Group is full — set overflow bit and probe to next
-            group.set_overflow_bit(ofw_bit);
-            unsafe {
-                group.store(self.meta_ptr(gi));
-            }
+            // Group full — set overflow bit directly
+            unsafe { Group::set_overflow_bit(meta, ofw_bit); }
 
             probe += 1;
-            gi = (gi + probe) & (self.num_groups - 1);
+            gi = (gi.wrapping_add(probe)) & self.group_mask;
         }
     }
 
-    /// Rehash the table using a hash builder to recompute hashes.
     pub fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hash_builder: &S)
     where
         K: Hash,
@@ -378,7 +295,6 @@ impl<K, V> RawTable<K, V> {
         let bucket_size = std::mem::size_of::<(K, V)>();
         let bucket_align = std::mem::align_of::<(K, V)>();
 
-        // Reset and allocate new
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
         self.num_groups = 0;
@@ -405,7 +321,6 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            // Deallocate old arrays
             let old_meta_size = (old_num_groups + 1) * META_GROUP_BYTES;
             let old_meta_layout = Layout::from_size_align(old_meta_size, 16).unwrap();
             alloc::dealloc(old_metadata, old_meta_layout);
@@ -419,7 +334,6 @@ impl<K, V> RawTable<K, V> {
         }
     }
 
-    /// Insert with automatic rehash support.
     pub fn insert_with_rehash<S: BuildHasher>(
         &mut self,
         key: K,
@@ -435,7 +349,6 @@ impl<K, V> RawTable<K, V> {
 
         let h = Self::hash_key(&key, hash_builder);
 
-        // Check if key already exists
         if let Some((gi, si)) = self.find_with_hash(&key, h) {
             drop(key);
             drop(value);
@@ -443,7 +356,6 @@ impl<K, V> RawTable<K, V> {
             return (&mut bucket.1, false);
         }
 
-        // Check if rehash needed
         if self.len >= self.max_load {
             let new_groups = if self.num_groups == 0 { 1 } else { self.num_groups * 2 };
             self.rehash_with(new_groups, hash_builder);
@@ -454,7 +366,6 @@ impl<K, V> RawTable<K, V> {
         (&mut bucket.1, true)
     }
 
-    /// Remove a key from the table. Returns the value if found.
     pub fn remove<S: BuildHasher>(&mut self, key: &K, hash_builder: &S) -> Option<V>
     where
         K: Hash + Eq,
@@ -462,37 +373,27 @@ impl<K, V> RawTable<K, V> {
         if self.num_groups == 0 {
             return None;
         }
-
         let h = Self::hash_key(key, hash_builder);
         let (gi, si) = self.find_with_hash(key, h)?;
 
         unsafe {
-            // Read out the bucket
             let bucket = self.bucket_ptr(gi, si).read();
-
-            // Mark slot as empty in metadata
-            let mut group = self.load_group(gi);
-            group.set(si, EMPTY);
-            group.store(self.meta_ptr(gi));
-
+            let meta = self.meta_ptr(gi);
+            Group::set_meta(meta, si, EMPTY);
             self.len -= 1;
 
-            // Anti-drift: if overflow bit is set for this hash's bit position
-            // in the element's initial group, decrease max_load
             let initial_gi = self.group_index(h);
-            let initial_group = self.load_group(initial_gi);
+            let initial_meta = self.meta_ptr(initial_gi);
             let ofw_bit = overflow_bit(h);
-            if initial_group.has_overflow_bit(ofw_bit) {
+            if Group::has_overflow_bit(initial_meta, ofw_bit) {
                 self.max_load = self.max_load.saturating_sub(1);
             }
 
-            // Return the value, drop the key
             let (_k, v) = bucket;
             Some(v)
         }
     }
 
-    /// Get a reference to the value for a key.
     pub fn get<S: BuildHasher>(&self, key: &K, hash_builder: &S) -> Option<&V>
     where
         K: Hash + Eq,
@@ -502,7 +403,6 @@ impl<K, V> RawTable<K, V> {
         Some(&bucket.1)
     }
 
-    /// Get a mutable reference to the value for a key.
     pub fn get_mut<S: BuildHasher>(&mut self, key: &K, hash_builder: &S) -> Option<&mut V>
     where
         K: Hash + Eq,
@@ -512,7 +412,6 @@ impl<K, V> RawTable<K, V> {
         Some(&mut bucket.1)
     }
 
-    /// Clear all elements without deallocating.
     pub fn clear(&mut self) {
         if self.metadata.is_null() {
             return;
@@ -530,26 +429,26 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            // Reset all metadata to empty
-            for gi in 0..self.num_groups {
-                let g = Group::empty();
-                g.store(self.meta_ptr(gi));
-            }
-            // Re-write sentinel
-            let sentinel = Group::sentinel();
-            sentinel.store(self.meta_ptr(self.num_groups));
+            // Zero all metadata + write sentinel
+            let meta_size = self.num_groups * META_GROUP_BYTES;
+            ptr::write_bytes(self.metadata, 0, meta_size);
+            *self.metadata.add(self.num_groups * META_GROUP_BYTES) = group::SENTINEL;
         }
 
         self.len = 0;
         self.max_load = max_load_for_capacity(self.num_groups * GROUP_SIZE);
     }
 
-    /// Iterate over all occupied slots, returning (group_index, slot_index) pairs.
+    /// Iterate over all occupied slots using SIMD to skip empty groups.
     pub fn iter_slots(&self) -> SlotIter<'_, K, V> {
         SlotIter {
             table: self,
             group: 0,
-            slot: 0,
+            current_mask: if self.metadata.is_null() {
+                bitmask::BitMask(0)
+            } else {
+                unsafe { Group::match_non_empty(self.metadata) }
+            },
         }
     }
 }
@@ -559,8 +458,6 @@ impl<K, V> Drop for RawTable<K, V> {
         if self.metadata.is_null() {
             return;
         }
-
-        // Drop all occupied elements
         unsafe {
             let bucket_size = std::mem::size_of::<(K, V)>();
             for gi in 0..self.num_groups {
@@ -575,14 +472,10 @@ impl<K, V> Drop for RawTable<K, V> {
                 }
             }
         }
-
-        unsafe {
-            self.deallocate();
-        }
+        unsafe { self.deallocate(); }
     }
 }
 
-// SAFETY: RawTable can be sent between threads if K and V can.
 unsafe impl<K: Send, V: Send> Send for RawTable<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
 
@@ -596,11 +489,9 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
         new_table.allocate(self.num_groups);
 
         unsafe {
-            // Copy metadata verbatim (including overflow bits and sentinel)
             let meta_size = (self.num_groups + 1) * META_GROUP_BYTES;
             ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
 
-            // Clone each occupied bucket
             let bucket_size = std::mem::size_of::<(K, V)>();
             for gi in 0..self.num_groups {
                 let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
@@ -623,39 +514,34 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
     }
 }
 
-/// Iterator over occupied slot positions.
+/// SIMD-accelerated iterator over occupied slot positions.
+/// Uses match_non_empty to get a bitmask per group and iterates set bits.
 pub struct SlotIter<'a, K, V> {
     pub(crate) table: &'a RawTable<K, V>,
     group: usize,
-    slot: usize,
+    current_mask: bitmask::BitMask,
 }
 
 impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
     type Item = (usize, usize);
 
+    #[inline]
     fn next(&mut self) -> Option<(usize, usize)> {
-        if self.table.metadata.is_null() {
-            return None;
-        }
-        unsafe {
-            while self.group < self.table.num_groups {
-                while self.slot < GROUP_SIZE {
-                    let meta = *self
-                        .table
-                        .metadata
-                        .add(self.group * META_GROUP_BYTES + self.slot);
-                    let gi = self.group;
-                    let si = self.slot;
-                    self.slot += 1;
-                    if meta >= 2 {
-                        return Some((gi, si));
-                    }
-                }
-                self.group += 1;
-                self.slot = 0;
+        loop {
+            // Try to get next set bit from current group mask
+            if let Some(si) = self.current_mask.next() {
+                return Some((self.group, si));
             }
+            // Advance to next group
+            self.group += 1;
+            if self.group >= self.table.num_groups {
+                return None;
+            }
+            // Load next group's non-empty mask
+            self.current_mask = unsafe {
+                Group::match_non_empty(self.table.meta_ptr(self.group))
+            };
         }
-        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -685,11 +571,8 @@ mod tests {
         assert!(inserted);
         assert_eq!(table.len(), 1);
 
-        let val = table.get(&42, &hash_builder);
-        assert_eq!(val, Some(&100));
-
-        let val = table.get(&999, &hash_builder);
-        assert_eq!(val, None);
+        assert_eq!(table.get(&42, &hash_builder), Some(&100));
+        assert_eq!(table.get(&999, &hash_builder), None);
     }
 
     #[test]
@@ -701,7 +584,7 @@ mod tests {
         let (_v, inserted) = table.insert_with_rehash(1, 20, &hash_builder);
         assert!(!inserted);
         assert_eq!(table.len(), 1);
-        assert_eq!(table.get(&1, &hash_builder), Some(&10)); // original value
+        assert_eq!(table.get(&1, &hash_builder), Some(&10));
     }
 
     #[test]
@@ -712,8 +595,7 @@ mod tests {
         table.insert_with_rehash(1, 10, &hash_builder);
         table.insert_with_rehash(2, 20, &hash_builder);
 
-        let removed = table.remove(&1, &hash_builder);
-        assert_eq!(removed, Some(10));
+        assert_eq!(table.remove(&1, &hash_builder), Some(10));
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&1, &hash_builder), None);
         assert_eq!(table.get(&2, &hash_builder), Some(&20));
@@ -734,9 +616,7 @@ mod tests {
         for i in 0..200 {
             table.insert_with_rehash(i, i * 10, &hash_builder);
         }
-
         assert_eq!(table.len(), 200);
-
         for i in 0..200 {
             assert_eq!(table.get(&i, &hash_builder), Some(&(i * 10)));
         }
@@ -753,12 +633,8 @@ mod tests {
 
         table.clear();
         assert_eq!(table.len(), 0);
-        assert!(table.is_empty());
-
-        // Capacity should still be allocated
         assert!(table.capacity() > 0);
 
-        // Should be able to insert again
         table.insert_with_rehash(1, 1, &hash_builder);
         assert_eq!(table.get(&1, &hash_builder), Some(&1));
     }
@@ -787,7 +663,6 @@ mod tests {
 
         let cloned = table.clone();
         assert_eq!(cloned.len(), 50);
-
         for i in 0..50 {
             assert_eq!(cloned.get(&i, &hash_builder), Some(&(i * 10)));
         }
@@ -798,7 +673,6 @@ mod tests {
         let hash_builder = RandomState::new();
         let mut table: RawTable<u64, u64> = RawTable::new();
 
-        // Insert, remove, re-insert to test tombstone-free deletion
         for cycle in 0..3 {
             for i in 0..100 {
                 table.insert_with_rehash(i, i + cycle * 1000, &hash_builder);
@@ -808,5 +682,18 @@ mod tests {
             }
             assert_eq!(table.len(), 0);
         }
+    }
+
+    #[test]
+    fn iter_slots_works() {
+        let hash_builder = RandomState::new();
+        let mut table: RawTable<u64, u64> = RawTable::new();
+
+        for i in 0..50 {
+            table.insert_with_rehash(i, i * 10, &hash_builder);
+        }
+
+        let count = table.iter_slots().count();
+        assert_eq!(count, 50);
     }
 }

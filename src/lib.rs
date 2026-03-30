@@ -1,4 +1,3 @@
-#![feature(portable_simd)]
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 
