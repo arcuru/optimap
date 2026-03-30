@@ -48,5 +48,9 @@
 - [x] Tests
 
 ## Phase 9 — Additional Testing
-- [ ] Property-based / randomized stress tests
-- [ ] Edge cases & adversarial inputs
+- [x] Randomized stress tests (map vs HashMap, set vs HashSet, 10K ops each)
+- [x] Edge cases (empty, single element, repeated same key, clone independence)
+- [x] Adversarial inputs (high collision keys, insert/delete cycles)
+- [x] Large scale (100K elements with interleaved removes)
+- [x] Borrow support test (String/str)
+- [x] Set algebra correctness vs std::HashSet
