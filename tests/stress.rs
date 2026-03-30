@@ -261,6 +261,35 @@ fn set_operations_correctness() {
     }
 }
 
+/// Test Borrow support: String keys looked up with &str.
+#[test]
+fn borrow_string_str() {
+    let mut map: UnorderedFlatMap<String, i32> = UnorderedFlatMap::new();
+    map.insert("hello".to_string(), 1);
+    map.insert("world".to_string(), 2);
+
+    // Lookup with &str (Borrow<str> for String)
+    assert_eq!(map.get("hello"), Some(&1));
+    assert_eq!(map.get("world"), Some(&2));
+    assert_eq!(map.get("missing"), None);
+    assert!(map.contains_key("hello"));
+    assert!(!map.contains_key("missing"));
+
+    // Remove with &str
+    assert_eq!(map.remove("hello"), Some(1));
+    assert_eq!(map.get("hello"), None);
+    assert_eq!(map.len(), 1);
+
+    // Set with String keys, contains with &str
+    let mut set: UnorderedFlatSet<String> = UnorderedFlatSet::new();
+    set.insert("alpha".to_string());
+    set.insert("beta".to_string());
+    assert!(set.contains("alpha"));
+    assert!(!set.contains("gamma"));
+    assert!(set.remove("alpha"));
+    assert!(!set.contains("alpha"));
+}
+
 /// Test large capacity to exercise multiple rehashes.
 #[test]
 fn large_scale() {

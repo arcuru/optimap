@@ -98,9 +98,8 @@ where
         T: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.table
-            .get(unsafe { &*(value as *const Q as *const T) }, &self.hash_builder)
-            .is_some()
+        let h = self.hash_key(value);
+        self.table.find_by_hash(h, |v| v.borrow() == value).is_some()
     }
 
     /// Adds a value to the set. Returns true if newly inserted, false if already present.
@@ -134,12 +133,8 @@ where
         T: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.table
-            .remove(
-                unsafe { &*(value as *const Q as *const T) },
-                &self.hash_builder,
-            )
-            .is_some()
+        let h = self.hash_key(value);
+        self.table.remove_by_hash(h, |v| v.borrow() == value).is_some()
     }
 
     /// Iterate over values.

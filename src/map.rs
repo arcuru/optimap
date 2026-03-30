@@ -102,7 +102,10 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.table.get(unsafe { &*(key.borrow() as *const Q as *const K) }, &self.hash_builder)
+        let h = self.hash_key(key);
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+        Some(&bucket.1)
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
@@ -111,14 +114,10 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // SAFETY: We need to convert Q to K for the raw table lookup.
-        // This works because K: Borrow<Q> and we only compare via Eq.
-        // However, the raw table compares K == K, so we need the actual K reference.
-        // For now, require exact key type. We'll revisit Borrow support.
-        self.table.get_mut(
-            unsafe { &*(key as *const Q as *const K) },
-            &self.hash_builder,
-        )
+        let h = self.hash_key(key);
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+        Some(&mut bucket.1)
     }
 
     /// Returns true if the map contains the given key.
@@ -165,10 +164,8 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.table.remove(
-            unsafe { &*(key as *const Q as *const K) },
-            &self.hash_builder,
-        )
+        let h = self.hash_key(key);
+        self.table.remove_by_hash(h, |k| k.borrow() == key)
     }
 
     /// Gets the given key's entry in the map for in-place manipulation.

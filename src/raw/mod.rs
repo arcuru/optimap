@@ -270,6 +270,15 @@ impl<K, V> RawTable<K, V> {
     where
         K: Eq,
     {
+        self.find_by_hash(h, |k| k == key)
+    }
+
+    /// Find an element using a pre-computed hash and a custom equality predicate.
+    /// This supports Borrow-based lookups where Q != K.
+    pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
+    where
+        F: Fn(&K) -> bool,
+    {
         if self.num_groups == 0 {
             return None;
         }
@@ -284,7 +293,7 @@ impl<K, V> RawTable<K, V> {
 
             for si in group.match_byte(reduced) {
                 let bucket = unsafe { &*self.bucket_ptr(gi, si) };
-                if bucket.0 == *key {
+                if eq(&bucket.0) {
                     return Some((gi, si));
                 }
             }
@@ -295,6 +304,32 @@ impl<K, V> RawTable<K, V> {
 
             probe += 1;
             gi = (gi + probe) & (self.num_groups - 1);
+        }
+    }
+
+    /// Remove an element using a pre-computed hash and equality predicate.
+    pub(crate) fn remove_by_hash<F>(&mut self, h: u64, eq: F) -> Option<V>
+    where
+        F: Fn(&K) -> bool,
+    {
+        let (gi, si) = self.find_by_hash(h, eq)?;
+
+        unsafe {
+            let bucket = self.bucket_ptr(gi, si).read();
+            let mut group = self.load_group(gi);
+            group.set(si, EMPTY);
+            group.store(self.meta_ptr(gi));
+            self.len -= 1;
+
+            let initial_gi = self.group_index(h);
+            let initial_group = self.load_group(initial_gi);
+            let ofw_bit = overflow_bit(h);
+            if initial_group.has_overflow_bit(ofw_bit) {
+                self.max_load = self.max_load.saturating_sub(1);
+            }
+
+            let (_k, v) = bucket;
+            Some(v)
         }
     }
 
