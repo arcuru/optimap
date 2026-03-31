@@ -140,37 +140,21 @@ where
             self.table.allocate(1);
         }
 
-        // Check capacity first — if at limit, we need to rehash before probing
-        // (rehash invalidates slot positions from find_or_locate)
-        if self.table.len >= self.table.max_load {
-            let h = self.hash_key(&key);
-            // Check if key exists before growing
-            if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
-                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-                return Some(std::mem::replace(&mut bucket.1, value));
-            }
-            self.grow_and_rehash();
-            self.table.insert_no_check(h, key, value);
-            return None;
+        let h = self.hash_key(&key);
+
+        // Check if key exists
+        if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            return Some(std::mem::replace(&mut bucket.1, value));
         }
 
-        // Fast path: fused find-or-locate (single probe walk)
-        let h = self.hash_key(&key);
-        match self.table.find_or_locate(h, |k| k == &key) {
-            ProbeResult::Found(gi, si) => {
-                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-                Some(std::mem::replace(&mut bucket.1, value))
-            }
-            ProbeResult::InsertSlot(gi, si, full_mask) => {
-                self.table.insert_at(h, gi, si, key, value, full_mask);
-                None
-            }
-            ProbeResult::NotFound => {
-                // Rare: all probed groups were full. Fall back to full insert probe.
-                self.table.insert_no_check(h, key, value);
-                None
-            }
+        // Key absent — grow if needed, then insert
+        if self.table.len >= self.table.max_load {
+            self.grow_and_rehash();
         }
+
+        self.table.insert_no_check(h, key, value);
+        None
     }
 
     #[cold]

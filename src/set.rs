@@ -111,28 +111,16 @@ where
 
         let h = self.hash_key(&value);
 
-        // At capacity: check existence, grow if needed, then insert
-        if self.table.len >= self.table.max_load {
-            if self.table.find_by_hash(h, |v| v == &value).is_some() {
-                return false;
-            }
-            self.grow_and_rehash();
-            self.table.insert_no_check(h, value, ());
-            return true;
+        if self.table.find_by_hash(h, |v| v == &value).is_some() {
+            return false;
         }
 
-        // Fast path: fused find-or-locate
-        match self.table.find_or_locate(h, |v| v == &value) {
-            ProbeResult::Found(_, _) => false,
-            ProbeResult::InsertSlot(gi, si, full_mask) => {
-                self.table.insert_at(h, gi, si, value, (), full_mask);
-                true
-            }
-            ProbeResult::NotFound => {
-                self.table.insert_no_check(h, value, ());
-                true
-            }
+        if self.table.len >= self.table.max_load {
+            self.grow_and_rehash();
         }
+
+        self.table.insert_no_check(h, value, ());
+        true
     }
 
     #[cold]
