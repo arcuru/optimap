@@ -650,6 +650,136 @@ fn bench_with_ahash(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Benchmark: High load factor (insert to ~85% full, then lookup) ───────
+
+fn bench_high_load_lookup(c: &mut Criterion) {
+    let sizes = [10_000, 100_000, 1_000_000];
+    let mut group = c.benchmark_group("high_load_lookup");
+
+    for &n in &sizes {
+        // Insert exactly enough to hit ~85% load factor
+        let keys = make_keys(n, 42);
+        let miss_keys = make_keys(n, 9999);
+        group.throughput(Throughput::Elements(n as u64));
+
+        // Build maps WITHOUT extra capacity — let them grow naturally to high load
+        let mut ours = UnorderedFlatMap::new();
+        let mut hb_map = hashbrown::HashMap::new();
+        for (i, &k) in keys.iter().enumerate() {
+            ours.insert(k, i);
+            hb_map.insert(k, i);
+        }
+
+        // Hit lookups at high load
+        group.bench_with_input(BenchmarkId::new("ours_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0usize;
+                for k in keys {
+                    sum += ours.get(k).unwrap_or(&0);
+                }
+                black_box(sum);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("hashbrown_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0usize;
+                for k in keys {
+                    sum += hb_map.get(k).unwrap_or(&0);
+                }
+                black_box(sum);
+            });
+        });
+
+        // Miss lookups at high load
+        group.bench_with_input(BenchmarkId::new("ours_miss", n), &miss_keys, |b, miss| {
+            b.iter(|| {
+                let mut count = 0usize;
+                for k in miss {
+                    if ours.get(k).is_some() {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("hashbrown_miss", n), &miss_keys, |b, miss| {
+            b.iter(|| {
+                let mut count = 0usize;
+                for k in miss {
+                    if hb_map.get(k).is_some() {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+    }
+    group.finish();
+}
+
+// ── Benchmark: Mixed hit/miss at various ratios ─────────────────────────
+
+fn bench_miss_ratio(c: &mut Criterion) {
+    let n = 100_000usize;
+    let mut group = c.benchmark_group("miss_ratio_100k");
+
+    let keys = make_keys(n, 42);
+    let miss_keys = make_keys(n, 9999);
+
+    let mut ours = UnorderedFlatMap::with_capacity(n);
+    let mut hb_map = hashbrown::HashMap::with_capacity(n);
+    for (i, &k) in keys.iter().enumerate() {
+        ours.insert(k, i);
+        hb_map.insert(k, i);
+    }
+
+    // Build mixed lookup arrays with different hit/miss ratios
+    for miss_pct in [0, 25, 50, 75, 100] {
+        let lookup_keys: Vec<u64> = (0..n)
+            .map(|i| {
+                if (i % 100) < miss_pct {
+                    miss_keys[i % miss_keys.len()]
+                } else {
+                    keys[i % keys.len()]
+                }
+            })
+            .collect();
+
+        group.throughput(Throughput::Elements(n as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("ours_{}pct_miss", miss_pct), n),
+            &lookup_keys,
+            |b, lk| {
+                b.iter(|| {
+                    let mut sum = 0usize;
+                    for k in lk {
+                        sum += ours.get(k).unwrap_or(&0);
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("hashbrown_{}pct_miss", miss_pct), n),
+            &lookup_keys,
+            |b, lk| {
+                b.iter(|| {
+                    let mut sum = 0usize;
+                    for k in lk {
+                        sum += hb_map.get(k).unwrap_or(&0);
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_insert_u64,
@@ -661,5 +791,7 @@ criterion_group!(
     bench_grow_from_empty,
     bench_remove_then_lookup,
     bench_with_ahash,
+    bench_high_load_lookup,
+    bench_miss_ratio,
 );
 criterion_main!(benches);
