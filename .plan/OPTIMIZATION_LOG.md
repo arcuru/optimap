@@ -439,19 +439,60 @@ Reverted. Two allocations remain better for insert-heavy workloads.
 | 12 | foldhash default hasher | **Kept** | 3-7x faster across all operations |
 | 13 | Single allocation re-test (foldhash) | Reverted | +66% insert 1M still dealbreaker |
 
+## Attempt 14: Remove Manual Prefetch (with foldhash)
+**Status: KEPT**
+
+### Rationale
+With foldhash (10x faster than SipHash), the hash computation is so short
+that there's less latency to hide. The hardware prefetcher may handle the
+bucket access pattern on its own.
+
+### Results (no prefetch vs with prefetch, foldhash baseline)
+| Benchmark | With prefetch | No prefetch | Change |
+|-----------|-------------:|------------:|-------:|
+| lookup_hit 1K | 2.17 µs | 2.07 µs | **-5%** |
+| lookup_hit 10K | 23.4 µs | 22.5 µs | **-4%** |
+| lookup_hit 1M | 11.9 ms | 14.0 ms | +18% |
+| lookup_miss 1K | 1.50 µs | 1.47 µs | -2% |
+| lookup_miss 10K | 15.5 µs | 14.9 µs | **-4%** |
+| lookup_miss 100K | 255 µs | 245 µs | **-4%** |
+| lookup_miss 1M | 3.93 ms | 2.89 ms | **-27%** |
+| high_load miss 1M | 3.94 ms | 2.77 ms | **-30%** |
+
+### Decision
+Kept. The miss improvement (-27% to -30% at 1M) massively outweighs the
+hit regression (+18% at 1M). Small-medium sizes improve across the board.
+With the prefetch removed, our miss performance is now 2x faster than
+hashbrown at 100K.
+
+---
+
+## All Attempts Summary
+
+| # | Technique | Status | Key Finding |
+|---|-----------|--------|-------------|
+| 1 | Aligned SIMD loads + prefetch + cold paths | **Kept** | 15% lookup improvement |
+| 2 | Single allocation (buckets-first, SipHash) | Reverted | +40% insert regression |
+| 3 | Single allocation (metadata-first, SipHash) | Reverted | Worse than #2 |
+| 4 | splitmix64 hash mixer | Reverted | +32-86% regression |
+| 5 | Fused find-or-locate | **Kept** | Entry API avoids double probe |
+| 6 | SIMD IntoIter | **Kept** | Consistency |
+| 7 | Initial bucket prefetch | **Superseded by #14** | Was 11% hit improvement |
+| 8 | IsAvalanching auto-dispatch | **Partial** | Specialization hurts default path |
+| 9 | Size-adaptive allocation | Skipped | Not worth complexity |
+| 10 | Single-group fast path | **Kept** | Zero-cost for large tables |
+| 11 | Conditional prefetch | Reverted | Branch overhead > wasted prefetch cost |
+| 12 | foldhash default hasher | **Kept** | 3-7x faster across all operations |
+| 13 | Single allocation re-test (foldhash) | Reverted | +66% insert 1M still dealbreaker |
+| 14 | Remove manual prefetch (foldhash) | **Kept** | -27% miss 1M, -4% small sizes |
+
 ## Remaining Ideas
 
 ### Performance
-1. **Interleaved layout** — Instead of [all buckets][all metadata] or separate
-   allocs, try [group0_meta 16B][group0_buckets][group1_meta][group1_buckets]...
-   Each group's metadata is adjacent to its buckets. Fundamentally different
-   from what was tested — should have excellent cache locality per-group.
-2. **Prefetch depth tuning** — Prefetch 2 groups ahead instead of 1.
-3. **Remove initial bucket prefetch** — Re-test now that foldhash is much
-   faster; the hardware prefetcher may handle this better with shorter
-   hash computation latency.
+1. **Interleaved layout** — [group0_meta][group0_buckets][group1_meta]...
+2. **Prefetch depth tuning** — Prefetch 2 groups ahead on overflow only
 
 ### API Completeness
-4. **Reserve / shrink_to_fit**
-5. **Drain iterator**
-6. **retain() method**
+3. **Reserve / shrink_to_fit**
+4. **Drain iterator**
+5. **retain() method**
