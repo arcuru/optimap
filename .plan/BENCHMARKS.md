@@ -1,136 +1,148 @@
-# Benchmark Results & Analysis
+# Benchmark Results
 
-Benchmarks run via `cargo bench` with Criterion. Competitors: `std::HashMap`,
-`hashbrown` (Swiss table, powers Rust's std), `indexmap`. All use default
-`RandomState` hasher unless noted.
+Both us and hashbrown use foldhash as the default hasher.
+Benchmarks use SFC64 RNG and checksummed outputs (Ankerl methodology).
 
-## Insert (u64 → usize, pre-allocated)
+## Summary: Where We Win / Lose vs hashbrown
 
-| Size | ours | std HashMap | hashbrown | indexmap |
-|-----:|-----:|------------:|----------:|--------:|
-| 1K | 14.1 µs | 12.6 µs | 3.5 µs | 13.7 µs |
-| 10K | 151 µs | 125 µs | 35.3 µs | 142 µs |
-| 100K | 1.54 ms | 1.36 ms | 448 µs | 1.56 ms |
-| 1M | 39.0 ms | 63.1 ms | 24.8 ms | 41.4 ms |
+### We Win (overflow-bit design strengths)
+| Workload | Speedup | Why |
+|----------|--------:|-----|
+| Lookup miss 100K | **2.0x** | Overflow bit terminates without bucket read |
+| Lookup miss 1M | **1.22x** | Same |
+| High-load miss 100K | **1.7x** | Same, at natural load factor |
+| High-load miss 1M | **1.4x** | Same |
+| Clone 1M | **7.1x** | SIMD match_non_empty + bulk copy |
+| Equilibrium churn 4K | **1.28x** | Tombstone-free deletion |
+| Equilibrium churn 65K | **1.10x** | Same |
+| Growing lookup 2K | **1.28x** | Miss-heavy read workload |
+| Growing lookup 100K | **1.19x** | Same |
+| String insert (all sizes) | **1.06-1.27x** | Faster hashing path |
+| String miss (all sizes) | **1.16-1.30x** | Overflow bit early termination |
+| Insert 1M | **1.10x** | Better at scale |
+| Miss-heavy (75%+ miss) 100K | **1.55-1.64x** | Overflow bits dominate |
 
-**Analysis**: At 1M we're **38% faster than std** (39ms vs 63ms). At small
-sizes, hashbrown is 4x faster due to its mature Swiss table implementation.
-We're roughly on par with std and indexmap at small-medium sizes.
+### hashbrown Wins (Swiss table strengths)
+| Workload | hashbrown speedup | Why |
+|----------|------------------:|-----|
+| Lookup hit (all sizes) | 1.2-1.3x | Tighter probe loop |
+| Insert 1K-100K | 1.25-1.68x | More optimized small-table codegen |
+| Entry API (or_insert) | 1.4-1.6x | Very optimized entry path |
+| Iteration (small) | 1.4-1.5x | 16-byte aligned metadata groups |
+| Insert/erase phases 5M | 1.26x | Better rehash path |
 
-## Lookup — Successful (all keys present)
+### Crossover Point
+At ~50% miss rate and 100K entries, we break even with hashbrown.
+Above that miss rate, we're increasingly faster.
 
-| Size | ours | std HashMap | hashbrown | indexmap |
-|-----:|-----:|------------:|----------:|--------:|
-| 1K | 12.3 µs | 8.0 µs | 1.7 µs | 8.3 µs |
-| 10K | 124 µs | 80.2 µs | 18.1 µs | 89.6 µs |
-| 100K | 1.32 ms | 1.09 ms | 257 µs | 1.19 ms |
-| 1M | 41.2 ms | 59.3 ms | 15.5 ms | 44.2 ms |
+---
 
-**Analysis**: At 1M we're **30% faster than std** (41ms vs 59ms). Prefetching
-the first group's bucket region before SIMD comparison contributes significantly.
-hashbrown is still 2.7x faster due to its tighter probe loop.
+## Detailed Results
 
-## Lookup — Miss (keys not in map)
+### Insert (u64, pre-allocated)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| 1K | 4.3 µs | 3.4 µs | 1.26x |
+| 10K | 58.1 µs | 34.6 µs | 1.68x |
+| 100K | 708 µs | 438 µs | 1.62x |
+| **1M** | **22.1 ms** | 24.3 ms | **0.91x** |
 
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 1K | 11.4 µs | 6.9 µs | 930 ns |
-| 10K | 117 µs | 70.8 µs | 10.3 µs |
-| 100K | 1.36 ms | 1.17 ms | 404 µs |
-| 1M | 16.3 ms | 15.2 ms | 4.6 ms |
+### Lookup Hit (u64, pre-allocated)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| 1K | 2.10 µs | 1.63 µs | 1.29x |
+| 10K | 21.9 µs | 17.8 µs | 1.23x |
+| 100K | 327 µs | 245 µs | 1.33x |
+| 1M | 17.4 ms | 14.8 ms | 1.18x |
 
-**Analysis**: Miss performance regressed slightly due to initial bucket
-prefetch (wasted on misses). Still competitive with std at 1M.
+### Lookup Miss (u64, pre-allocated)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| 1K | 1.49 µs | 918 ns | 1.62x |
+| 10K | 15.1 µs | 10.3 µs | 1.47x |
+| **100K** | **197 µs** | 401 µs | **0.49x** |
+| **1M** | **2.92 ms** | 3.57 ms | **0.82x** |
 
-## Mixed Workload (50% insert, 30% lookup, 20% remove)
+### High Load (natural growth)
+| Benchmark | ours | hashbrown | ratio |
+|-----------|-----:|----------:|:-----:|
+| hit 10K | 21.9 µs | 17.9 µs | 1.22x |
+| hit 100K | 311 µs | 260 µs | 1.20x |
+| hit 1M | 17.0 ms | 15.8 ms | 1.08x |
+| miss 10K | 14.9 µs | 10.3 µs | 1.45x |
+| **miss 100K** | **244 µs** | 416 µs | **0.59x** |
+| **miss 1M** | **3.09 ms** | 4.37 ms | **0.71x** |
 
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 10K | 133 µs | 124 µs | 30.3 µs |
-| 100K | 1.86 ms | 1.79 ms | 831 µs |
+### Miss Ratio at 100K
+| Miss % | ours | hashbrown | ratio |
+|-------:|-----:|----------:|:-----:|
+| 0% | 317 µs | 248 µs | 1.28x |
+| 25% | 292 µs | 232 µs | 1.26x |
+| 50% | 257 µs | 222 µs | 1.16x |
+| **75%** | **245 µs** | 380 µs | **0.64x** |
+| **100%** | **254 µs** | 416 µs | **0.61x** |
 
-## String Keys (8-24 char random strings)
+### Equilibrium Churn (2M insert+erase ops)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| **4K** | **32.4 ms** | 41.6 ms | **0.78x** |
+| **65K** | **36.6 ms** | 40.3 ms | **0.91x** |
+| 1M | 73.0 ms | 70.5 ms | 1.04x |
 
-### Insert
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 1K | 38.7 µs | 41.6 µs | 35.3 µs |
-| 10K | 458 µs | 479 µs | 383 µs |
-| 100K | 6.05 ms | 6.51 ms | 5.52 ms |
+### Random Distinct (entry API, 5M ops)
+| Distinct | ours | hashbrown | ratio |
+|---------:|-----:|----------:|:-----:|
+| 5% | 44.6 ms | 29.5 ms | 1.51x |
+| 50% | 274 ms | 172 ms | 1.59x |
+| 100% | 257 ms | 187 ms | 1.38x |
 
-### Lookup
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 1K | 10.7 µs | 13.2 µs | 4.3 µs |
-| 10K | 126 µs | 170 µs | 62.0 µs |
-| 100K | 2.01 ms | 2.46 ms | 962 µs |
+### Growing Lookup (insert 4, lookup many, ~50% miss)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| **2K** | **6.27 ms** | 8.03 ms | **0.78x** |
+| **100K** | **67.6 ms** | 80.4 ms | **0.84x** |
 
-**Analysis**: String keys is where we shine vs std:
-- **Insert**: 7-10% faster than std at all sizes
-- **Lookup**: **19-26% faster** than std at all sizes
+### String Sizes (200K entries for ≤13b, 50K for 100b)
+| Len | ours insert | hb insert | ours miss | hb miss |
+|----:|-----------:|----------:|----------:|--------:|
+| **7b** | **12.7 ms** | 13.4 ms | **1.49 ms** | 1.93 ms |
+| **8b** | **9.77 ms** | 10.2 ms | **1.50 ms** | 1.88 ms |
+| **13b** | **12.6 ms** | 16.1 ms | **1.48 ms** | 1.93 ms |
+| 100b | 2.80 ms | 2.85 ms | **548 µs** | 635 µs |
 
-## Iteration (sum all values)
+### Clone
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| 1K | 637 ns | 612 ns | 1.04x |
+| 100K | 57.5 µs | 53.5 µs | 1.07x |
+| **1M** | **2.15 ms** | 15.1 ms | **0.14x** |
 
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 1K | 620 ns | 423 ns | 420 ns |
-| 10K | 6.10 µs | 4.04 µs | 4.04 µs |
-| 100K | 63.3 µs | 41.1 µs | 41.3 µs |
-| 1M | 1.43 ms | 1.37 ms | 1.39 ms |
+### Iteration During Growth
+| | ours | hashbrown | ratio |
+|-|-----:|----------:|:-----:|
+| grow+iterate | 1.45 s | 1.01 s | 1.43x |
 
-**Analysis**: Iteration is ~1.5x slower at small sizes. At 1M all three
-are within 5% of each other.
+### Mixed Workload (50% insert, 30% lookup, 20% remove)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| 10K | 35.4 µs | 28.6 µs | 1.24x |
+| 100K | 883 µs | 838 µs | 1.05x |
 
-## Grow From Empty (no pre-allocation)
+---
 
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 1K | 27.9 µs | 32.6 µs | 13.7 µs |
-| 10K | 254 µs | 293 µs | 117 µs |
-| 100K | 2.47 ms | 2.65 ms | 1.06 ms |
+## Design Trade-offs Revealed by Benchmarks
 
-**Analysis**: We beat std by ~7-14% on grow-from-empty. hashbrown is 2x faster.
+1. **15-slot groups + overflow byte** vs hashbrown's 16-byte control groups:
+   - Win: Fast miss termination (overflow bit = 1 byte read)
+   - Win: Tombstone-free deletion (no performance degradation under churn)
+   - Win: 7x faster clone (SIMD bulk copy without tombstone handling)
+   - Lose: 1 wasted SIMD lane (slot 15 is overflow byte)
+   - Lose: Slightly larger metadata per element
 
-## Remove Half Then Lookup
+2. **Two separate allocations** vs hashbrown's single allocation:
+   - Win: Better insert at 1M (compact metadata fits L2/L3)
+   - Lose: Extra pointer indirection on every access
 
-| Size | ours | std HashMap | hashbrown |
-|-----:|-----:|------------:|----------:|
-| 10K | 304 µs | 176 µs | 50.5 µs |
-| 100K | 1.88 ms | 2.05 ms | 626 µs |
-
-**Analysis**: At 10K post-deletion is slow due to stale overflow bits.
-At 100K we beat std (1.88ms vs 2.05ms) as the anti-drift mechanism triggers.
-
-## With ahash (fast hasher)
-
-| Size | ours insert | hb insert | ours lookup | hb lookup |
-|-----:|------------:|----------:|------------:|----------:|
-| 10K | 50.3 µs | 48.1 µs | 32.1 µs | 21.3 µs |
-| 100K | 653 µs | 613 µs | 380 µs | 281 µs |
-| 1M | 15.5 ms | 38.3 ms | 18.0 ms | 17.1 ms |
-
-**Analysis**: With ahash at 1M, our insert is **2.5x faster than hashbrown**
-(15.5ms vs 38.3ms). Lookup is nearly tied (18ms vs 17ms).
-
-## Summary
-
-### Our Strengths (vs std::HashMap)
-- **Large-scale insert**: 38% faster at 1M
-- **Large-scale lookup**: 30% faster at 1M
-- **String keys**: 7-26% faster at all sizes
-- **Grow from empty**: 7-14% faster
-- **ahash at scale**: Dramatically faster insert
-
-### Our Weaknesses (vs hashbrown)
-- **Small-medium point operations**: 3-8x slower
-- **Iteration at small sizes**: 1.5x slower
-- **Miss-heavy workloads**: Initial prefetch adds overhead
-
-### Key Design Trade-offs
-1. **15-slot groups** (vs hashbrown's 16): Extra overflow byte enables
-   tombstone-free deletion but wastes one SIMD lane
-2. **Fibonacci hash mixer**: Cheap (1 multiply) but less thorough than
-   hashbrown's AESNI-based approach
-3. **Two separate allocations**: Better cache behavior for metadata at
-   large sizes, at cost of one extra pointer indirection
-4. **Aggressive prefetching**: Wins for hit-dominated workloads, hurts misses
+3. **No post-mixer** (foldhash is avalanching):
+   - Win: Zero hash overhead beyond foldhash itself
+   - Neutral: Same hash quality as hashbrown (both use foldhash)
