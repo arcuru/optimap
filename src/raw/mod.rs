@@ -10,6 +10,17 @@ use std::ptr;
 use group::{Group, GROUP_SIZE, META_GROUP_BYTES, EMPTY, reduced_hash, overflow_bit};
 use hash::mix_hash;
 
+/// Result of a fused find-or-locate probe.
+pub(crate) enum ProbeResult {
+    /// Key was found at (group_index, slot_index).
+    Found(usize, usize),
+    /// Key was not found; first available empty slot at (group_index, slot_index).
+    InsertSlot(usize, usize),
+    /// Key was not found; no empty slot was encountered during the probe.
+    /// Caller must fall back to insert_no_check for a full probe.
+    NotFound,
+}
+
 /// Maximum load factor (fixed at 7/8 = 0.875).
 const MAX_LOAD_FACTOR_NUM: usize = 7;
 const MAX_LOAD_FACTOR_DEN: usize = 8;
@@ -290,6 +301,92 @@ impl<K, V> RawTable<K, V> {
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.group_mask;
         }
+    }
+
+    /// Fused find-or-locate: probes for the key and tracks the first empty slot.
+    /// Returns Found(gi, si) if the key exists, or InsertSlot(gi, si) with the
+    /// first available empty slot if the key is absent.
+    /// Caller must ensure the table is non-empty and has capacity for an insert.
+    #[inline(always)]
+    pub(crate) fn find_or_locate<F>(&self, h: u64, eq: F) -> ProbeResult
+    where
+        F: Fn(&K) -> bool,
+    {
+        let reduced = reduced_hash(h);
+        let ofw_bit = overflow_bit(h);
+        let mut gi = self.group_index(h);
+        let mut probe = 0usize;
+        let mut first_empty: Option<(usize, usize)> = None;
+
+        loop {
+            let meta = unsafe { self.meta_ptr(gi) };
+
+            // Check for matching keys
+            for si in unsafe { Group::match_byte(meta, reduced) } {
+                let bucket = unsafe { &*self.bucket_ptr(gi, si) };
+                if eq(&bucket.0) {
+                    return ProbeResult::Found(gi, si);
+                }
+            }
+
+            // Track first empty slot
+            if first_empty.is_none() {
+                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                    first_empty = Some((gi, si));
+                }
+            }
+
+            // No overflow bit → key absent
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                return match first_empty {
+                    Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si),
+                    None => ProbeResult::NotFound,
+                };
+            }
+
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.group_mask;
+
+            unsafe {
+                let next_meta = self.meta_ptr(gi);
+                Group::prefetch_read(next_meta);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+            }
+        }
+    }
+
+    /// Write a key-value pair into a known-empty slot and set overflow bits.
+    /// The slot must have been returned by find_or_locate as InsertSlot.
+    #[inline(always)]
+    pub(crate) fn insert_at(&mut self, h: u64, gi: usize, si: usize, key: K, value: V) {
+        let reduced = reduced_hash(h);
+        let ofw_bit = overflow_bit(h);
+
+        // Set overflow bits on all full groups from home to insertion group
+        let home_gi = self.group_index(h);
+        if gi != home_gi {
+            let mut set_gi = home_gi;
+            let mut set_probe = 0usize;
+            loop {
+                let set_meta = unsafe { self.meta_ptr(set_gi) };
+                // Only set overflow if this group is full (no empty slots)
+                if unsafe { Group::match_empty(set_meta) }.lowest_set_bit().is_none() {
+                    unsafe { Group::set_overflow_bit(set_meta, ofw_bit); }
+                }
+                set_probe += 1;
+                set_gi = (set_gi.wrapping_add(set_probe)) & self.group_mask;
+                if set_gi == gi {
+                    break;
+                }
+            }
+        }
+
+        unsafe {
+            let meta = self.meta_ptr(gi);
+            Group::set_meta(meta, si, reduced);
+            self.bucket_ptr(gi, si).write((key, value));
+        }
+        self.len += 1;
     }
 
     pub fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hash_builder: &S)

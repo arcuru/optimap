@@ -5,7 +5,7 @@ use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 use std::ops::Index;
 
-use crate::raw::RawTable;
+use crate::raw::{RawTable, ProbeResult};
 use crate::raw::hash::mix_hash;
 
 /// A hash map using open addressing with SIMD-accelerated group probing,
@@ -141,21 +141,37 @@ where
             self.table.allocate(1);
         }
 
-        let h = self.hash_key(&key);
-
-        if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
-            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-            let old = std::mem::replace(&mut bucket.1, value);
-            return Some(old);
-        }
-
-        // Cold path: capacity check and possible rehash
+        // Check capacity first — if at limit, we need to rehash before probing
+        // (rehash invalidates slot positions from find_or_locate)
         if self.table.len >= self.table.max_load {
+            let h = self.hash_key(&key);
+            // Check if key exists before growing
+            if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                return Some(std::mem::replace(&mut bucket.1, value));
+            }
             self.grow_and_rehash();
+            self.table.insert_no_check(h, key, value);
+            return None;
         }
 
-        self.table.insert_no_check(h, key, value);
-        None
+        // Fast path: fused find-or-locate (single probe walk)
+        let h = self.hash_key(&key);
+        match self.table.find_or_locate(h, |k| k == &key) {
+            ProbeResult::Found(gi, si) => {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                Some(std::mem::replace(&mut bucket.1, value))
+            }
+            ProbeResult::InsertSlot(gi, si) => {
+                self.table.insert_at(h, gi, si, key, value);
+                None
+            }
+            ProbeResult::NotFound => {
+                // Rare: all probed groups were full. Fall back to full insert probe.
+                self.table.insert_no_check(h, key, value);
+                None
+            }
+        }
     }
 
     #[cold]
@@ -182,20 +198,58 @@ where
 
     /// Gets the given key's entry in the map for in-place manipulation.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
+        if self.table.num_groups == 0 {
+            self.table.allocate(1);
+        }
+
         let h = self.hash_key(&key);
-        if let Some((gi, si)) = self.table.find_with_hash(&key, h) {
-            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-            Entry::Occupied(OccupiedEntry {
-                key,
-                value: &mut bucket.1,
-            })
-        } else {
-            Entry::Vacant(VacantEntry {
+
+        // If at capacity, can't use fused probe (rehash would invalidate slot)
+        if self.table.len >= self.table.max_load {
+            if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                return Entry::Occupied(OccupiedEntry {
+                    key,
+                    value: &mut bucket.1,
+                });
+            }
+            // Will need to grow on insert — fall through to Vacant with no slot
+            return Entry::Vacant(VacantEntry {
                 key,
                 hash: h,
+                slot: None,
                 table: &mut self.table,
                 hash_builder: &self.hash_builder,
-            })
+            });
+        }
+
+        // Fused find-or-locate: single probe
+        match self.table.find_or_locate(h, |k| k == &key) {
+            ProbeResult::Found(gi, si) => {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                Entry::Occupied(OccupiedEntry {
+                    key,
+                    value: &mut bucket.1,
+                })
+            }
+            ProbeResult::InsertSlot(gi, si) => {
+                Entry::Vacant(VacantEntry {
+                    key,
+                    hash: h,
+                    slot: Some((gi, si)),
+                    table: &mut self.table,
+                    hash_builder: &self.hash_builder,
+                })
+            }
+            ProbeResult::NotFound => {
+                Entry::Vacant(VacantEntry {
+                    key,
+                    hash: h,
+                    slot: None,
+                    table: &mut self.table,
+                    hash_builder: &self.hash_builder,
+                })
+            }
         }
     }
 
@@ -250,6 +304,8 @@ pub struct OccupiedEntry<'a, K, V> {
 pub struct VacantEntry<'a, K, V, S> {
     key: K,
     hash: u64,
+    /// Pre-located insertion slot from fused find_or_locate, if available.
+    slot: Option<(usize, usize)>,
     table: &'a mut RawTable<K, V>,
     hash_builder: &'a S,
 }
@@ -314,19 +370,25 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
     /// Insert a value and return a mutable reference.
     pub fn insert(self, value: V) -> &'a mut V {
-        // Check if rehash needed
-        if self.table.len >= self.table.max_load {
-            let new_groups = if self.table.num_groups == 0 {
-                1
-            } else {
-                self.table.num_groups * 2
-            };
-            self.table.rehash_with(new_groups, self.hash_builder);
+        if let Some((gi, si)) = self.slot {
+            // Fast path: use pre-located slot from fused probe
+            self.table.insert_at(self.hash, gi, si, self.key, value);
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            &mut bucket.1
+        } else {
+            // Slow path: need to grow first, then insert
+            if self.table.len >= self.table.max_load {
+                let new_groups = if self.table.num_groups == 0 {
+                    1
+                } else {
+                    self.table.num_groups * 2
+                };
+                self.table.rehash_with(new_groups, self.hash_builder);
+            }
+            let (gi, si) = self.table.insert_no_check(self.hash, self.key, value);
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            &mut bucket.1
         }
-
-        let (gi, si) = self.table.insert_no_check(self.hash, self.key, value);
-        let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-        &mut bucket.1
     }
 
     /// Gets a reference to the key.
