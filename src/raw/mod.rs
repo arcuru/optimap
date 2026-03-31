@@ -15,7 +15,9 @@ pub(crate) enum ProbeResult {
     /// Key was found at (group_index, slot_index).
     Found(usize, usize),
     /// Key was not found; first available empty slot at (group_index, slot_index).
-    InsertSlot(usize, usize),
+    /// The u8 bitmask records which probe steps had full groups (bit i = step i was full).
+    /// Used by insert_at to set overflow bits without re-walking the probe chain.
+    InsertSlot(usize, usize, u8),
     /// Key was not found; no empty slot was encountered during the probe.
     /// Caller must fall back to insert_no_check for a full probe.
     NotFound,
@@ -324,14 +326,59 @@ impl<K, V> RawTable<K, V> {
     {
         let reduced = reduced_hash(h);
         let ofw_bit = overflow_bit(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-        let mut first_empty: Option<(usize, usize)> = None;
+        let gi = self.group_index(h);
+
+        // Home group fast path: covers the vast majority of operations
+        // at load factor < 87.5%.
+        let meta = unsafe { self.meta_ptr(gi) };
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        for si in matches {
+            let bucket = unsafe { &*self.bucket_ptr(gi, si) };
+            if eq(&bucket.0) {
+                return ProbeResult::Found(gi, si);
+            }
+        }
+
+        // If home group has empty slots and no overflow, key is absent
+        if let Some(si) = empties.lowest_set_bit() {
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                // No overflow, empty slot in home group — no overflow bits to set
+                return ProbeResult::InsertSlot(gi, si, 0);
+            }
+            // Has overflow — continue probing, remember this empty slot
+            return self.find_or_locate_overflow(h, eq, reduced, ofw_bit, gi, Some((gi, si)), 0);
+        }
+
+        // Home group full — continue probing
+        if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+            return ProbeResult::NotFound;
+        }
+
+        // Home group was full (bit 0 = step 0 was full)
+        self.find_or_locate_overflow(h, eq, reduced, ofw_bit, gi, None, 1)
+    }
+
+    /// Slow path for find_or_locate when home group overflows.
+    #[inline(never)]
+    fn find_or_locate_overflow<F>(
+        &self,
+        _h: u64,
+        eq: F,
+        reduced: u8,
+        ofw_bit: u8,
+        home_gi: usize,
+        mut first_empty: Option<(usize, usize)>,
+        mut full_mask: u8,
+    ) -> ProbeResult
+    where
+        F: Fn(&K) -> bool,
+    {
+        let mut probe = 1usize;
+        let mut gi = (home_gi.wrapping_add(probe)) & self.group_mask;
 
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
-
-            // Single SIMD load: check both matching keys and empty slots
             let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
 
             for si in matches {
@@ -341,17 +388,20 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            // Track first empty slot
             if first_empty.is_none() {
                 if let Some(si) = empties.lowest_set_bit() {
                     first_empty = Some((gi, si));
+                } else {
+                    // This group is full — record in bitmask (probe steps 1..7)
+                    if probe < 8 {
+                        full_mask |= 1 << probe;
+                    }
                 }
             }
 
-            // No overflow bit → key absent
             if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
                 return match first_empty {
-                    Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si),
+                    Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si, full_mask),
                     None => ProbeResult::NotFound,
                 };
             }
@@ -360,36 +410,43 @@ impl<K, V> RawTable<K, V> {
             gi = (gi.wrapping_add(probe)) & self.group_mask;
 
             unsafe {
-                let next_meta = self.meta_ptr(gi);
-                Group::prefetch_read(next_meta);
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }
     }
 
     /// Write a key-value pair into a known-empty slot and set overflow bits.
-    /// The slot must have been returned by find_or_locate as InsertSlot.
+    /// `full_mask` is a bitmask from find_or_locate: bit i means probe step i
+    /// was a full group that needs its overflow bit set.
     #[inline(always)]
-    pub(crate) fn insert_at(&mut self, h: u64, gi: usize, si: usize, key: K, value: V) {
+    pub(crate) fn insert_at(
+        &mut self,
+        h: u64,
+        gi: usize,
+        si: usize,
+        key: K,
+        value: V,
+        full_mask: u8,
+    ) {
         let reduced = reduced_hash(h);
         let ofw_bit = overflow_bit(h);
 
-        // Set overflow bits on all full groups from home to insertion group
-        let home_gi = self.group_index(h);
-        if gi != home_gi {
-            let mut set_gi = home_gi;
+        // Set overflow bits on full groups recorded during probe.
+        // Uses the bitmask from find_or_locate to avoid re-reading metadata.
+        if full_mask != 0 {
+            let home_gi = self.group_index(h);
             let mut set_probe = 0usize;
-            loop {
-                let set_meta = unsafe { self.meta_ptr(set_gi) };
-                // Only set overflow if this group is full (no empty slots)
-                if unsafe { Group::match_empty(set_meta) }.lowest_set_bit().is_none() {
+            let mut set_gi = home_gi;
+            let mut mask = full_mask;
+            while mask != 0 {
+                if mask & 1 != 0 {
+                    let set_meta = unsafe { self.meta_ptr(set_gi) };
                     unsafe { Group::set_overflow_bit(set_meta, ofw_bit); }
                 }
+                mask >>= 1;
                 set_probe += 1;
                 set_gi = (set_gi.wrapping_add(set_probe)) & self.group_mask;
-                if set_gi == gi {
-                    break;
-                }
             }
         }
 

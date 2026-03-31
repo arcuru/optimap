@@ -161,8 +161,8 @@ where
                 let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
                 Some(std::mem::replace(&mut bucket.1, value))
             }
-            ProbeResult::InsertSlot(gi, si) => {
-                self.table.insert_at(h, gi, si, key, value);
+            ProbeResult::InsertSlot(gi, si, full_mask) => {
+                self.table.insert_at(h, gi, si, key, value, full_mask);
                 None
             }
             ProbeResult::NotFound => {
@@ -231,11 +231,11 @@ where
                     value: &mut bucket.1,
                 })
             }
-            ProbeResult::InsertSlot(gi, si) => {
+            ProbeResult::InsertSlot(gi, si, full_mask) => {
                 Entry::Vacant(VacantEntry {
                     key,
                     hash: h,
-                    slot: Some((gi, si)),
+                    slot: Some((gi, si, full_mask)),
                     table: &mut self.table,
                     hash_builder: &self.hash_builder,
                 })
@@ -304,7 +304,8 @@ pub struct VacantEntry<'a, K, V, S> {
     key: K,
     hash: u64,
     /// Pre-located insertion slot from fused find_or_locate, if available.
-    slot: Option<(usize, usize)>,
+    /// Tuple: (group_index, slot_index, full_groups_bitmask).
+    slot: Option<(usize, usize, u8)>,
     table: &'a mut RawTable<K, V>,
     hash_builder: &'a S,
 }
@@ -369,9 +370,9 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
     /// Insert a value and return a mutable reference.
     pub fn insert(self, value: V) -> &'a mut V {
-        if let Some((gi, si)) = self.slot {
+        if let Some((gi, si, full_mask)) = self.slot {
             // Fast path: use pre-located slot from fused probe
-            self.table.insert_at(self.hash, gi, si, self.key, value);
+            self.table.insert_at(self.hash, gi, si, self.key, value, full_mask);
             let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
             &mut bucket.1
         } else {

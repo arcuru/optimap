@@ -124,8 +124,8 @@ where
         // Fast path: fused find-or-locate
         match self.table.find_or_locate(h, |v| v == &value) {
             ProbeResult::Found(_, _) => false,
-            ProbeResult::InsertSlot(gi, si) => {
-                self.table.insert_at(h, gi, si, value, ());
+            ProbeResult::InsertSlot(gi, si, full_mask) => {
+                self.table.insert_at(h, gi, si, value, (), full_mask);
                 true
             }
             ProbeResult::NotFound => {
