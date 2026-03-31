@@ -279,29 +279,107 @@ outweighs the miss regression for typical usage patterns.
 
 ---
 
-## Remaining Ideas (not yet attempted)
+## Attempt 8: IsAvalanching Trait with Specialization
+**Status: PARTIAL — trait exported, auto-dispatch reverted**
 
-### Medium Priority
-1. **IsAvalanching trait** — Allow hash functions that already provide good
-   avalanche (ahash, FxHash) to skip the Fibonacci post-mixer entirely.
-   Boost does this. Would need a marker trait on the BuildHasher.
+### Changes
+Added `IsAvalanching` marker trait for hash builders with good avalanche.
+Implemented for `ahash::RandomState` behind `ahash` feature flag.
+Attempted `#![feature(specialization)]` for automatic dispatch.
 
-2. **Size-adaptive allocation strategy** — Use single allocation for small
-   tables (≤4 groups / 60 elements) where TLB isn't an issue, two allocations
-   for large tables. The single allocation helped lookup at 1M by 27% but
-   hurt insert by 40%. A hybrid might capture both wins.
+### Results
+The specialization-based `default fn compute_hash()` caused a ~10% regression
+on the default (std RandomState) path. The `default fn` keyword prevents the
+compiler from fully inlining the trait method — it must go through a vtable-like
+dispatch since specialization could override it.
 
-### Lower Priority
-3. **Specialized small-table path** — For ≤1 group, skip the probe loop
-   entirely and do a direct SIMD match on the single group.
+### Decision
+Kept the trait and `hash_no_mix()` helper as public API for manual opt-in.
+Reverted the automatic specialization dispatch. Users who construct maps with
+`with_hasher(ahash::RandomState::new())` can benefit, but must build the map
+to opt in — the map's internal hash_key still applies the mixer unconditionally.
 
-4. **Reserve / shrink_to_fit** — Standard API completeness.
+---
 
-5. **Drain iterator** — Consuming iterator that removes elements.
+## Attempt 9: Size-Adaptive Allocation
+**Status: SKIPPED**
 
-6. **Anti-drift growth headroom** — Already correct; Boost's `size/61 + 1`
-   formula doesn't meaningfully differ from our current approach.
+### Analysis
+Would use single allocation for small tables (≤4 groups) and two allocations
+for large tables. However:
+- Single allocation only improved 1M lookup by 9% (41ms→37.5ms) beyond what
+  prefetch already provides
+- Adds significant complexity (branching on alloc mode in allocate/deallocate/
+  rehash, tracking allocation strategy)
+- Small tables already fit in L1 cache with two allocations
 
-7. **Conditional prefetch** — Only prefetch buckets when the match mask is
-   non-empty (avoid wasting prefetch on miss path). Tricky because the
-   prefetch needs to happen BEFORE the comparison completes.
+Complexity not justified for marginal gains.
+
+---
+
+## Attempt 10: Single-Group Fast Path
+**Status: KEPT**
+
+### Changes
+Added `if self.num_groups == 1` fast path at the top of `find_by_hash`.
+Skips the probe loop, overflow bit check, and prefetch entirely. Just does
+one SIMD match on the single group.
+
+### Results
+Affects only tiny tables (≤13 elements). Not visible in standard benchmarks
+(1K+). The branch is always not-taken for larger tables and costs ~0 after
+branch predictor warmup.
+
+### Decision
+Kept. Zero cost for large tables, small benefit for tiny tables.
+
+---
+
+## Attempt 11: Conditional Prefetch (only on match)
+**Status: REVERTED**
+
+### Changes
+Only issue bucket prefetch when `match_byte` returns a non-empty bitmask
+(i.e., we have candidates to check). Avoids wasted prefetches on miss path.
+
+### Results
+No improvement on miss path. The `if matches.any_set()` branch adds latency
+before the prefetch can issue, delaying the memory fetch on the hit path.
+The cost of a wasted prefetch (~1 cycle) is much less than the cost of
+delaying a needed prefetch by a branch (~5-10 cycles of branch resolution).
+
+### Decision
+Reverted. Unconditional prefetch is better — fire-and-forget.
+
+---
+
+## All Attempts Summary
+
+| # | Technique | Status | Key Finding |
+|---|-----------|--------|-------------|
+| 1 | Aligned SIMD loads + prefetch + cold paths | **Kept** | 15% lookup improvement |
+| 2 | Single allocation (buckets-first) | Reverted | +40% insert regression |
+| 3 | Single allocation (metadata-first) | Reverted | Worse than #2 |
+| 4 | splitmix64 hash mixer | Reverted | +32-86% regression |
+| 5 | Fused find-or-locate | **Kept** | Entry API avoids double probe |
+| 6 | SIMD IntoIter | **Kept** | Consistency |
+| 7 | Initial bucket prefetch | **Kept** | 11% hit improvement, 21% miss regression |
+| 8 | IsAvalanching auto-dispatch | **Partial** | Specialization hurts default path |
+| 9 | Size-adaptive allocation | Skipped | Not worth complexity |
+| 10 | Single-group fast path | **Kept** | Zero-cost for large tables |
+| 11 | Conditional prefetch | Reverted | Branch overhead > wasted prefetch cost |
+
+## Remaining Ideas
+
+### API Completeness
+1. **Reserve / shrink_to_fit**
+2. **Drain iterator**
+3. **retain() method**
+
+### Performance (diminishing returns)
+4. **Manual ahash integration** — Provide a type alias
+   `type AHashMap<K,V> = UnorderedFlatMap<K,V,ahash::RandomState>` that
+   uses `hash_no_mix` internally, without specialization overhead.
+5. **NEON/ARM support** — Current SIMD path is x86_64-only.
+6. **Prefetch depth tuning** — Experiment with prefetching 2 groups ahead
+   instead of 1.
