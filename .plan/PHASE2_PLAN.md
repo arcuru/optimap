@@ -5,27 +5,27 @@ Ordered by expected impact × feasibility.
 
 ## Batch 1: Low-risk hot-path improvements
 
-### P1: Precompute bucket stride in RawTable
-- Store `bucket_stride = GROUP_SIZE * size_of::<(K,V)>()` in struct
-- Replace `bucket_ptr`'s per-call `size_of` + multiply-by-15
-- Touches every probe loop iteration
-- **Target**: lookup hit, insert, entry API
+### P1: Precompute bucket stride in RawTable — REVERTED
+- Storing runtime `group_stride` field replaced compile-time constant multiply
+- Compiler already optimizes `(gi * 15 + si) * size_of` via lea+shift
+- Runtime field load from struct was slower than the constant-folded math
+- **Result**: Slight regression, reverted
 
-### P3: Eliminate Borrow indirection in insert/entry
+### P3: Eliminate Borrow indirection in insert/entry — TODO
 - Add `find_by_hash_eq(&K)` that compares directly without Borrow trait
 - Use from insert() and entry() where we already have `&K`
 - Keep Borrow path for get()/remove() where Q may differ
 - **Target**: lookup hit, entry API
 
-### P7: Overflow-only prefetch in find_by_hash
-- Add prefetch back, but ONLY after overflow-bit check (not at start)
-- Targets multi-probe lookups without hurting miss path
+### P7: Overflow-only prefetch in find_by_hash — DONE
+- Prefetch next group metadata + buckets only after overflow-bit check
+- Doesn't fire on miss fast path (which terminates at overflow check)
 - **Target**: lookup hit at large sizes
 
-### P8: Fused match_byte + match_empty SIMD op
+### P8: Fused match_byte + match_empty SIMD op — DONE
 - `Group::match_byte_and_empty(ptr, value) -> (BitMask, BitMask)`
 - One load, two compares, two movemask
-- Saves one SIMD load per probe step in find_or_locate
+- Used in find_or_locate to avoid double SIMD load per probe step
 - **Target**: insert, entry API
 
 ## Batch 2: find_or_locate restructuring
