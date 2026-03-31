@@ -353,13 +353,81 @@ Reverted. Unconditional prefetch is better — fire-and-forget.
 
 ---
 
+## Attempt 12: Switch Default Hasher to foldhash
+**Status: KEPT**
+
+### Changes
+Replace `std::hash::RandomState` (SipHash) with `foldhash::fast::RandomState`
+as the default hasher — the same fast hasher used by hashbrown. Since foldhash
+is avalanching, the Fibonacci post-mixer is skipped entirely (hash_no_mix).
+
+### Results
+By far the largest single improvement across all attempts:
+| Benchmark | Before (SipHash+mixer) | After (foldhash, no mixer) | Change |
+|-----------|----------------------:|---------------------------:|-------:|
+| insert 1K | 15.0 µs | 4.4 µs | **3.4x faster** |
+| insert 1M | 38.9 ms | 19.1 ms | **2x faster** |
+| lookup_hit 1K | 12.7 µs | 2.2 µs | **5.8x faster** |
+| lookup_hit 1M | 36.1 ms | 11.3 ms | **3.2x faster** |
+| lookup_miss 1K | 11.1 µs | 1.5 µs | **7.4x faster** |
+| mixed 10K | 132 µs | 34.5 µs | **3.8x faster** |
+
+### Decision
+Kept. The hasher was the bottleneck all along.
+
+---
+
+## Attempt 13: Single Allocation Re-test (with foldhash)
+**Status: REVERTED (same pattern as before)**
+
+### Rationale for Re-test
+The original single-allocation test (Attempt 2) was done with SipHash+mixer,
+where hashing dominated the cost. With foldhash, hashing is ~10x cheaper,
+so memory layout effects should be proportionally larger. Re-tested to see
+if the trade-off changed.
+
+### Results (single alloc vs two-alloc, both with foldhash)
+| Benchmark | Two-alloc | Single-alloc | Change |
+|-----------|----------:|-------------:|-------:|
+| insert 1K | 7.2 µs | 8.0 µs | +12% |
+| insert 10K | 68.8 µs | 54.9 µs | **-20%** |
+| insert 100K | 727 µs | 722 µs | flat |
+| **insert 1M** | 20.5 ms | 34.1 ms | **+66%** |
+| lookup_hit 100K | 324 µs | 312 µs | **-4%** |
+| **lookup_hit 1M** | 11.9 ms | 11.0 ms | **-7%** |
+| lookup_miss 100K | 255 µs | 266 µs | +4% |
+| lookup_miss 1M | 3.93 ms | 4.08 ms | +4% |
+| high_load hit 1M | 13.3 ms | 12.1 ms | **-9%** |
+| high_load miss 1M | 3.94 ms | 3.67 ms | **-7%** |
+| miss_ratio 50% 100K | 296 µs | 272 µs | **-8%** |
+| miss_ratio 100% 100K | 302 µs | 289 µs | **-4%** |
+
+### Analysis
+Same fundamental trade-off as before:
+- **1M insert: +66% regression** — rehashing allocates old+new (both huge),
+  TLB thrashing during element migration
+- **1M lookup: -7 to -9% improvement** — single allocation reduces TLB
+  misses on the access path
+- **10K insert: -20% improvement** — one alloc call vs two helps at medium scale
+- **100K misses: +4%** — slight regression from larger working set
+
+The 1M insert regression is still a dealbreaker. The rehash path dominates:
+with single alloc, we need ~17MB old + ~34MB new simultaneously, vs
+~1MB metadata + ~16MB buckets + ~2MB metadata + ~32MB buckets with two allocs.
+The two-alloc approach keeps the metadata compact and hot.
+
+### Decision
+Reverted. Two allocations remain better for insert-heavy workloads.
+
+---
+
 ## All Attempts Summary
 
 | # | Technique | Status | Key Finding |
 |---|-----------|--------|-------------|
 | 1 | Aligned SIMD loads + prefetch + cold paths | **Kept** | 15% lookup improvement |
-| 2 | Single allocation (buckets-first) | Reverted | +40% insert regression |
-| 3 | Single allocation (metadata-first) | Reverted | Worse than #2 |
+| 2 | Single allocation (buckets-first, SipHash) | Reverted | +40% insert regression |
+| 3 | Single allocation (metadata-first, SipHash) | Reverted | Worse than #2 |
 | 4 | splitmix64 hash mixer | Reverted | +32-86% regression |
 | 5 | Fused find-or-locate | **Kept** | Entry API avoids double probe |
 | 6 | SIMD IntoIter | **Kept** | Consistency |
@@ -368,18 +436,22 @@ Reverted. Unconditional prefetch is better — fire-and-forget.
 | 9 | Size-adaptive allocation | Skipped | Not worth complexity |
 | 10 | Single-group fast path | **Kept** | Zero-cost for large tables |
 | 11 | Conditional prefetch | Reverted | Branch overhead > wasted prefetch cost |
+| 12 | foldhash default hasher | **Kept** | 3-7x faster across all operations |
+| 13 | Single allocation re-test (foldhash) | Reverted | +66% insert 1M still dealbreaker |
 
 ## Remaining Ideas
 
-### API Completeness
-1. **Reserve / shrink_to_fit**
-2. **Drain iterator**
-3. **retain() method**
+### Performance
+1. **Interleaved layout** — Instead of [all buckets][all metadata] or separate
+   allocs, try [group0_meta 16B][group0_buckets][group1_meta][group1_buckets]...
+   Each group's metadata is adjacent to its buckets. Fundamentally different
+   from what was tested — should have excellent cache locality per-group.
+2. **Prefetch depth tuning** — Prefetch 2 groups ahead instead of 1.
+3. **Remove initial bucket prefetch** — Re-test now that foldhash is much
+   faster; the hardware prefetcher may handle this better with shorter
+   hash computation latency.
 
-### Performance (diminishing returns)
-4. **Manual ahash integration** — Provide a type alias
-   `type AHashMap<K,V> = UnorderedFlatMap<K,V,ahash::RandomState>` that
-   uses `hash_no_mix` internally, without specialization overhead.
-5. **NEON/ARM support** — Current SIMD path is x86_64-only.
-6. **Prefetch depth tuning** — Experiment with prefetching 2 groups ahead
-   instead of 1.
+### API Completeness
+4. **Reserve / shrink_to_fit**
+5. **Drain iterator**
+6. **retain() method**
