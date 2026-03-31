@@ -218,8 +218,21 @@ impl<K, V> RawTable<K, V> {
         }
 
         let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
         let mut gi = self.group_index(h);
+
+        // Fast path for single-group tables: no overflow possible, no probe loop.
+        if self.num_groups == 1 {
+            let meta = unsafe { self.meta_ptr(0) };
+            for si in unsafe { Group::match_byte(meta, reduced) } {
+                let bucket = unsafe { &*self.bucket_ptr(0, si) };
+                if eq(&bucket.0) {
+                    return Some((0, si));
+                }
+            }
+            return None;
+        }
+
+        let ofw_bit = overflow_bit(h);
         let mut probe = 0usize;
 
         // Prefetch the first group's bucket region while metadata loads.
