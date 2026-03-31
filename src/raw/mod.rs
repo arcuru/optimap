@@ -222,6 +222,9 @@ impl<K, V> RawTable<K, V> {
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
 
+        // Prefetch the first group's bucket region while metadata loads.
+        unsafe { Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8); }
+
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
 
@@ -239,10 +242,9 @@ impl<K, V> RawTable<K, V> {
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.group_mask;
 
-            // Prefetch next group's metadata and first bucket slot
+            // Prefetch next group's metadata and bucket region
             unsafe {
-                let next_meta = self.meta_ptr(gi);
-                Group::prefetch_read(next_meta);
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }
