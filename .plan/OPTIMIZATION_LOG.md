@@ -146,64 +146,162 @@ which is a larger API change.
 
 ---
 
-## Current State (post-optimizations)
+## Attempt 5: Fused find-or-locate Probe
+**Status: KEPT**
 
-Kept changes: aligned SIMD loads, prefetching, needs_drop, SIMD iteration paths,
-inline annotations, cold grow paths.
+### Changes
+Added `find_or_locate()` that tracks the first empty slot during the lookup
+probe. Returns `Found(gi,si)`, `InsertSlot(gi,si)`, or `NotFound`.
+- `map.insert()` uses fused probe when not at capacity
+- `map.entry()` pre-locates the insertion slot in `VacantEntry`
+- `set.insert()` uses fused probe similarly
+- Falls back to `insert_no_check` when `NotFound` (all probed groups full)
 
-### Numbers vs Baseline
-| Benchmark | Baseline | Current | Change |
-|-----------|----------|---------|--------|
-| insert_u64 1K | 14.1 µs | 15.9 µs | +13%* |
-| insert_u64 10K | 143.6 µs | 143.8 µs | flat |
-| insert_u64 100K | 1.55 ms | 1.54 ms | flat |
-| insert_u64 1M | 34.0 ms | 35.4 ms | +4% |
-| lookup_hit 1K | 12.1 µs | 12.5 µs | +3%* |
-| lookup_hit 10K | 122.3 µs | 123.8 µs | +1% |
-| lookup_hit 100K | 1.35 ms | 1.33 ms | -1% |
-| lookup_hit 1M | 51.5 ms | 43.6 ms | **-15%** |
-| mixed 10K | 125.0 µs | 123.4 µs | -1% |
-| mixed 100K | 1.84 ms | 1.79 ms | **-3%** |
-| ahash insert 1M | 13.1 ms | 13.8 ms | +5% |
-| ahash lookup 1M | 16.1 ms | 14.9 ms | **-7%** |
+### Results
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| insert_u64 1K | 14.5 µs | 14.0 µs | **-3%** |
+| insert_u64 10K | 143 µs | 146 µs | +2% |
+| insert_u64 100K | 1.54 ms | 1.57 ms | +2% |
+| insert_u64 1M | 35.4 ms | 35.1 ms | flat |
 
-*Small-size regressions within noise/recompile variance.
+### Analysis
+Mixed results on raw insert (small improvement at 1K, slight overhead at
+10K-100K from tracking `first_empty` Option in the hot loop). Main benefit
+is architectural: entry().or_insert() avoids a duplicate probe walk.
+
+### Decision
+Kept. The entry API improvement is valuable even if raw insert doesn't
+benefit at all sizes.
+
+---
+
+## Attempt 6: SIMD-accelerated IntoIter
+**Status: KEPT**
+
+### Changes
+Replaced scalar byte-checking IntoIter (`meta >= 2` per slot) with SIMD
+`Group::match_non_empty()` bitmask iteration, matching the SlotIter design.
+
+### Decision
+Kept. Consistent with the rest of the codebase, no regression expected.
+
+---
+
+## Attempt 7: Initial Bucket Prefetch in find_by_hash
+**Status: KEPT (with trade-off noted)**
+
+### Changes
+Added `Group::prefetch_read(bucket_ptr(gi, 0))` at the start of `find_by_hash`,
+before the first SIMD metadata comparison. This overlaps the bucket memory
+fetch with the metadata load.
+
+### Results
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| lookup_hit 1K | 12.5 µs | 12.3 µs | -2% |
+| lookup_hit 100K | 1.33 ms | 1.30 ms | **-2.4%** |
+| lookup_hit 1M | 43.6 ms | 38.6 ms | **-11%** |
+| lookup_miss 1K | 11.2 µs | 11.4 µs | +2% |
+| lookup_miss 100K | 1.31 ms | 1.35 ms | +3% |
+| lookup_miss 1M | 13.1 ms | 15.8 ms | **+21%** |
+
+### Analysis
+Trades miss performance for hit performance. On a hit, the prefetched bucket
+data is ready when we dereference it. On a miss, the prefetch is wasted and
+pollutes the cache/prefetch queue. Hit-dominated workloads benefit significantly.
+
+### Decision
+Kept. Most real workloads are hit-dominated. The 11% hit improvement at 1M
+outweighs the miss regression for typical usage patterns.
+
+---
+
+## Final State (all optimizations applied)
+
+### Final Numbers (absolute, full benchmark suite)
+| Benchmark | ours | std | hashbrown | indexmap |
+|-----------|-----:|----:|----------:|--------:|
+| **insert_u64 1K** | 14.1 µs | 12.6 µs | 3.5 µs | 13.7 µs |
+| **insert_u64 10K** | 150.7 µs | 125.3 µs | 35.3 µs | 141.5 µs |
+| **insert_u64 100K** | 1.54 ms | 1.36 ms | 448 µs | 1.56 ms |
+| **insert_u64 1M** | 39.0 ms | 63.1 ms | 24.8 ms | 41.4 ms |
+| **lookup_hit 1K** | 12.3 µs | 8.0 µs | 1.7 µs | 8.3 µs |
+| **lookup_hit 10K** | 124.1 µs | 80.2 µs | 18.1 µs | 89.6 µs |
+| **lookup_hit 100K** | 1.32 ms | 1.09 ms | 257 µs | 1.19 ms |
+| **lookup_hit 1M** | 41.2 ms | 59.3 ms | 15.5 ms | 44.2 ms |
+| **lookup_miss 1K** | 11.4 µs | 6.9 µs | 930 ns | — |
+| **lookup_miss 100K** | 1.36 ms | 1.17 ms | 404 µs | — |
+| **lookup_miss 1M** | 16.3 ms | 15.2 ms | 4.6 ms | — |
+| **mixed 10K** | 133 µs | 124 µs | 30.3 µs | — |
+| **mixed 100K** | 1.86 ms | 1.79 ms | 831 µs | — |
+| **string insert 1K** | 38.7 µs | 41.6 µs | 35.3 µs | — |
+| **string lookup 1K** | 10.7 µs | 13.2 µs | 4.3 µs | — |
+| **string insert 10K** | 458 µs | 479 µs | 383 µs | — |
+| **string lookup 10K** | 126 µs | 170 µs | 62.0 µs | — |
+| **iteration 1K** | 620 ns | 423 ns | 420 ns | — |
+| **iteration 100K** | 63.3 µs | 41.1 µs | 41.3 µs | — |
+| **iteration 1M** | 1.43 ms | 1.37 ms | 1.39 ms | — |
+| **grow_from_empty 1K** | 27.9 µs | 32.6 µs | 13.7 µs | — |
+| **grow_from_empty 100K** | 2.47 ms | 2.65 ms | 1.06 ms | — |
+| **ahash insert 10K** | 50.3 µs | 48.1 µs | — | — |
+| **ahash insert 1M** | 15.5 ms | 38.3 ms | — | — |
+| **ahash lookup 10K** | 32.1 µs | 21.3 µs | — | — |
+| **ahash lookup 1M** | 18.0 ms | 17.1 ms | — | — |
+
+### Where We Win vs std::HashMap
+- **Insert at 1M**: 39ms vs 63ms (**38% faster**)
+- **Lookup hit at 1M**: 41ms vs 59ms (**30% faster**)
+- **String insert** at all sizes (1K-10K)
+- **String lookup** at all sizes (**25-35% faster**)
+- **Grow from empty** at all sizes (~7% faster)
+
+### Where We Lose vs hashbrown
+- **Everything at small-medium sizes**: 3-8x slower (hashbrown's Swiss table
+  is extremely mature with years of optimization)
+- **Lookup at all sizes**: even at 1M we're 2.7x slower
+- **Iteration**: 1.5x slower except at 1M where we're close
+
+### Summary of Changes vs Original Baseline
+| Change | Status | Impact |
+|--------|--------|--------|
+| Aligned SIMD loads (`_mm_load_si128`) | Kept | Negligible alone |
+| Prefetch on overflow to next group | Kept | ~5% lookup improvement at 1M |
+| Initial bucket prefetch in find_by_hash | Kept | ~11% lookup_hit improvement, ~21% miss regression |
+| `needs_drop` skip in Drop/clear | Kept | Faster for Copy types |
+| SIMD `match_non_empty` in Drop/clear/clone/rehash | Kept | Cleaner, potentially faster |
+| `#[cold]`/`#[inline(never)]` grow paths | Kept | Better code layout |
+| Fused find-or-locate probe | Kept | ~3% insert_1K improvement, entry API benefit |
+| SIMD IntoIter | Kept | Consistency, skips empty groups |
+| Single allocation (buckets-first) | **Reverted** | +40% insert regression at 1M |
+| Single allocation (metadata-first) | **Reverted** | Worse than buckets-first |
+| splitmix64/xmx hash mixer | **Reverted** | +32-86% regression without avalanche opt-out |
 
 ---
 
 ## Remaining Ideas (not yet attempted)
 
-### High Priority
-1. **Fused find-or-insert for entry API** — Currently entry() does find(),
-   then VacantEntry::insert() does insert_no_check() with a second probe.
-   A fused operation would find the insertion slot during the lookup probe
-   and reuse it, avoiding the second probe entirely.
-
-2. **Anti-drift growth headroom** — Boost uses `ceil((size + size/61 + 1) / mlf)`
-   to prevent repeated resize cycles after heavy delete-insert patterns.
-   Our current approach only decrements max_load on deletion, which can cause
-   premature rehashes.
-
 ### Medium Priority
-3. **Size-adaptive allocation strategy** — Use single allocation for small
-   tables (≤4 groups / 60 elements) where TLB isn't an issue, two allocations
-   for large tables.
-
-4. **Prefetch bucket during SIMD match** — Currently we prefetch on overflow
-   to the next group. We could also prefetch the first match candidate's
-   bucket while the SIMD comparison is completing.
-
-5. **IsAvalanching trait** — Allow hash functions that already provide good
+1. **IsAvalanching trait** — Allow hash functions that already provide good
    avalanche (ahash, FxHash) to skip the Fibonacci post-mixer entirely.
    Boost does this. Would need a marker trait on the BuildHasher.
 
+2. **Size-adaptive allocation strategy** — Use single allocation for small
+   tables (≤4 groups / 60 elements) where TLB isn't an issue, two allocations
+   for large tables. The single allocation helped lookup at 1M by 27% but
+   hurt insert by 40%. A hybrid might capture both wins.
+
 ### Lower Priority
-6. **Specialized small-table path** — For ≤1 group, skip the probe loop
+3. **Specialized small-table path** — For ≤1 group, skip the probe loop
    entirely and do a direct SIMD match on the single group.
 
-7. **Reserve / shrink_to_fit** — Standard API completeness.
+4. **Reserve / shrink_to_fit** — Standard API completeness.
 
-8. **Drain iterator** — Consuming iterator that removes elements.
+5. **Drain iterator** — Consuming iterator that removes elements.
 
-9. **IntoIter SIMD optimization** — Current IntoIter uses scalar byte checks;
-   could use match_non_empty like SlotIter.
+6. **Anti-drift growth headroom** — Already correct; Boost's `size/61 + 1`
+   formula doesn't meaningfully differ from our current approach.
+
+7. **Conditional prefetch** — Only prefetch buckets when the match mask is
+   non-empty (avoid wasting prefetch on miss path). Tricky because the
+   prefetch needs to happen BEFORE the comparison completes.
