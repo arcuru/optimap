@@ -283,38 +283,37 @@ impl<T> FusedIterator for SetIter<'_, T> {}
 pub struct SetIntoIter<T> {
     table: RawTable<T, ()>,
     group: usize,
-    slot: usize,
+    current_mask: crate::raw::bitmask::BitMask,
 }
 
 impl<T> Iterator for SetIntoIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        unsafe {
-            while self.group < self.table.num_groups {
-                while self.slot < crate::raw::group::GROUP_SIZE {
-                    let meta = *self
-                        .table
-                        .metadata
-                        .add(self.group * crate::raw::group::META_GROUP_BYTES + self.slot);
-                    let gi = self.group;
-                    let si = self.slot;
-                    self.slot += 1;
-                    if meta >= 2 {
-                        let ptr = self.table.bucket_ptr(gi, si);
-                        let (key, ()) = ptr.read();
-                        *self.table.metadata.add(
-                            gi * crate::raw::group::META_GROUP_BYTES + si,
-                        ) = crate::raw::group::EMPTY;
-                        self.table.len -= 1;
-                        return Some(key);
-                    }
+        loop {
+            if let Some(si) = self.current_mask.next() {
+                let gi = self.group;
+                unsafe {
+                    let ptr = self.table.bucket_ptr(gi, si);
+                    let (key, ()) = ptr.read();
+                    let meta = self.table.metadata.add(
+                        gi * crate::raw::group::META_GROUP_BYTES + si,
+                    );
+                    *meta = crate::raw::group::EMPTY;
+                    self.table.len -= 1;
+                    return Some(key);
                 }
-                self.group += 1;
-                self.slot = 0;
             }
+            self.group += 1;
+            if self.group >= self.table.num_groups {
+                return None;
+            }
+            self.current_mask = unsafe {
+                crate::raw::group::Group::match_non_empty(
+                    self.table.metadata.add(self.group * crate::raw::group::META_GROUP_BYTES)
+                )
+            };
         }
-        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -340,10 +339,15 @@ impl<T, S> IntoIterator for UnorderedFlatSet<T, S> {
     fn into_iter(self) -> SetIntoIter<T> {
         let table = unsafe { std::ptr::read(&self.table) };
         std::mem::forget(self);
+        let mask = if table.metadata.is_null() {
+            crate::raw::bitmask::BitMask(0)
+        } else {
+            unsafe { crate::raw::group::Group::match_non_empty(table.metadata) }
+        };
         SetIntoIter {
             table,
             group: 0,
-            slot: 0,
+            current_mask: mask,
         }
     }
 }
