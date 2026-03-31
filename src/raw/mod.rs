@@ -249,6 +249,12 @@ impl<K, V> RawTable<K, V> {
 
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.group_mask;
+
+            // Prefetch only on overflow — doesn't fire on miss path
+            unsafe {
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+            }
         }
     }
 
@@ -325,8 +331,10 @@ impl<K, V> RawTable<K, V> {
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
 
-            // Check for matching keys
-            for si in unsafe { Group::match_byte(meta, reduced) } {
+            // Single SIMD load: check both matching keys and empty slots
+            let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+            for si in matches {
                 let bucket = unsafe { &*self.bucket_ptr(gi, si) };
                 if eq(&bucket.0) {
                     return ProbeResult::Found(gi, si);
@@ -335,7 +343,7 @@ impl<K, V> RawTable<K, V> {
 
             // Track first empty slot
             if first_empty.is_none() {
-                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                if let Some(si) = empties.lowest_set_bit() {
                     first_empty = Some((gi, si));
                 }
             }

@@ -83,6 +83,22 @@ impl Group {
         }
     }
 
+    /// Return both match and empty bitmasks with a single SIMD load.
+    /// SAFETY: `ptr` must be 16-byte aligned.
+    #[inline(always)]
+    pub unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask, BitMask) {
+        unsafe {
+            let data = _mm_load_si128(ptr as *const __m128i);
+            let needle = _mm_set1_epi8(value as i8);
+            let zero = _mm_setzero_si128();
+            let match_cmp = _mm_cmpeq_epi8(data, needle);
+            let empty_cmp = _mm_cmpeq_epi8(data, zero);
+            let match_mask = _mm_movemask_epi8(match_cmp) as u16;
+            let empty_mask = _mm_movemask_epi8(empty_cmp) as u16;
+            (BitMask(match_mask & 0x7FFF), BitMask(empty_mask & 0x7FFF))
+        }
+    }
+
     /// Prefetch a cache line for temporal read access.
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
@@ -149,6 +165,11 @@ impl Group {
             }
         }
         BitMask(mask)
+    }
+
+    #[inline(always)]
+    pub unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask, BitMask) {
+        unsafe { (Self::match_byte(ptr, value), Self::match_empty(ptr)) }
     }
 
     #[inline(always)]
