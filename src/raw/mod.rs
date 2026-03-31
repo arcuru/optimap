@@ -20,10 +20,17 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 }
 
 /// The core hash table engine.
+///
+/// Two separate allocations:
+///   - metadata: (num_groups + 1) * 16 bytes, 16-byte aligned
+///   - buckets: num_groups * 15 * sizeof((K,V))
+///
+/// This layout keeps the metadata array compact (fits in L2/L3 at large
+/// sizes), avoiding TLB pressure from a single large allocation.
 pub struct RawTable<K, V> {
     pub(crate) num_groups: usize,
     pub(crate) metadata: *mut u8,
-    pub(crate) buckets: *mut u8,
+    buckets: *mut u8,
     pub(crate) len: usize,
     pub(crate) max_load: usize,
     /// group_index = hash >> shift. For num_groups=1, shift=64 but we mask.
@@ -85,7 +92,7 @@ impl<K, V> RawTable<K, V> {
         let bucket_size = std::mem::size_of::<(K, V)>();
         let bucket_align = std::mem::align_of::<(K, V)>();
 
-        // Metadata: (num_groups + 1) * 16 bytes, 16-byte aligned
+        // Metadata: (num_groups + 1) * 16 bytes, 16-byte aligned for SSE2
         let meta_size = (num_groups + 1) * META_GROUP_BYTES;
         let meta_layout = Layout::from_size_align(meta_size, 16).unwrap();
 
@@ -110,10 +117,8 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            // Zero all metadata (empty groups) + sentinel in one memset,
-            // then write the sentinel byte.
+            // Zero all metadata (empty groups) + sentinel
             ptr::write_bytes(self.metadata, 0, meta_size);
-            // Sentinel: first byte of the last group
             *self.metadata.add(num_groups * META_GROUP_BYTES) = group::SENTINEL;
         }
 
@@ -145,12 +150,10 @@ impl<K, V> RawTable<K, V> {
     /// Map hash to group index.
     #[inline(always)]
     fn group_index(&self, h: u64) -> usize {
-        // Shift extracts the high bits, mask constrains to valid range.
-        // When num_groups=1, group_mask=0 so result is always 0.
         (h.wrapping_shr(self.shift) as usize) & self.group_mask
     }
 
-    /// Pointer to group metadata.
+    /// Pointer to group metadata (16-byte aligned).
     #[inline(always)]
     unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
         unsafe { self.metadata.add(gi * META_GROUP_BYTES) }
@@ -193,7 +196,7 @@ impl<K, V> RawTable<K, V> {
         self.find_by_hash(h, |k| k == key)
     }
 
-    /// Core lookup: SIMD match + overflow-bit probe termination.
+    /// Core lookup: SIMD match (aligned) + overflow-bit probe termination + prefetch.
     #[inline(always)]
     pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
@@ -224,6 +227,13 @@ impl<K, V> RawTable<K, V> {
 
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.group_mask;
+
+            // Prefetch next group's metadata and first bucket slot
+            unsafe {
+                let next_meta = self.meta_ptr(gi);
+                Group::prefetch_read(next_meta);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+            }
         }
     }
 
@@ -236,7 +246,6 @@ impl<K, V> RawTable<K, V> {
         unsafe {
             let bucket = self.bucket_ptr(gi, si).read();
 
-            // Mark slot as empty — direct byte write, no load/store cycle
             let meta = self.meta_ptr(gi);
             Group::set_meta(meta, si, EMPTY);
 
@@ -267,7 +276,6 @@ impl<K, V> RawTable<K, V> {
             let meta = unsafe { self.meta_ptr(gi) };
 
             if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
-                // Direct byte write for metadata
                 unsafe {
                     Group::set_meta(meta, si, reduced);
                     self.bucket_ptr(gi, si).write((key, value));
@@ -276,7 +284,7 @@ impl<K, V> RawTable<K, V> {
                 return (gi, si);
             }
 
-            // Group full — set overflow bit directly
+            // Group full — set overflow bit
             unsafe { Group::set_overflow_bit(meta, ofw_bit); }
 
             probe += 1;
@@ -308,16 +316,13 @@ impl<K, V> RawTable<K, V> {
         unsafe {
             for gi in 0..old_num_groups {
                 let group_meta = old_metadata.add(gi * META_GROUP_BYTES);
-                for si in 0..GROUP_SIZE {
-                    let meta = *group_meta.add(si);
-                    if meta >= 2 {
-                        let old_bucket = old_buckets
-                            .add((gi * GROUP_SIZE + si) * bucket_size)
-                            .cast::<(K, V)>();
-                        let (key, value) = old_bucket.read();
-                        let h = Self::hash_key(&key, hash_builder);
-                        self.insert_no_check(h, key, value);
-                    }
+                for si in Group::match_non_empty(group_meta) {
+                    let old_bucket = old_buckets
+                        .add((gi * GROUP_SIZE + si) * bucket_size)
+                        .cast::<(K, V)>();
+                    let (key, value) = old_bucket.read();
+                    let h = Self::hash_key(&key, hash_builder);
+                    self.insert_no_check(h, key, value);
                 }
             }
 
@@ -418,18 +423,15 @@ impl<K, V> RawTable<K, V> {
         }
 
         unsafe {
-            // Drop all occupied elements
-            for gi in 0..self.num_groups {
-                let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
-                for si in 0..GROUP_SIZE {
-                    let meta = *group_meta.add(si);
-                    if meta >= 2 {
+            if std::mem::needs_drop::<(K, V)>() {
+                for gi in 0..self.num_groups {
+                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    for si in Group::match_non_empty(group_meta) {
                         ptr::drop_in_place(self.bucket_ptr(gi, si));
                     }
                 }
             }
 
-            // Zero all metadata + write sentinel
             let meta_size = self.num_groups * META_GROUP_BYTES;
             ptr::write_bytes(self.metadata, 0, meta_size);
             *self.metadata.add(self.num_groups * META_GROUP_BYTES) = group::SENTINEL;
@@ -458,16 +460,12 @@ impl<K, V> Drop for RawTable<K, V> {
         if self.metadata.is_null() {
             return;
         }
-        unsafe {
-            let bucket_size = std::mem::size_of::<(K, V)>();
-            for gi in 0..self.num_groups {
-                let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
-                for si in 0..GROUP_SIZE {
-                    let meta = *group_meta.add(si);
-                    if meta >= 2 {
-                        if bucket_size > 0 {
-                            ptr::drop_in_place(self.bucket_ptr(gi, si));
-                        }
+        if std::mem::needs_drop::<(K, V)>() {
+            unsafe {
+                for gi in 0..self.num_groups {
+                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    for si in Group::match_non_empty(group_meta) {
+                        ptr::drop_in_place(self.bucket_ptr(gi, si));
                     }
                 }
             }
@@ -493,16 +491,12 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
             ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
 
             let bucket_size = std::mem::size_of::<(K, V)>();
-            for gi in 0..self.num_groups {
-                let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
-                for si in 0..GROUP_SIZE {
-                    let meta = *group_meta.add(si);
-                    if meta >= 2 {
+            if bucket_size > 0 {
+                for gi in 0..self.num_groups {
+                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    for si in Group::match_non_empty(group_meta) {
                         let src = &*self.bucket_ptr(gi, si);
-                        let cloned = src.clone();
-                        if bucket_size > 0 {
-                            new_table.bucket_ptr(gi, si).write(cloned);
-                        }
+                        new_table.bucket_ptr(gi, si).write(src.clone());
                     }
                 }
             }
@@ -515,7 +509,6 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
 }
 
 /// SIMD-accelerated iterator over occupied slot positions.
-/// Uses match_non_empty to get a bitmask per group and iterates set bits.
 pub struct SlotIter<'a, K, V> {
     pub(crate) table: &'a RawTable<K, V>,
     group: usize,
@@ -528,16 +521,13 @@ impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
     #[inline]
     fn next(&mut self) -> Option<(usize, usize)> {
         loop {
-            // Try to get next set bit from current group mask
             if let Some(si) = self.current_mask.next() {
                 return Some((self.group, si));
             }
-            // Advance to next group
             self.group += 1;
             if self.group >= self.table.num_groups {
                 return None;
             }
-            // Load next group's non-empty mask
             self.current_mask = unsafe {
                 Group::match_non_empty(self.table.meta_ptr(self.group))
             };

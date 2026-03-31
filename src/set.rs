@@ -84,7 +84,7 @@ where
     T: Hash + Eq,
     S: BuildHasher,
 {
-    #[inline]
+    #[inline(always)]
     fn hash_key<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
         use std::hash::Hasher;
         let mut hasher = self.hash_builder.build_hasher();
@@ -93,6 +93,7 @@ where
     }
 
     /// Returns true if the set contains the given value.
+    #[inline]
     pub fn contains<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
@@ -103,6 +104,7 @@ where
     }
 
     /// Adds a value to the set. Returns true if newly inserted, false if already present.
+    #[inline]
     pub fn insert(&mut self, value: T) -> bool {
         if self.table.num_groups == 0 {
             self.table.allocate(1);
@@ -110,24 +112,31 @@ where
 
         let h = self.hash_key(&value);
 
-        if self.table.find_with_hash(&value, h).is_some() {
+        if self.table.find_by_hash(h, |v| v == &value).is_some() {
             return false;
         }
 
         if self.table.len >= self.table.max_load {
-            let new_groups = if self.table.num_groups == 0 {
-                1
-            } else {
-                self.table.num_groups * 2
-            };
-            self.table.rehash_with(new_groups, &self.hash_builder);
+            self.grow_and_rehash();
         }
 
         self.table.insert_no_check(h, value, ());
         true
     }
 
+    #[cold]
+    #[inline(never)]
+    fn grow_and_rehash(&mut self) {
+        let new_groups = if self.table.num_groups == 0 {
+            1
+        } else {
+            self.table.num_groups * 2
+        };
+        self.table.rehash_with(new_groups, &self.hash_builder);
+    }
+
     /// Removes a value from the set. Returns true if it was present.
+    #[inline]
     pub fn remove<Q>(&mut self, value: &Q) -> bool
     where
         T: Borrow<Q>,

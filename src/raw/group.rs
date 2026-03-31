@@ -33,6 +33,8 @@ pub fn overflow_bit(h: u64) -> u8 {
 /// No copying — all operations work on the metadata array directly via SSE2.
 ///
 /// Layout in memory: `[hi0, hi1, ..., hi14, overflow]`
+///
+/// All metadata pointers MUST be 16-byte aligned (enforced by allocator).
 #[cfg(target_arch = "x86_64")]
 pub struct Group;
 
@@ -40,10 +42,11 @@ pub struct Group;
 impl Group {
     /// Return a bitmask of slots matching `value` using SSE2.
     /// Only the lower 15 bits are meaningful.
+    /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
         unsafe {
-            let data = _mm_loadu_si128(ptr as *const __m128i);
+            let data = _mm_load_si128(ptr as *const __m128i);
             let needle = _mm_set1_epi8(value as i8);
             let cmp = _mm_cmpeq_epi8(data, needle);
             let mask = _mm_movemask_epi8(cmp) as u16;
@@ -52,23 +55,39 @@ impl Group {
     }
 
     /// Return a bitmask of empty slots.
+    /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
     pub unsafe fn match_empty(ptr: *const u8) -> BitMask {
-        unsafe { Self::match_byte(ptr, EMPTY) }
+        unsafe {
+            let data = _mm_load_si128(ptr as *const __m128i);
+            let zero = _mm_setzero_si128();
+            let cmp = _mm_cmpeq_epi8(data, zero);
+            let mask = _mm_movemask_epi8(cmp) as u16;
+            BitMask(mask & 0x7FFF)
+        }
     }
 
     /// Return a bitmask of non-empty slots (occupied or sentinel).
     /// Used for fast iteration — skip groups where this is zero.
+    /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
     pub unsafe fn match_non_empty(ptr: *const u8) -> BitMask {
         unsafe {
-            let data = _mm_loadu_si128(ptr as *const __m128i);
+            let data = _mm_load_si128(ptr as *const __m128i);
             let zero = _mm_setzero_si128();
             let cmp = _mm_cmpeq_epi8(data, zero);
             // cmp has 0xFF for empty, 0x00 for non-empty
             // movemask + invert gives us non-empty mask
             let mask = _mm_movemask_epi8(cmp) as u16;
             BitMask((!mask) & 0x7FFF)
+        }
+    }
+
+    /// Prefetch a cache line for temporal read access.
+    #[inline(always)]
+    pub unsafe fn prefetch_read(ptr: *const u8) {
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
         }
     }
 
@@ -133,6 +152,11 @@ impl Group {
     }
 
     #[inline(always)]
+    pub unsafe fn prefetch_read(_ptr: *const u8) {
+        // No-op on non-x86_64
+    }
+
+    #[inline(always)]
     pub unsafe fn has_overflow_bit(ptr: *const u8, bit: u8) -> bool {
         unsafe { (*ptr.add(GROUP_SIZE) & bit) != 0 }
     }
@@ -174,13 +198,17 @@ pub unsafe fn init_sentinel(ptr: *mut u8) {
 mod tests {
     use super::*;
 
-    fn make_empty() -> Vec<u8> {
-        vec![0u8; META_GROUP_BYTES]
+    fn make_aligned() -> Vec<u8> {
+        // Ensure 16-byte alignment for tests
+        let layout = std::alloc::Layout::from_size_align(META_GROUP_BYTES, 16).unwrap();
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        // Wrap in a struct that will dealloc, but for tests we leak
+        unsafe { Vec::from_raw_parts(ptr, META_GROUP_BYTES, META_GROUP_BYTES) }
     }
 
     #[test]
     fn empty_group() {
-        let buf = make_empty();
+        let buf = make_aligned();
         let ptr = buf.as_ptr();
         unsafe {
             let empty_mask = Group::match_empty(ptr);
@@ -191,7 +219,7 @@ mod tests {
 
     #[test]
     fn match_byte_single() {
-        let mut buf = make_empty();
+        let mut buf = make_aligned();
         buf[3] = 42;
         buf[7] = 42;
         buf[11] = 99;
@@ -205,7 +233,7 @@ mod tests {
 
     #[test]
     fn overflow_bits() {
-        let mut buf = make_empty();
+        let mut buf = make_aligned();
         let ptr = buf.as_mut_ptr();
         unsafe {
             assert!(!Group::has_overflow_bit(ptr, 0x04));
@@ -231,7 +259,7 @@ mod tests {
 
     #[test]
     fn non_empty_mask() {
-        let mut buf = make_empty();
+        let mut buf = make_aligned();
         buf[2] = 42;
         buf[5] = 99;
         buf[10] = 200;

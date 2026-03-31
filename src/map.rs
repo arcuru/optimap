@@ -88,7 +88,7 @@ where
     S: BuildHasher,
 {
     /// Compute the mixed hash for a key.
-    #[inline]
+    #[inline(always)]
     fn hash_key<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
         use std::hash::Hasher;
         let mut hasher = self.hash_builder.build_hasher();
@@ -97,6 +97,7 @@ where
     }
 
     /// Returns a reference to the value corresponding to the key.
+    #[inline]
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -109,6 +110,7 @@ where
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
+    #[inline]
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -121,6 +123,7 @@ where
     }
 
     /// Returns true if the map contains the given key.
+    #[inline]
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -132,6 +135,7 @@ where
     /// Inserts a key-value pair into the map.
     ///
     /// If the key already exists, the value is replaced and the old value is returned.
+    #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         if self.table.num_groups == 0 {
             self.table.allocate(1);
@@ -139,26 +143,34 @@ where
 
         let h = self.hash_key(&key);
 
-        if let Some((gi, si)) = self.table.find_with_hash(&key, h) {
+        if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
             let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
             let old = std::mem::replace(&mut bucket.1, value);
             return Some(old);
         }
 
+        // Cold path: capacity check and possible rehash
         if self.table.len >= self.table.max_load {
-            let new_groups = if self.table.num_groups == 0 {
-                1
-            } else {
-                self.table.num_groups * 2
-            };
-            self.table.rehash_with(new_groups, &self.hash_builder);
+            self.grow_and_rehash();
         }
 
         self.table.insert_no_check(h, key, value);
         None
     }
 
+    #[cold]
+    #[inline(never)]
+    fn grow_and_rehash(&mut self) {
+        let new_groups = if self.table.num_groups == 0 {
+            1
+        } else {
+            self.table.num_groups * 2
+        };
+        self.table.rehash_with(new_groups, &self.hash_builder);
+    }
+
     /// Removes a key from the map, returning the value if it was present.
+    #[inline]
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
