@@ -1,33 +1,35 @@
 use std::borrow::Borrow;
-use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 
 use crate::raw::{RawTable, ProbeResult};
-use crate::raw::hash::mix_hash;
+use crate::raw::hash;
+
+/// Default hasher for the set. Uses foldhash for speed.
+pub type DefaultHashBuilder = foldhash::fast::RandomState;
 
 /// A hash set using open addressing with SIMD-accelerated group probing,
 /// inspired by `boost::unordered_flat_set`.
 ///
 /// Backed by the same engine as [`UnorderedFlatMap`], but stores only keys
 /// (values are zero-sized `()`).
-pub struct UnorderedFlatSet<T, S = RandomState> {
+pub struct UnorderedFlatSet<T, S = DefaultHashBuilder> {
     table: RawTable<T, ()>,
     hash_builder: S,
 }
 
 // ── Constructors ────────────────────────────────────────────────────────────
 
-impl<T> UnorderedFlatSet<T, RandomState> {
+impl<T> UnorderedFlatSet<T, DefaultHashBuilder> {
     /// Creates an empty set.
     pub fn new() -> Self {
-        Self::with_hasher(RandomState::new())
+        Self::with_hasher(DefaultHashBuilder::default())
     }
 
     /// Creates an empty set with at least the specified capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self::with_capacity_and_hasher(capacity, RandomState::new())
+        Self::with_capacity_and_hasher(capacity, DefaultHashBuilder::default())
     }
 }
 
@@ -86,10 +88,7 @@ where
 {
     #[inline(always)]
     fn hash_key<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
-        use std::hash::Hasher;
-        let mut hasher = self.hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        mix_hash(hasher.finish())
+        hash::hash_no_mix(key, &self.hash_builder)
     }
 
     /// Returns true if the set contains the given value.
@@ -326,7 +325,7 @@ impl<T> FusedIterator for SetIntoIter<T> {}
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
-impl<T> Default for UnorderedFlatSet<T, RandomState> {
+impl<T> Default for UnorderedFlatSet<T, DefaultHashBuilder> {
     fn default() -> Self {
         Self::new()
     }

@@ -3,12 +3,12 @@ pub mod group;
 pub mod hash;
 
 use std::alloc::{self, Layout};
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::ptr;
 
 use group::{Group, GROUP_SIZE, META_GROUP_BYTES, EMPTY, reduced_hash, overflow_bit};
-use hash::mix_hash;
+// hash module used via hash::hash_no_mix
 
 /// Result of a fused find-or-locate probe.
 pub(crate) enum ProbeResult {
@@ -183,9 +183,7 @@ impl<K, V> RawTable<K, V> {
     where
         K: Hash,
     {
-        let mut hasher = hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        mix_hash(hasher.finish())
+        hash::hash_no_mix(key, hash_builder)
     }
 
     /// Find a key in the table.

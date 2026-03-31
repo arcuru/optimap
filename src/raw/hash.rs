@@ -8,6 +8,14 @@ use std::hash::{BuildHasher, Hash, Hasher};
 /// additional mixing.
 pub trait IsAvalanching: BuildHasher {}
 
+// foldhash is an avalanching hasher (used as our default)
+impl IsAvalanching for foldhash::fast::RandomState {}
+impl IsAvalanching for foldhash::fast::FixedState {}
+impl IsAvalanching for foldhash::fast::SeedableRandomState {}
+impl IsAvalanching for foldhash::quality::RandomState {}
+impl IsAvalanching for foldhash::quality::FixedState {}
+impl IsAvalanching for foldhash::quality::SeedableRandomState {}
+
 #[cfg(feature = "ahash")]
 impl IsAvalanching for ahash::RandomState {}
 

@@ -1,12 +1,15 @@
 use std::borrow::Borrow;
-use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 use std::ops::Index;
 
 use crate::raw::{RawTable, ProbeResult};
-use crate::raw::hash::mix_hash;
+use crate::raw::hash;
+
+/// Default hasher for the map. Uses foldhash for speed
+/// (same fast hasher used by hashbrown).
+pub type DefaultHashBuilder = foldhash::fast::RandomState;
 
 /// A hash map using open addressing with SIMD-accelerated group probing,
 /// inspired by `boost::unordered_flat_map`.
@@ -15,22 +18,22 @@ use crate::raw::hash::mix_hash;
 /// A companion metadata array with 15-byte groups enables fast SIMD lookups.
 ///
 /// The maximum load factor is fixed at 0.875 and cannot be changed.
-pub struct UnorderedFlatMap<K, V, S = RandomState> {
+pub struct UnorderedFlatMap<K, V, S = DefaultHashBuilder> {
     table: RawTable<K, V>,
     hash_builder: S,
 }
 
 // ── Constructors ────────────────────────────────────────────────────────────
 
-impl<K, V> UnorderedFlatMap<K, V, RandomState> {
+impl<K, V> UnorderedFlatMap<K, V, DefaultHashBuilder> {
     /// Creates an empty map.
     pub fn new() -> Self {
-        Self::with_hasher(RandomState::new())
+        Self::with_hasher(DefaultHashBuilder::default())
     }
 
     /// Creates an empty map with at least the specified capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self::with_capacity_and_hasher(capacity, RandomState::new())
+        Self::with_capacity_and_hasher(capacity, DefaultHashBuilder::default())
     }
 }
 
@@ -89,10 +92,7 @@ where
 {
     #[inline(always)]
     fn hash_key<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
-        use std::hash::Hasher;
-        let mut hasher = self.hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        mix_hash(hasher.finish())
+        hash::hash_no_mix(key, &self.hash_builder)
     }
 
     /// Returns a reference to the value corresponding to the key.
@@ -540,7 +540,7 @@ impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
-impl<K, V> Default for UnorderedFlatMap<K, V, RandomState> {
+impl<K, V> Default for UnorderedFlatMap<K, V, DefaultHashBuilder> {
     fn default() -> Self {
         Self::new()
     }

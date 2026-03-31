@@ -6,6 +6,7 @@ description = "SIMD-accelerated open-addressing flat hash map inspired by boost:
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+foldhash = "0.1"
 ahash = { version = "0.8", optional = true }
 
 [features]
