@@ -87,7 +87,6 @@ where
     K: Hash + Eq,
     S: BuildHasher,
 {
-    /// Compute the mixed hash for a key.
     #[inline(always)]
     fn hash_key<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
         use std::hash::Hasher;
