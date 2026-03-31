@@ -24,3 +24,7 @@ fnv = "1.0"
 [[bench]]
 name = "hashmap_comparison"
 harness = false
+
+[[bench]]
+name = "comprehensive"
+harness = false
