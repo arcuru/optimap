@@ -30,16 +30,16 @@ Ordered by expected impact × feasibility.
 
 ## Batch 2: find_or_locate restructuring
 
-### P6: Home-group fast path in find_or_locate
-- Check home group before entering probe loop
-- Single SIMD match_byte + match_empty, no overflow tracking
-- Covers majority of operations at <87.5% load
+### P6: Home-group fast path in find_or_locate — DONE
+- Inline home-group check before entering probe loop
+- #[inline(never)] overflow slow path for cold code
+- Single SIMD match_byte_and_empty on home group resolves most operations
 - **Target**: insert 1K-100K
 
-### P2: Carry overflow bitmask through ProbeResult
-- Track which groups were full during find_or_locate as u8 bitmask
-- Pass through InsertSlot variant
-- insert_at uses bitmask instead of re-walking probe chain
+### P2: Carry overflow bitmask through ProbeResult — DONE
+- InsertSlot(gi, si, full_mask) carries u8 bitmask of full groups
+- insert_at iterates bitmask to set overflow bits (no re-walking)
+- Eliminates redundant SIMD match_empty loads on insert path
 - **Target**: entry API
 
 ## Batch 3: Specialized paths
