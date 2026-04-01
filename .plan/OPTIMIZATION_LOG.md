@@ -748,6 +748,10 @@ Reverted. The default fold (using `next()`) already generates near-optimal code.
 | 19 | Custom Iterator::fold | Reverted | +5-18% regression from closure nesting |
 | 20 | #[inline] on entry API | Reverted | Helps hit-heavy (-7%), hurts insert-heavy (+31%) |
 | 21 | AVX2 multi-group probing/iteration | Skipped | Analysis shows <8% of probes overflow; iteration bottleneck is bucket access, not SIMD loads |
+| 22 | Derive group_mask from num_groups | **Kept** | -8 bytes struct, no perf regression |
+| 23 | Store mask instead of num_groups | **Kept** | Hot-path reads mask directly, cold paths derive num_groups = mask+1 |
+| 24 | Single allocation (metadata+buckets) | Tested | -4% insert 1K-100K, +108% insert 1M (rehash TLB), not committed |
+| 25 | Home-group bucket prefetch | Tested | -5-8% hits, +6-11% misses at low load, not committed |
 
 ---
 
@@ -797,6 +801,118 @@ for metadata wouldn't move the needle.
 
 **Decision**: Skipped. The analysis shows AVX2 targets the wrong bottleneck for both
 probing and iteration.
+
+---
+
+### Attempt 22: Derive group_mask from num_groups
+**Status: KEPT**
+
+Removed the stored `group_mask: usize` field. Replaced with an inline
+`group_mask()` method returning `num_groups.wrapping_sub(1)`. The
+subtraction is single-cycle and executes in parallel with surrounding
+work. No measurable regression. Struct size: 64 → 56 bytes.
+
+---
+
+### Attempt 23: Store mask instead of num_groups
+**Status: KEPT**
+
+Replaced `num_groups: usize` with `mask: usize` (= num_groups - 1).
+The mask is used directly on the hot path (8 uses: group_index, all
+probe wraparound sites). num_groups is derived as `mask + 1` only on
+cold paths (allocation, growth, deallocation). Empty table detection
+switched from `num_groups == 0` to `metadata.is_null()` since mask = 0
+is ambiguous (empty or 1 group).
+
+No measurable regression. Same struct size (mask replaces num_groups).
+
+---
+
+### Attempt 24: Single allocation (re-test with fused insert)
+**Status: TESTED, NOT COMMITTED**
+
+Re-tested single allocation (metadata-first: `[metadata][padding][buckets]`
+in one malloc) with the current fused home-group insert path.
+
+| Benchmark | two-alloc | single-alloc | Change |
+|-----------|----------:|-------------:|-------:|
+| insert 1K | 2.99 µs | 2.86 µs | **-4%** |
+| insert 10K | 36.1 µs | 33.0 µs | **-9%** |
+| insert 100K | 457 µs | 441 µs | **-4%** |
+| insert 1M | 10.4 ms | 21.6 ms | **+108%** |
+| mixed 100K | 808 µs | 750 µs | **-7%** |
+
+Insert 1M doubled due to the same TLB/rehash issue as attempts 2/3/13:
+during rehash, old + new allocations are both huge (~17MB + ~34MB), and
+the single-allocation layout puts metadata at the start of these blocks,
+causing TLB thrashing. Lookup and miss performance were unchanged.
+
+The single allocation could be viable if combined with a better rehash
+strategy (e.g., in-place growth), but as-is the 1M regression is a
+dealbreaker.
+
+---
+
+### Attempt 25: Home-group bucket prefetch (re-test)
+**Status: TESTED, NOT COMMITTED**
+
+Re-tested prefetching the home group's buckets before the SIMD metadata
+match in `find_by_hash`. Tested with both allocation strategies.
+
+Load-factor-controlled results (100K-slot table, two-alloc + prefetch):
+
+| Load % | Hit (before) | Hit (prefetch) | Miss (before) | Miss (prefetch) |
+|-------:|-------------:|---------------:|--------------:|----------------:|
+| 45% | 404 µs | **378 µs** (-6%) | 169 µs | 184 µs (+9%) |
+| 55% | 405 µs | **382 µs** (-6%) | 174 µs | 184 µs (+6%) |
+| 65% | 412 µs | **381 µs** (-8%) | 178 µs | 189 µs (+6%) |
+| 75% | 420 µs | **395 µs** (-6%) | 199 µs | 196 µs (flat) |
+| 85% | 420 µs | **404 µs** (-4%) | 311 µs | 305 µs (flat) |
+
+Confirmed the predicted trade-off: prefetch helps hits at low-medium load
+(5-8% improvement) but hurts misses at low load (6-9% regression from
+cache pollution by unused bucket data). Neutral at high load for both.
+Not committed because the miss regression and hit improvement are
+workload-dependent with no universal win.
+
+---
+
+## Struct Size Evolution
+
+| State | RawTable | UnorderedFlatMap | hashbrown |
+|-------|--------:|-----------------:|----------:|
+| Original (with group_mask field) | 56 | 64 | 40 |
+| After removing group_mask (#22) | 48 | 56 | 40 |
+| After mask-instead-of-num_groups (#23) | 48 | 56 | 40 |
+
+Current struct (48 bytes RawTable, 56 bytes UnorderedFlatMap):
+```
+mask:       usize   (8)  — num_groups - 1, hot-path masking
+metadata:   *mut u8 (8)  — pointer to group metadata array
+buckets:    *mut u8 (8)  — pointer to bucket array
+len:        usize   (8)  — number of elements
+max_load:   usize   (8)  — threshold for rehash
+shift:      u32     (4)  — hash >> shift gives group index
+padding:            (4)
+```
+
+The 16-byte gap to hashbrown (40 bytes) comes from:
+- `buckets` pointer (8 bytes) — hashbrown uses single allocation, derives
+  bucket pointer from ctrl pointer. We use two allocations (necessary to
+  avoid 1M insert regression).
+- `max_load` (8 bytes) — hashbrown stores `growth_left` (similar purpose)
+  in their `RawTable`, so this is equivalent.
+- `shift` + padding (8 bytes) — hashbrown stores `bucket_mask` instead,
+  also 8 bytes. Equivalent.
+
+The remaining gap is essentially the `buckets` pointer, which is the cost
+of our two-allocation design. Eliminating it requires single allocation
+(attempt 24) which regresses 1M insert by 108%.
+
+Further shrinking options evaluated and rejected:
+- `shift: u32 → u8`: saves 0 bytes due to alignment padding (u8 + 7 pad = u32 + 4 pad = 8 bytes)
+- Remove num_groups/mask entirely, derive from shift: saves 8 bytes but adds branch + shift to every iteration bounds check (~5% regression)
+- Always-allocate (eliminate null checks): removes 3-4 hot-path branches but forces 256+ bytes allocation on `new()`, breaking zero-cost empty maps convention
 
 ---
 
