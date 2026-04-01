@@ -22,11 +22,19 @@ ahash = "0.8"
 fnv = "1.0"
 
 [[bench]]
-name = "hashmap_comparison"
+name = "throughput"
 harness = false
 
 [[bench]]
-name = "comprehensive"
+name = "construction"
+harness = false
+
+[[bench]]
+name = "distributions"
+harness = false
+
+[[bench]]
+name = "workloads"
 harness = false
 
 [[bench]]
