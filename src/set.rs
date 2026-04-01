@@ -103,22 +103,69 @@ where
     }
 
     /// Adds a value to the set. Returns true if newly inserted, false if already present.
+    ///
+    /// Uses a fused home-group fast path (same as map insert).
     #[inline]
     pub fn insert(&mut self, value: T) -> bool {
+        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+
         if self.table.num_groups == 0 {
             self.table.allocate(1);
         }
 
         let h = self.hash_key(&value);
 
+        if self.table.len >= self.table.max_load {
+            return self.insert_at_capacity(h, value);
+        }
+
+        let reduced = reduced_hash(h);
+        let gi = self.table.group_index(h);
+        let meta = unsafe { self.table.meta_ptr(gi) };
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        for si in matches {
+            let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+            if bucket.0 == value {
+                return false;
+            }
+        }
+
+        let ofw_bit = overflow_bit(h);
+        if let Some(si) = empties.lowest_set_bit() {
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                unsafe {
+                    Group::set_meta(meta, si, reduced);
+                    self.table.bucket_ptr(gi, si).write((value, ()));
+                }
+                self.table.len += 1;
+                return true;
+            }
+        }
+
+        self.insert_overflow(h, value)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn insert_overflow(&mut self, h: u64, value: T) -> bool {
         if self.table.find_by_hash(h, |v| v == &value).is_some() {
             return false;
         }
-
         if self.table.len >= self.table.max_load {
             self.grow_and_rehash();
         }
+        self.table.insert_no_check(h, value, ());
+        true
+    }
 
+    #[cold]
+    #[inline(never)]
+    fn insert_at_capacity(&mut self, h: u64, value: T) -> bool {
+        if self.table.find_by_hash(h, |v| v == &value).is_some() {
+            return false;
+        }
+        self.grow_and_rehash();
         self.table.insert_no_check(h, value, ());
         true
     }

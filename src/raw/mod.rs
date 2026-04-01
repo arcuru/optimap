@@ -162,13 +162,13 @@ impl<K, V> RawTable<K, V> {
 
     /// Map hash to group index.
     #[inline(always)]
-    fn group_index(&self, h: u64) -> usize {
+    pub(crate) fn group_index(&self, h: u64) -> usize {
         (h.wrapping_shr(self.shift) as usize) & self.group_mask
     }
 
     /// Pointer to group metadata (16-byte aligned).
     #[inline(always)]
-    unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
+    pub(crate) unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
         unsafe { self.metadata.add(gi * META_GROUP_BYTES) }
     }
 
@@ -219,19 +219,6 @@ impl<K, V> RawTable<K, V> {
 
         let reduced = reduced_hash(h);
         let mut gi = self.group_index(h);
-
-        // Fast path for single-group tables: no overflow possible, no probe loop.
-        if self.num_groups == 1 {
-            let meta = unsafe { self.meta_ptr(0) };
-            for si in unsafe { Group::match_byte(meta, reduced) } {
-                let bucket = unsafe { &*self.bucket_ptr(0, si) };
-                if eq(&bucket.0) {
-                    return Some((0, si));
-                }
-            }
-            return None;
-        }
-
         let ofw_bit = overflow_bit(h);
         let mut probe = 0usize;
 
@@ -252,7 +239,7 @@ impl<K, V> RawTable<K, V> {
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.group_mask;
 
-            // Prefetch only on overflow — doesn't fire on miss path
+            // Prefetch only on overflow — doesn't fire on miss fast path
             unsafe {
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);

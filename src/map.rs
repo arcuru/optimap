@@ -134,25 +134,84 @@ where
     /// Inserts a key-value pair into the map.
     ///
     /// If the key already exists, the value is replaced and the old value is returned.
+    ///
+    /// Uses a fused home-group fast path: a single SIMD load produces both the
+    /// key-match and empty-slot bitmasks, avoiding a second metadata load when
+    /// the key is absent and the home group has space.
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+
         if self.table.num_groups == 0 {
             self.table.allocate(1);
         }
 
         let h = self.hash_key(&key);
 
-        // Check if key exists
+        // At capacity: use standard two-pass (growth would invalidate any slot info)
+        if self.table.len >= self.table.max_load {
+            return self.insert_at_capacity(h, key, value);
+        }
+
+        let reduced = reduced_hash(h);
+        let gi = self.table.group_index(h);
+        let meta = unsafe { self.table.meta_ptr(gi) };
+
+        // Single SIMD load → both match and empty bitmasks
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        // Check home group for existing key
+        for si in matches {
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            if bucket.0 == key {
+                return Some(std::mem::replace(&mut bucket.1, value));
+            }
+        }
+
+        // No overflow from home group → key is absent, insert directly
+        let ofw_bit = overflow_bit(h);
+        if let Some(si) = empties.lowest_set_bit() {
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                unsafe {
+                    Group::set_meta(meta, si, reduced);
+                    self.table.bucket_ptr(gi, si).write((key, value));
+                }
+                self.table.len += 1;
+                return None;
+            }
+        }
+
+        // Cold: overflow or full home group — full probe needed
+        self.insert_overflow(h, key, value)
+    }
+
+    /// Cold path: insert when the home group has overflow or is full.
+    /// Does a full probe to check for the key, then inserts.
+    #[cold]
+    #[inline(never)]
+    fn insert_overflow(&mut self, h: u64, key: K, value: V) -> Option<V> {
+        // Full probe for the key (starting from home group)
         if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
             let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
             return Some(std::mem::replace(&mut bucket.1, value));
         }
 
-        // Key absent — grow if needed, then insert
         if self.table.len >= self.table.max_load {
             self.grow_and_rehash();
         }
+        self.table.insert_no_check(h, key, value);
+        None
+    }
 
+    /// Cold path: insert when already at capacity.
+    #[cold]
+    #[inline(never)]
+    fn insert_at_capacity(&mut self, h: u64, key: K, value: V) -> Option<V> {
+        if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            return Some(std::mem::replace(&mut bucket.1, value));
+        }
+        self.grow_and_rehash();
         self.table.insert_no_check(h, key, value);
         None
     }
