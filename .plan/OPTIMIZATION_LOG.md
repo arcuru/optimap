@@ -746,6 +746,20 @@ Reverted. The default fold (using `next()`) already generates near-optimal code.
 | 17 | Dense iteration fast path | Reverted | +33% iteration regression |
 | 18 | Inline find_by_hash + cold continuation | Reverted | +10-14% hit regression |
 | 19 | Custom Iterator::fold | Reverted | +5-18% regression from closure nesting |
+| 20 | #[inline] on entry API | Reverted | Helps hit-heavy (-7%), hurts insert-heavy (+31%) |
+
+---
+
+### Attempt 20: #[inline] on entry API methods
+**Status: REVERTED**
+
+Added `#[inline]` to `entry()`, `or_insert()`, `or_insert_with()`, and
+`or_default()`. For hit-heavy workloads (5% distinct), inlining entry()
+removed function call overhead and improved by 7%. But for insert-heavy
+workloads (100% distinct), the inlined entry body caused code bloat and
+instruction cache pressure: +31% regression. The compiler's default
+heuristics (not inlining entry()) are correct — the function is too large
+and the hit/insert trade-off makes any single inline decision suboptimal.
 
 ---
 
