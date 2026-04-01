@@ -142,7 +142,7 @@ where
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         use crate::raw::group::{Group, reduced_hash, overflow_bit};
 
-        if self.table.num_groups == 0 {
+        if !self.table.is_allocated() {
             self.table.allocate(1);
         }
 
@@ -219,10 +219,10 @@ where
     #[cold]
     #[inline(never)]
     fn grow_and_rehash(&mut self) {
-        let new_groups = if self.table.num_groups == 0 {
+        let new_groups = if !self.table.is_allocated() {
             1
         } else {
-            self.table.num_groups * 2
+            self.table.num_groups() * 2
         };
         self.table.rehash_with(new_groups, &self.hash_builder);
     }
@@ -245,7 +245,7 @@ where
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
         use crate::raw::group::{Group, reduced_hash, overflow_bit};
 
-        if self.table.num_groups == 0 {
+        if !self.table.is_allocated() {
             self.table.allocate(1);
         }
 
@@ -469,10 +469,10 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
         } else {
             // Slow path: need to grow first, then insert
             if self.table.len >= self.table.max_load {
-                let new_groups = if self.table.num_groups == 0 {
+                let new_groups = if !self.table.is_allocated() {
                     1
                 } else {
-                    self.table.num_groups * 2
+                    self.table.num_groups() * 2
                 };
                 self.table.rehash_with(new_groups, self.hash_builder);
             }
@@ -557,7 +557,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
                 }
             }
             self.group += 1;
-            if self.group >= self.table.num_groups {
+            if self.group > self.table.mask {
                 return None;
             }
             self.current_mask = unsafe {
