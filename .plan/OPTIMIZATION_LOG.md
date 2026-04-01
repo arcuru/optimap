@@ -755,8 +755,9 @@ Reverted. The default fold (using `next()`) already generates near-optimal code.
 | 21 | AVX2 multi-group probing/iteration | Skipped | Analysis shows <8% of probes overflow; iteration bottleneck is bucket access, not SIMD loads |
 | 22 | Derive group_mask from num_groups | **Kept** | -8 bytes struct, no perf regression |
 | 23 | Store mask instead of num_groups | **Kept** | Hot-path reads mask directly, cold paths derive num_groups = mask+1 |
-| 24 | Single allocation (metadata+buckets) | Tested | -4% insert 1K-100K, +108% insert 1M (rehash TLB), not committed |
+| 24 | Single allocation (metadata+buckets) | **Kept** | Previous "regression" was benchmark artifact (page faults) |
 | 25 | Home-group bucket prefetch | Tested | -5-8% hits, +6-11% misses at low load, not committed |
+| 26 | grow_from_empty investigation | Analyzed | 1.1-1.15x overhead from 15-slot group arithmetic in rehash loop |
 
 ---
 
@@ -910,14 +911,70 @@ The 16-byte gap to hashbrown (40 bytes) comes from:
 - `shift` + padding (8 bytes) — hashbrown stores `bucket_mask` instead,
   also 8 bytes. Equivalent.
 
-The remaining gap is essentially the `buckets` pointer, which is the cost
-of our two-allocation design. Eliminating it requires single allocation
-(attempt 24) which regresses 1M insert by 108%.
+The remaining gap is essentially the `buckets` pointer. With single
+allocation (#24, now committed), this could be derived from metadata +
+offset, but it's cached for performance.
 
 Further shrinking options evaluated and rejected:
 - `shift: u32 → u8`: saves 0 bytes due to alignment padding (u8 + 7 pad = u32 + 4 pad = 8 bytes)
 - Remove num_groups/mask entirely, derive from shift: saves 8 bytes but adds branch + shift to every iteration bounds check (~5% regression)
 - Always-allocate (eliminate null checks): removes 3-4 hot-path branches but forces 256+ bytes allocation on `new()`, breaking zero-cost empty maps convention
+
+---
+
+### Investigation 26: grow_from_empty overhead analysis
+**Status: ANALYZED — structural, no fix needed**
+
+The `construction/grow_from_empty` benchmark shows 1.10-1.45x overhead vs
+hashbrown (worse at small N, converges at large N). Investigated root cause.
+
+**Rehash counts and element moves:**
+
+| | rehashes | total element moves |
+|--|--------:|--------------------:|
+| ours | 8 | 1,666 |
+| hashbrown | 10 | 1,788 |
+
+We do FEWER rehashes and move FEWER elements than hashbrown. The overhead
+is not from doing more work — it's from each element move being more
+expensive.
+
+**Per-element rehash cost:**
+
+| N | our overhead | hb overhead | ratio |
+|--:|-----------:|-----------:|:-----:|
+| 1K | 15µs | 10µs | 1.45x |
+| 10K | 217µs | 195µs | 1.11x |
+| 100K | 2.0ms | 1.7ms | 1.15x |
+
+At scale (10K+), the per-element rehash overhead converges to ~1.1-1.15x.
+At 1K, fixed per-rehash costs (layout computation, allocation, metadata
+zeroing) are poorly amortized over only 1666 element moves, inflating to 1.45x.
+
+**Root cause: 15-slot group arithmetic in insert_no_check**
+
+Both implementations re-hash every element during resize (confirmed by
+reading hashbrown source — no hash reuse optimization). Both use SIMD to
+find empty slots in the new table. The per-element cost difference comes
+from:
+
+Our `insert_no_check` per element:
+1. `reduced_hash(h)` — mask + conditional add (vs hashbrown's h2 = shift + mask)
+2. `overflow_bit(h)` — shift (hashbrown has no overflow bits)
+3. `group_index(h)` — shift + mask (vs hashbrown's mask-only)
+4. `meta_ptr(gi)` — `metadata + gi * 16` (vs hashbrown's `ctrl + offset`)
+5. `bucket_ptr(gi, si)` — `buckets + (gi * 15 + si) * sizeof` (vs hashbrown's `buckets + slot * sizeof`)
+6. SIMD match_empty, write metadata, write bucket — same
+
+Steps 2 and 5 are the main differences: we compute overflow_bit (unused for
+most inserts at ~43% rehash load), and our bucket_ptr involves multiply-by-15
+while hashbrown's is a flat index. These add ~2-3 instructions per element,
+which at 9.5ns/element (our rehash) is ~5-10% overhead — matching the
+observed 1.1-1.15x at scale.
+
+**Conclusion**: Same structural overhead as lookup/iteration. The 15-slot
+group design trades per-element arithmetic cost for better miss termination
+and tombstone-free deletion. Not fixable without changing the group design.
 
 ---
 
