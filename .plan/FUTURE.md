@@ -3,12 +3,24 @@
 Ordered roughly by expected impact. Each entry notes what benchmark
 gap it targets and the estimated difficulty.
 
+## Completed
+
+- **Fused home-group insert**: Single SIMD load for find + insert. Closed
+  the 1.7x insert gap at 10K-100K to parity. Now faster at 1K and 1M.
+- **Fused home-group entry**: Same pattern for entry API. ~5-8% improvement.
+- **Remove single-group fast path**: Simplified find_by_hash; marginal improvement.
+- **Dense iteration fast path**: REVERTED — extra branch per next() hurt more
+  than sequential scan helped. tzcnt + blsr is already near-optimal.
+- **Inline home group in find_by_hash with cold continuation**: REVERTED —
+  #[inline(never)] continuation caused 10-14% hit regression from register
+  pressure at the call boundary.
+
 ---
 
 ## Performance
 
 ### 1. Lookup hit: reduce per-probe overhead
-**Gap**: 1.25-1.30x slower than hashbrown on hits, constant across all load factors.
+**Gap**: 1.25x slower than hashbrown on hits, constant across all load factors.
 **Root cause**: Our probe loop does more work per step — 15-slot groups (vs 16-byte
 aligned), overflow-bit bookkeeping, and slightly wider metadata reads. hashbrown's
 inner loop is extremely tight: one aligned `_mm_load_si128`, one `_mm_cmpeq_epi8`,
@@ -28,44 +40,21 @@ one `_mm_movemask_epi8`, mask to 14 bits, done.
 
 **Difficulty**: Medium. Mostly micro-optimization of the hot loop.
 
-### 2. Insert 10K-100K: close the 1.7x gap
-**Gap**: 1.67-1.82x slower at 10K-100K (but 1.39x *faster* at 1M).
-**Root cause**: At medium scale, everything fits in cache. hashbrown's tighter
-insert loop (find empty in control bytes, write one byte + one slot) dominates.
-Our insert must: find empty via SIMD, compute overflow bits, potentially set
-overflow bits on home group, write metadata byte + bucket slot.
+### 2. Insert 10K-100K — DONE
+**Solved by fused home-group insert.** Single SIMD load for both find and insert
+in the home group. Closed 1.7x gap to parity; now faster at 1K and 1M.
 
-**Ideas**:
-- **Deferred overflow-bit setting**: Batch overflow bit updates during insert
-  sequences (e.g. `extend()`, `from_iter()`). Set all overflow bits in a single
-  pass after the batch. This avoids random-access writes to the home group's
-  overflow byte on each insert.
-- **Specialized `extend()` for sorted iterators**: If the input is sorted by
-  hash, inserts within the same group can share the SIMD match_empty result.
-- **Rehash without re-hashing**: Store the full hash (or enough bits to derive
-  the new group index) so that grow() can relocate elements without calling the
-  hash function. This only helps grow-heavy workloads (insert from empty).
+Further ideas for marginal gains:
+- **Deferred overflow-bit setting**: Batch overflow bit updates in extend/from_iter.
+- **Rehash without re-hashing**: Store full hash to avoid re-hashing on grow.
 
-**Difficulty**: Medium-High. Deferred overflow is the most promising.
+### 3. Entry API — DONE (partially)
+**Improved by ~5-8%** via fused home-group entry. Remaining gap (~1.2-1.7x)
+is dominated by lookup hit overhead (structural) and Entry enum construction.
 
-### 3. Entry API: close the 1.4-1.6x gap
-**Gap**: `entry().or_insert()` is 1.4-1.6x slower than hashbrown.
-**Root cause**: hashbrown's entry API is heavily optimized — the vacant entry
-carries a pre-located insertion point from the initial probe. We do this too
-(via `find_or_locate`), but our `find_or_locate` has more overhead per probe
-step because it tracks both match candidates and the first empty slot
-simultaneously.
-
-**Ideas**:
-- **Inline `find_or_locate` home-group path**: The home group handles ~85% of
-  entries at typical load. A fully inlined, straight-line home-group check
-  (no loop setup, no overflow tracking) before falling into the general loop
-  could help.
-- **Specialize `find_or_locate` for entry API**: The entry API doesn't need to
-  return `NotFound` — it always needs an insert slot. A variant that always
-  finds an insert slot (growing if needed) could be simpler.
-
-**Difficulty**: Medium.
+Further ideas:
+- Avoid moving key into OccupiedEntry (reference-based API)
+- Specialize for small key types that are cheap to copy
 
 ### 4. Iteration: close the 1.4x gap at small sizes
 **Gap**: 1.4-1.5x slower at 1K-100K, nearly tied at 1M.

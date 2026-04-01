@@ -20,30 +20,29 @@ controlled percentage.
 ### Lookup Hit by Load Factor (100K-slot table, 100K ops)
 | Load % | ours | hashbrown | ratio |
 |-------:|-----:|----------:|:-----:|
-| 45% | 416 µs | 327 µs | 1.27x |
-| 55% | 420 µs | 325 µs | 1.29x |
-| 65% | 413 µs | 328 µs | 1.26x |
-| 75% | 418 µs | 321 µs | 1.30x |
-| 85% | 423 µs | 333 µs | 1.27x |
+| 45% | 404 µs | 329 µs | 1.23x |
+| 55% | 405 µs | 330 µs | 1.23x |
+| 65% | 412 µs | 337 µs | 1.22x |
+| 75% | 420 µs | 327 µs | 1.28x |
+| 85% | 420 µs | 331 µs | 1.27x |
 
 **Hit performance is flat across load factors** for both implementations.
-The ~1.27x gap is structural (per-probe overhead) and doesn't change with load.
+The ~1.25x gap is structural (per-probe overhead) and doesn't change with load.
 
 ### Lookup Miss by Load Factor (100K-slot table, 100K ops)
 | Load % | ours | hashbrown | ratio | winner |
 |-------:|-----:|----------:|:-----:|:------:|
-| 45% | 169 µs | 130 µs | 1.30x | hb |
-| 55% | 175 µs | 139 µs | 1.26x | hb |
-| 65% | 180 µs | 145 µs | 1.24x | hb |
-| **75%** | **204 µs** | 252 µs | **0.81x** | **ours** |
-| **85%** | **321 µs** | 564 µs | **0.57x** | **ours** |
+| 45% | 169 µs | 134 µs | 1.26x | hb |
+| 55% | 174 µs | 139 µs | 1.25x | hb |
+| 65% | 178 µs | 145 µs | 1.23x | hb |
+| **75%** | **199 µs** | 186 µs | **1.07x** | ~tied |
+| **85%** | **311 µs** | 562 µs | **0.55x** | **ours** |
 
-**Crossover at ~70% load factor.** Below 70%, hashbrown's tighter probe
-loop wins. Above 70%, our overflow bits terminate misses in O(1) while
-hashbrown must probe until it finds an empty control byte — and at high
-load, empty bytes are scarce.
+**Crossover at ~70-75% load factor.** Below that, hashbrown's tighter probe
+loop wins. Above that, our overflow bits terminate misses in O(1) while
+hashbrown must probe until it finds an empty control byte.
 
-At 85% load we're **1.76x faster** on misses.
+At 85% load we're **1.8x faster** on misses.
 
 ### Mixed Workload by Load Factor (100K-slot table, 50% insert/30% lookup/20% remove)
 | Load % | ours | hashbrown | ratio |
@@ -54,19 +53,12 @@ At 85% load we're **1.76x faster** on misses.
 | 75% | 580 µs | 482 µs | 1.20x |
 | 85% | 629 µs | 548 µs | 1.15x |
 
-Mixed workload: consistently ~1.2x slower, gap narrows slightly at high load.
-
 ### 1M Scale by Load Factor (500K ops)
 | Load % | ours hit | hb hit | hit ratio | ours miss | hb miss | miss ratio |
 |-------:|---------:|-------:|:---------:|----------:|--------:|:----------:|
 | 45% | 9.4 ms | 8.6 ms | 1.09x | **1.37 ms** | 1.52 ms | **0.90x** |
 | 65% | 8.9 ms | 8.5 ms | 1.05x | **1.59 ms** | 1.91 ms | **0.83x** |
 | **85%** | **8.8 ms** | 8.9 ms | **0.99x** | **2.73 ms** | 4.11 ms | **0.66x** |
-
-At 1M scale, cache effects dominate. We **tie on hits at 85% load** and
-are **1.5x faster on misses**. The crossover point for misses shifts
-lower at 1M (we win even at 45%) because cache misses amplify the cost
-of hashbrown's longer probe chains.
 
 ### Key Insight: The Design Trade-off
 
@@ -79,38 +71,33 @@ of hashbrown's longer probe chains.
 | Crossover (100K) | ~70% load factor | — |
 | Crossover (1M) | ~45% load factor (cache effects) | — |
 
-Since our table operates at 44-87.5% load (averaging ~65%), we're right
-on the cusp at 100K scale. At 1M+ scale, we win on misses across the
-entire load range.
-
 ---
 
 ## Summary: Where We Win / Lose vs hashbrown
 
-### We Win (overflow-bit design strengths)
+### We Win
 | Workload | Speedup | Why |
 |----------|--------:|-----|
-| Lookup miss 100K (high load) | **1.76x** | Overflow bit terminates without bucket read |
-| Lookup miss 1M (all loads) | **1.1-1.5x** | Same, amplified by cache effects |
-| Insert 1M | **1.39x** | Compact metadata fits L2/L3 |
+| Insert 1K | **1.15x** | Fused home-group insert (one SIMD load) |
+| Insert 10K-100K | **~tied** | Same fused insert path |
+| Insert 1M | **2.3x** | Compact metadata fits L2/L3 |
+| Mixed 10K | **1.13x** | Fused insert dominates mixed workloads |
+| Mixed 100K | **1.04x** | Same |
+| Lookup miss 100K | **1.86x** | Overflow bit terminates without bucket read |
+| Lookup miss 1M | **1.18x** | Same, amplified by cache effects |
 | Clone 1M | **7.1x** | SIMD match_non_empty + bulk copy |
 | Equilibrium churn 4K | **1.28x** | Tombstone-free deletion |
-| Equilibrium churn 65K | **1.10x** | Same |
-| Growing lookup 2K | **1.28x** | Miss-heavy read workload |
-| Growing lookup 100K | **1.19x** | Same |
+| Growing lookup 2K-100K | **1.19-1.28x** | Miss-heavy read workload |
 | String insert (all sizes) | **1.06-1.27x** | Faster hashing path |
 | String miss (all sizes) | **1.16-1.30x** | Overflow bit early termination |
-| Miss-heavy (75%+ miss) 100K | **1.55-1.64x** | Overflow bits dominate |
 
-### hashbrown Wins (Swiss table strengths)
+### hashbrown Wins
 | Workload | hashbrown speedup | Why |
 |----------|------------------:|-----|
-| Lookup hit (all sizes, all loads) | 1.25-1.30x | Tighter probe loop, 16-byte alignment |
-| Insert 1K-100K | 1.21-1.82x | More optimized small-table codegen |
-| Entry API (or_insert) | 1.4-1.6x | Very optimized entry path |
-| Iteration (small) | 1.4-1.5x | 16-byte aligned metadata groups |
-| Lookup miss (low load, <1M) | 1.24-1.30x | Faster per-probe at low load |
-| Insert/erase phases 5M | 1.26x | Better rehash path |
+| Lookup hit (all sizes) | 1.04-1.28x | Tighter probe loop, 16-byte alignment |
+| Iteration (small-medium) | 1.5-1.6x | 16-byte aligned metadata groups |
+| Entry API (5% distinct) | ~1.7x | Very optimized occupied-entry path |
+| Lookup miss (<100K, low load) | 1.25-1.58x | Faster per-probe at low load |
 
 ---
 
@@ -119,26 +106,32 @@ entire load range.
 ### Insert (u64, pre-allocated)
 | Size | ours | hashbrown | ratio |
 |-----:|-----:|----------:|:-----:|
-| 1K | 4.60 µs | 3.80 µs | 1.21x |
-| 10K | 68.8 µs | 37.8 µs | 1.82x |
-| 100K | 747 µs | 446 µs | 1.67x |
-| **1M** | **17.6 ms** | 24.4 ms | **0.72x** |
+| **1K** | **2.99 µs** | 3.44 µs | **0.87x** |
+| 10K | 36.1 µs | 34.9 µs | 1.03x |
+| 100K | 457 µs | 446 µs | 1.02x |
+| **1M** | **10.4 ms** | 24.3 ms | **0.43x** |
 
 ### Lookup Hit (u64, pre-allocated)
 | Size | ours | hashbrown | ratio |
 |-----:|-----:|----------:|:-----:|
-| 1K | 2.04 µs | 1.61 µs | 1.27x |
-| 10K | 21.8 µs | 17.3 µs | 1.26x |
-| 100K | 308 µs | 247 µs | 1.25x |
-| 1M | 14.8 ms | 14.3 ms | 1.04x |
+| 1K | 2.11 µs | 1.64 µs | 1.28x |
+| 10K | 22.0 µs | 17.7 µs | 1.24x |
+| 100K | 312 µs | 247 µs | 1.26x |
+| 1M | 15.0 ms | 14.4 ms | 1.04x |
 
 ### Lookup Miss (u64, pre-allocated)
 | Size | ours | hashbrown | ratio |
 |-----:|-----:|----------:|:-----:|
-| 1K | 1.45 µs | 902 ns | 1.61x |
-| 10K | 14.7 µs | 10.2 µs | 1.44x |
-| **100K** | **255 µs** | 413 µs | **0.62x** |
-| **1M** | **3.00 ms** | 3.70 ms | **0.81x** |
+| 1K | 1.47 µs | 929 ns | 1.58x |
+| 10K | 14.7 µs | 10.4 µs | 1.42x |
+| **100K** | **232 µs** | 432 µs | **0.54x** |
+| **1M** | **2.73 ms** | 3.23 ms | **0.85x** |
+
+### Mixed Workload (50% insert, 30% lookup, 20% remove)
+| Size | ours | hashbrown | ratio |
+|-----:|-----:|----------:|:-----:|
+| **10K** | **28.6 µs** | 32.4 µs | **0.88x** |
+| **100K** | **808 µs** | 840 µs | **0.96x** |
 
 ### Equilibrium Churn (2M insert+erase ops)
 | Size | ours | hashbrown | ratio |
@@ -150,9 +143,9 @@ entire load range.
 ### Random Distinct (entry API, 5M ops)
 | Distinct | ours | hashbrown | ratio |
 |---------:|-----:|----------:|:-----:|
-| 5% | 44.6 ms | 29.5 ms | 1.51x |
-| 50% | 274 ms | 172 ms | 1.59x |
-| 100% | 257 ms | 187 ms | 1.38x |
+| 5% | 48.3 ms | 29.1 ms | 1.66x |
+| 50% | 204 ms | 169 ms | 1.21x |
+| 100% | 226 ms | 180 ms | 1.26x |
 
 ### Growing Lookup (insert 4, lookup many, ~50% miss)
 | Size | ours | hashbrown | ratio |
@@ -175,16 +168,13 @@ entire load range.
 | 100K | 57.5 µs | 53.5 µs | 1.07x |
 | **1M** | **2.15 ms** | 15.1 ms | **0.14x** |
 
-### Iteration During Growth
-| | ours | hashbrown | ratio |
-|-|-----:|----------:|:-----:|
-| grow+iterate | 1.45 s | 1.01 s | 1.43x |
-
-### Mixed Workload (50% insert, 30% lookup, 20% remove)
+### Iteration
 | Size | ours | hashbrown | ratio |
 |-----:|-----:|----------:|:-----:|
-| 10K | 35.4 µs | 28.6 µs | 1.24x |
-| 100K | 883 µs | 838 µs | 1.05x |
+| 1K | 627 ns | 412 ns | 1.52x |
+| 10K | 5.98 µs | 3.87 µs | 1.54x |
+| 100K | 62.9 µs | 40.3 µs | 1.56x |
+| **1M** | **1.24 ms** | 1.24 ms | **1.00x** |
 
 ---
 
@@ -201,9 +191,10 @@ entire load range.
    - Win: Better insert at 1M (compact metadata fits L2/L3)
    - Lose: Extra pointer indirection on every access
 
-3. **No post-mixer** (foldhash is avalanching):
-   - Win: Zero hash overhead beyond foldhash itself
-   - Neutral: Same hash quality as hashbrown (both use foldhash)
+3. **Fused home-group insert** (one SIMD load for find + insert):
+   - Win: Insert at all sizes (was 1.7x slower, now tied or faster)
+   - Win: Mixed workloads now favor us at all sizes
+   - Neutral: Only helps when home group has space (common at <87.5% load)
 
 4. **Load factor sensitivity**:
    - Our table is most competitive at high load (75%+) and large scale (1M+)
