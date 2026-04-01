@@ -115,36 +115,42 @@ impl<K, V> RawTable<K, V> {
         min_groups.next_power_of_two()
     }
 
+    /// Compute the bucket offset within a single allocation.
+    /// Layout: [metadata: (num_groups+1)*16] [padding] [buckets: num_groups*15*sizeof(K,V)]
+    #[inline(always)]
+    fn bucket_offset(num_groups: usize) -> usize {
+        let meta_size = (num_groups + 1) * META_GROUP_BYTES;
+        let bucket_align = std::mem::align_of::<(K, V)>();
+        // Round up to bucket alignment
+        (meta_size + bucket_align - 1) & !(bucket_align - 1)
+    }
+
+    /// Compute the layout for the single combined allocation.
+    fn combined_layout(num_groups: usize) -> Layout {
+        let bucket_size = std::mem::size_of::<(K, V)>();
+        let total_buckets = num_groups * GROUP_SIZE;
+        let bucket_offset = Self::bucket_offset(num_groups);
+        let total_size = bucket_offset + total_buckets * bucket_size;
+        // Align to 16 for SIMD metadata loads
+        Layout::from_size_align(total_size.max(16), 16).unwrap()
+    }
+
     pub(crate) fn allocate(&mut self, num_groups: usize) {
         debug_assert!(num_groups.is_power_of_two());
 
-        let bucket_size = std::mem::size_of::<(K, V)>();
-        let bucket_align = std::mem::align_of::<(K, V)>();
-
-        // Metadata: (num_groups + 1) * 16 bytes, 16-byte aligned for SSE2
+        let layout = Self::combined_layout(num_groups);
+        let bucket_offset = Self::bucket_offset(num_groups);
         let meta_size = (num_groups + 1) * META_GROUP_BYTES;
-        let meta_layout = Layout::from_size_align(meta_size, 16).unwrap();
-
         let total_buckets = num_groups * GROUP_SIZE;
-        let bucket_layout = if bucket_size > 0 {
-            Layout::from_size_align(total_buckets * bucket_size, bucket_align).unwrap()
-        } else {
-            Layout::from_size_align(0, 1).unwrap()
-        };
 
         unsafe {
-            self.metadata = alloc::alloc(meta_layout);
-            if self.metadata.is_null() {
-                alloc::handle_alloc_error(meta_layout);
+            let ptr = alloc::alloc(layout);
+            if ptr.is_null() {
+                alloc::handle_alloc_error(layout);
             }
 
-            if bucket_size > 0 {
-                self.buckets = alloc::alloc(bucket_layout);
-                if self.buckets.is_null() {
-                    alloc::dealloc(self.metadata, meta_layout);
-                    alloc::handle_alloc_error(bucket_layout);
-                }
-            }
+            self.metadata = ptr;
+            self.buckets = ptr.add(bucket_offset);
 
             // Zero all metadata (empty groups) + sentinel
             ptr::write_bytes(self.metadata, 0, meta_size);
@@ -160,18 +166,8 @@ impl<K, V> RawTable<K, V> {
         if self.metadata.is_null() {
             return;
         }
-        let num_groups = self.num_groups();
-        let bucket_size = std::mem::size_of::<(K, V)>();
-        let bucket_align = std::mem::align_of::<(K, V)>();
-        let meta_size = (num_groups + 1) * META_GROUP_BYTES;
-        let meta_layout = Layout::from_size_align(meta_size, 16).unwrap();
-        unsafe { alloc::dealloc(self.metadata, meta_layout); }
-        if bucket_size > 0 {
-            let total_buckets = num_groups * GROUP_SIZE;
-            let bucket_layout =
-                Layout::from_size_align(total_buckets * bucket_size, bucket_align).unwrap();
-            unsafe { alloc::dealloc(self.buckets, bucket_layout); }
-        }
+        let layout = Self::combined_layout(self.num_groups());
+        unsafe { alloc::dealloc(self.metadata, layout); }
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
     }
@@ -469,9 +465,13 @@ impl<K, V> RawTable<K, V> {
         let old_num_groups = self.num_groups();
         let old_metadata = self.metadata;
         let old_buckets = self.buckets;
+        let old_layout = if old_metadata.is_null() {
+            None
+        } else {
+            Some(Self::combined_layout(old_num_groups))
+        };
 
         let bucket_size = std::mem::size_of::<(K, V)>();
-        let bucket_align = std::mem::align_of::<(K, V)>();
 
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
@@ -496,16 +496,7 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            let old_meta_size = (old_num_groups + 1) * META_GROUP_BYTES;
-            let old_meta_layout = Layout::from_size_align(old_meta_size, 16).unwrap();
-            alloc::dealloc(old_metadata, old_meta_layout);
-
-            if bucket_size > 0 {
-                let old_total = old_num_groups * GROUP_SIZE;
-                let old_bucket_layout =
-                    Layout::from_size_align(old_total * bucket_size, bucket_align).unwrap();
-                alloc::dealloc(old_buckets, old_bucket_layout);
-            }
+            alloc::dealloc(old_metadata, old_layout.unwrap());
         }
     }
 

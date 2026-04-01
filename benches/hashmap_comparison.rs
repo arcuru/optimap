@@ -780,9 +780,43 @@ fn bench_miss_ratio(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Benchmark: Insert into pre-allocated (no alloc in measurement) ──────────
+
+fn bench_insert_prealloc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("insert_prealloc");
+    let n = 1_000_000;
+    let keys = make_keys(n, 42);
+    group.throughput(Throughput::Elements(n as u64));
+
+    let mut ours = UnorderedFlatMap::with_capacity(n);
+    group.bench_function("ours", |b| {
+        b.iter(|| {
+            ours.clear();
+            for (i, &k) in keys.iter().enumerate() {
+                ours.insert(k, i);
+            }
+            black_box(ours.len());
+        });
+    });
+
+    let mut hb = hashbrown::HashMap::with_capacity(n);
+    group.bench_function("hashbrown", |b| {
+        b.iter(|| {
+            hb.clear();
+            for (i, &k) in keys.iter().enumerate() {
+                hb.insert(k, i);
+            }
+            black_box(hb.len());
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_insert_u64,
+    bench_insert_prealloc,
     bench_lookup_hit_u64,
     bench_lookup_miss_u64,
     bench_mixed_workload,
