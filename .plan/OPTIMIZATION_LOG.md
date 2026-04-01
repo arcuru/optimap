@@ -666,6 +666,63 @@ home-group-only case.
 
 ---
 
+### Attempt 19: Custom Iterator::fold for internal iteration
+**Status: REVERTED**
+
+### Changes
+Implemented custom `fold` on `SlotIter`, `Iter`, `IterMut`, `IntoIter`, `Keys`,
+`Values`, and `ValuesMut`. The idea: `fold` processes all remaining elements in a
+tight group-by-group loop without the per-element state-machine overhead of
+`next()`. Methods like `for_each`, `sum`, `count`, and `collect` all delegate to
+`fold`, so they would benefit.
+
+The `SlotIter::fold` iterated groups directly:
+```rust
+fn fold<B, F>(self, init: B, mut f: F) -> B {
+    let mut acc = init;
+    let mut mask = self.current_mask;
+    let mut group = self.group;
+    loop {
+        for si in mask { acc = f(acc, (group, si)); }
+        group += 1;
+        if group >= self.table.num_groups { return acc; }
+        mask = Group::match_non_empty(self.table.meta_ptr(group));
+    }
+}
+```
+
+Each wrapper iterator's fold delegated down: `Values::fold` → `Iter::fold` →
+`SlotIter::fold`, each adding a closure layer.
+
+### Results
+| Benchmark | for loop (next) | .values().fold() | Change |
+|-----------|----------------:|-----------------:|-------:|
+| 1K | 616 ns | 646 ns | +5% |
+| 10K | 5.95 µs | 6.31 µs | +6% |
+| 100K | 65.2 µs | 67.0 µs | +3% |
+| 1M | 1.30 ms | 1.53 ms | **+18%** |
+
+hashbrown showed a similar pattern: their `.values().fold()` was also slower
+than the for loop at 100K (68.7 µs vs 40.5 µs).
+
+### Analysis
+The nested closure chain (`Values::fold` → `Iter::fold` → `SlotIter::fold`)
+creates 3 levels of generic closures that LLVM cannot fully inline and optimize.
+The default `fold` implementation (which calls `next()` in a simple loop) produces
+cleaner IR that LLVM optimizes into the same tight loop our custom fold was trying
+to achieve.
+
+This is a known Rust pattern: custom `fold` through wrapper iterators is often
+slower than the default `next()`-based fold because the simpler control flow
+gives LLVM more optimization headroom. The approach might work if applied at the
+outermost level (e.g., a `for_each` method on the map itself that bypasses the
+Iterator trait entirely), but that would be a non-standard API.
+
+### Decision
+Reverted. The default fold (using `next()`) already generates near-optimal code.
+
+---
+
 ## All Attempts Summary
 
 | # | Technique | Status | Key Finding |
@@ -688,6 +745,7 @@ home-group-only case.
 | 16 | Remove single-group branch | **Kept** | Marginal hit improvement |
 | 17 | Dense iteration fast path | Reverted | +33% iteration regression |
 | 18 | Inline find_by_hash + cold continuation | Reverted | +10-14% hit regression |
+| 19 | Custom Iterator::fold | Reverted | +5-18% regression from closure nesting |
 
 ---
 

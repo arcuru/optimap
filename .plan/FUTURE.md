@@ -14,6 +14,10 @@ gap it targets and the estimated difficulty.
 - **Inline home group in find_by_hash with cold continuation**: REVERTED —
   #[inline(never)] continuation caused 10-14% hit regression from register
   pressure at the call boundary.
+- **Custom Iterator::fold for internal iteration**: REVERTED — nested closure
+  chain (Values::fold → Iter::fold → SlotIter::fold) generated worse code than
+  the default next()-based fold. +5-18% regression. LLVM optimizes the simpler
+  next() control flow better than deeply nested generic closures.
 
 ---
 
