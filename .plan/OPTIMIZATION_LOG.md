@@ -486,13 +486,45 @@ hashbrown at 100K.
 | 13 | Single allocation re-test (foldhash) | Reverted | +66% insert 1M still dealbreaker |
 | 14 | Remove manual prefetch (foldhash) | **Kept** | -27% miss 1M, -4% small sizes |
 
+---
+
+## Phase 2: Structural Optimizations
+
+### Attempt P7+P8 (Batch 1): Overflow-only prefetch + fused SIMD match
+**Status: KEPT**
+
+Prefetch next group only after overflow-bit check (not on miss fast path).
+Fused `match_byte_and_empty` does one SIMD load, two compares, two movemasks.
+
+### Attempt P6+P2 (Batch 2): Home-group fast path + overflow bitmask in ProbeResult
+**Status: KEPT**
+
+Inline home-group check before probe loop. `ProbeResult::InsertSlot` carries
+`full_mask: u8` bitmask of overflow groups, avoiding re-walking on insert.
+
+### Attempt: find_or_locate in insert() path
+**Status: REVERTED**
+
+The fused find_or_locate was slower than simple find + insert_no_check for
+bulk insert. At 1K: 7.85 → 5.22 µs (33% faster with two-pass). The tracking
+overhead (first_empty, overflow bitmask) outweighs the saved second probe
+since insert() mostly inserts new keys into sparse tables. find_or_locate is
+kept only for the entry API.
+
+### Phase 2 Final Numbers
+| Benchmark | Pre-Phase-2 | Post-Phase-2 | Change |
+|-----------|------------:|-------------:|-------:|
+| insert 1K | 4.3 µs | 4.60 µs | +7% (different load point) |
+| insert 1M | 22.1 ms | 17.6 ms | **-20%** |
+| lookup_hit 1M | 17.4 ms | 14.8 ms | **-15%** |
+| lookup_miss 100K | 197 µs | 255 µs | +29% (different load point) |
+| lookup_miss 1M | 2.92 ms | 3.00 ms | +3% (within noise) |
+
+Note: Fixed-N comparisons are unreliable due to load-factor sensitivity.
+See BENCHMARKS.md for load-factor-controlled measurements.
+
+---
+
 ## Remaining Ideas
 
-### Performance
-1. **Interleaved layout** — [group0_meta][group0_buckets][group1_meta]...
-2. **Prefetch depth tuning** — Prefetch 2 groups ahead on overflow only
-
-### API Completeness
-3. **Reserve / shrink_to_fit**
-4. **Drain iterator**
-5. **retain() method**
+See FUTURE.md for a comprehensive list of further improvements.
