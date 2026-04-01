@@ -62,42 +62,81 @@ group during insertion. During lookup, if the overflow bit for the query's
 `hash % 8` is **not** set, probing can stop immediately — no element with
 that hash was ever displaced from this group.
 
-## Hash Post-Mixing
+## Hashing
 
-Poor hash functions are automatically improved with a bit mixer:
+The default hasher is **foldhash** (`foldhash::fast::RandomState`), the same
+fast hasher used by hashbrown. Since foldhash is avalanching, no post-mixer
+is applied — hashes are used directly (`hash_no_mix`).
+
+For non-avalanching hash functions (e.g. `std::hash::RandomState` / SipHash),
+a bit mixer can be applied:
 
 - **64-bit**: `xmx` mixer — multiply-xor-multiply with fixed constants
 - **32-bit**: Hash Function Prospector mixer
 
-This is applied to every hash before use unless the hasher is explicitly
-marked as "avalanching".
+An `IsAvalanching` marker trait is available for hash builders to opt out
+of mixing.
 
 ## Algorithms
 
 ### Lookup
 
 ```
-1. h = mix(hash(key))
-2. group_index = h >> (W - n)          // initial group
+1. h = hash(key)
+2. group_index = h >> (W - n)          // initial (home) group
 3. reduced = reduced_hash(h)
-4. loop:
+4. ofw_bit = 1 << (h % 8)
+5. loop:
      a. Load 16-byte metadata word for group_index
      b. SIMD compare: mask = (metadata[0..15] == reduced)
      c. For each set bit in mask:
           - Compare full key in bucket; return if match
-     d. If group not full OR overflow bit (h%8) is 0 → return NOT FOUND
-     e. group_index = (group_index + probe_delta) % num_groups   // quadratic
-     f. Advance probe sequence
+     d. If overflow bit (ofw_bit) is NOT set → return NOT FOUND
+     e. Advance probe sequence (quadratic: group_index += probe_delta)
+     f. Prefetch next group metadata + buckets (overflow-only)
 ```
 
-### Insertion
+### Insertion (fused home-group path)
+
+The insert path uses a **fused home-group pattern** that combines the
+duplicate check and empty-slot search into a single SIMD load. This
+avoids the two-pass overhead of separate find + insert operations.
 
 ```
-1. Lookup key first; if found, return existing
-2. h = mix(hash(key))
+1. h = hash(key)
+2. If len >= max_load → cold path: find + grow + insert (below)
 3. group_index = h >> (W - n)
 4. reduced = reduced_hash(h)
-5. loop:
+5. Single SIMD load on home group metadata:
+     match_mask = (metadata[0..15] == reduced)    // key candidates
+     empty_mask = (metadata[0..15] == EMPTY)      // available slots
+6. For each set bit in match_mask:
+     - Compare full key in bucket; if match → replace value, return old
+7. ofw_bit = 1 << (h % 8)
+8. If empty_mask has a set bit AND overflow bit is NOT set:
+     - Key is absent. Pick first empty slot from empty_mask.
+     - Write (key, value) into bucket
+     - Set metadata byte to `reduced`
+     - Increment count
+     - Return (no old value)
+9. Cold: overflow or full home group → fall back to general probe:
+     a. Full find_by_hash probe for the key (may find it beyond home group)
+     b. If not found and len >= max_load → rehash
+     c. insert_no_check: probe for empty slot, set overflow bits
+```
+
+The fast path (steps 5-8) handles the common case — key is absent, home
+group has space, no overflow — with **one SIMD load** instead of the two
+that a naïve find-then-insert approach requires. At typical load factors
+(44-87.5%), the home group resolves >85% of inserts.
+
+### Insertion (insert_no_check, used by cold path and rehash)
+
+```
+1. reduced = reduced_hash(h)
+2. ofw_bit = 1 << (h % 8)
+3. group_index = h >> (W - n)
+4. loop:
      a. Load metadata for group_index
      b. SIMD compare: mask = (metadata[0..15] == EMPTY)
      c. If any empty slot:
@@ -105,9 +144,8 @@ marked as "avalanching".
           - Write (key, value) into bucket
           - Set metadata byte to `reduced`
           - Increment count
-          - If count > max_load → rehash
           - Return
-     d. Set overflow bit: ofw |= (1 << (h % 8))
+     d. Set overflow bit: ofw |= ofw_bit
      e. Advance to next group (quadratic probing)
 ```
 
@@ -142,9 +180,14 @@ This visits every group when `num_groups` is a power of 2.
 
 ### x86_64 (SSE2 — available on all x86_64)
 
-- `_mm_loadu_si128` — load 16-byte metadata word
+- `_mm_load_si128` — aligned load of 16-byte metadata word
 - `_mm_cmpeq_epi8` — compare all 16 bytes at once
 - `_mm_movemask_epi8` — extract comparison result as bitmask
+
+The fused insert path uses `match_byte_and_empty`: a single aligned load
+followed by two `_mm_cmpeq_epi8` (one for the reduced hash, one for zero)
+and two `_mm_movemask_epi8`, yielding both key-match and empty-slot bitmasks
+from one memory access.
 
 ### aarch64 (NEON)
 

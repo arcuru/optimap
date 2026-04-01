@@ -525,6 +525,172 @@ See BENCHMARKS.md for load-factor-controlled measurements.
 
 ---
 
+## Phase 3: Fused Home-Group Operations
+
+### Attempt 15: Fused home-group insert
+**Status: KEPT — largest single improvement since foldhash**
+
+### Changes
+Replaced the two-pass insert (find_by_hash + insert_no_check) with a fused
+home-group path: one `match_byte_and_empty` SIMD load produces both the
+key-match and empty-slot bitmasks. When the home group has space and no
+overflow (the common case), the entire insert — duplicate check, slot
+location, metadata write, bucket write — completes without a second
+metadata load.
+
+Cold paths (`#[cold] #[inline(never)]`) handle overflow and at-capacity
+cases, keeping the inlined fast path compact.
+
+Applied to `map.insert()`, `set.insert()`, and `map.entry()`.
+
+### Results
+| Benchmark | Before | After | Change |
+|-----------|-------:|------:|-------:|
+| insert 1K | 4.60 µs | 2.99 µs | **-35%** |
+| insert 10K | 68.8 µs | 36.1 µs | **-48%** |
+| insert 100K | 747 µs | 457 µs | **-39%** |
+| insert 1M | 17.6 ms | 10.4 ms | **-41%** |
+| mixed 10K | 35.4 µs | 28.6 µs | **-19%** |
+| mixed 100K | 883 µs | 808 µs | **-8%** |
+| lookup_hit (all) | unchanged | unchanged | 0% |
+| lookup_miss (all) | unchanged | unchanged | 0% |
+
+Ratios vs hashbrown:
+- insert 10K: 1.82x → **1.03x** (tied)
+- insert 100K: 1.67x → **1.02x** (tied)
+- insert 1M: 0.72x → **0.43x** (2.3x faster)
+- mixed 10K: 1.24x → **0.88x** (we now win)
+- mixed 100K: 1.05x → **0.96x** (we now win)
+
+### Analysis
+The previous two-pass approach loaded the home group metadata twice: once
+during `find_by_hash` (to check for the key) and once during `insert_no_check`
+(to find an empty slot). Both loads went to the same L1-cached address, but
+the surrounding computation (reduced_hash, overflow_bit, group_index, meta_ptr)
+was also duplicated.
+
+The fused path eliminates all this redundancy. The extra cost is one additional
+`_mm_cmpeq_epi8` + `_mm_movemask_epi8` (comparing against zero to find empties)
+which runs in parallel with the match comparison on a superscalar CPU — effectively
+free.
+
+The key insight vs the earlier find_or_locate attempt (Attempt 5 / Phase 2 revert):
+find_or_locate tried to track the first empty slot across the ENTIRE probe chain,
+adding overhead to every probe step. The fused home-group path only optimizes the
+home group (one probe step), and delegates the rare overflow case to a cold path.
+This keeps the hot path minimal while still eliminating the second SIMD load for
+>85% of inserts.
+
+### Decision
+Kept. The largest improvement since switching to foldhash (Attempt 12).
+
+---
+
+### Attempt 16: Remove single-group fast path from find_by_hash
+**Status: KEPT**
+
+### Changes
+Removed the `if self.num_groups == 1` branch from `find_by_hash`. The general
+loop handles single-group tables correctly: overflow bits are never set on a
+single group, so the probe terminates after one iteration.
+
+### Results
+Marginal improvement (~0.02x) on lookup hit ratios across load factors.
+Removing the branch simplifies the code and frees one branch prediction slot.
+
+### Decision
+Kept. Zero downside, small upside.
+
+---
+
+### Attempt 17: Dense iteration fast path
+**Status: REVERTED**
+
+### Changes
+Added a `dense_remaining` counter to `SlotIter`. When `match_non_empty` returns
+`0x7FFF` (all 15 slots full), yielded slots 0..14 sequentially via a counter
+instead of bitmask iteration.
+
+### Results
+| Benchmark | Before | After | Change |
+|-----------|-------:|------:|-------:|
+| iteration 100K | 63.3 µs | 84.4 µs | **+33% regression** |
+| iteration 1M | 1.43 ms | 1.79 ms | **+25% regression** |
+
+### Analysis
+The extra `if dense_remaining > 0` check at the top of every `next()` call
+dominated the savings. `tzcnt` + `blsr` (trailing zeros + clear lowest bit)
+is already effectively 2 cycles per element — near-optimal. Adding a branch
++ subtract for the counter path plus the entry-check branch made every call
+slower, even for non-full groups.
+
+### Decision
+Reverted. Bitmask iteration is already near-optimal on x86_64.
+
+---
+
+### Attempt 18: Inline home-group in find_by_hash with cold continuation
+**Status: REVERTED**
+
+### Changes
+Restructured `find_by_hash` to inline the home-group check, with the overflow
+probe loop in a separate `#[inline(never)]` function. Also deferred `overflow_bit`
+computation to after the home-group miss (first attempt) or kept it early for
+parallel execution (second attempt).
+
+### Results (deferred overflow_bit)
+| Benchmark | Before | After | Change |
+|-----------|-------:|------:|-------:|
+| lookup_hit 1K | 2.04 µs | 1.90 µs | **-7%** |
+| lookup_miss 1K | 1.45 µs | 1.68 µs | **+16% regression** |
+
+### Results (early overflow_bit + cold continuation)
+| Benchmark | Before | After | Change |
+|-----------|-------:|------:|-------:|
+| load_factor hit (all) | ~416 µs | ~470 µs | **+10-14% regression** |
+| load_factor miss (all) | unchanged | unchanged | flat |
+
+### Analysis
+The `#[inline(never)]` continuation function forced the compiler to save/restore
+registers at the call boundary, even though the cold path is rarely taken. This
+register pressure degraded the hot path (home-group hit) by 10-14%.
+
+Deferring `overflow_bit` past the SIMD match moved it onto the serial critical
+path for misses, causing a 16% regression. Computing it early (in parallel with
+SIMD) avoided this but didn't recover the cold-continuation regression.
+
+### Decision
+Reverted both variants. The simple loop structure generates better code than
+inline + cold continuation, despite the loop having "unnecessary" setup for the
+home-group-only case.
+
+---
+
+## All Attempts Summary
+
+| # | Technique | Status | Key Finding |
+|---|-----------|--------|-------------|
+| 1 | Aligned SIMD loads + prefetch + cold paths | **Kept** | 15% lookup improvement |
+| 2 | Single allocation (buckets-first, SipHash) | Reverted | +40% insert regression |
+| 3 | Single allocation (metadata-first, SipHash) | Reverted | Worse than #2 |
+| 4 | splitmix64 hash mixer | Reverted | +32-86% regression |
+| 5 | Fused find-or-locate | **Kept** | Entry API avoids double probe |
+| 6 | SIMD IntoIter | **Kept** | Consistency |
+| 7 | Initial bucket prefetch | **Superseded by #14** | Was 11% hit improvement |
+| 8 | IsAvalanching auto-dispatch | **Partial** | Specialization hurts default path |
+| 9 | Size-adaptive allocation | Skipped | Not worth complexity |
+| 10 | Single-group fast path | **Superseded by #16** | Zero-cost for large tables |
+| 11 | Conditional prefetch | Reverted | Branch overhead > wasted prefetch cost |
+| 12 | foldhash default hasher | **Kept** | 3-7x faster across all operations |
+| 13 | Single allocation re-test (foldhash) | Reverted | +66% insert 1M still dealbreaker |
+| 14 | Remove manual prefetch (foldhash) | **Kept** | -27% miss 1M, -4% small sizes |
+| 15 | Fused home-group insert | **Kept** | **-35 to -48% insert, mixed now wins** |
+| 16 | Remove single-group branch | **Kept** | Marginal hit improvement |
+| 17 | Dense iteration fast path | Reverted | +33% iteration regression |
+| 18 | Inline find_by_hash + cold continuation | Reverted | +10-14% hit regression |
+
+---
+
 ## Remaining Ideas
 
 See FUTURE.md for a comprehensive list of further improvements.
