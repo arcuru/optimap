@@ -239,33 +239,81 @@ where
     }
 
     /// Gets the given key's entry in the map for in-place manipulation.
+    ///
+    /// Uses the same fused home-group pattern as insert(): a single SIMD load
+    /// checks for the key and locates an empty slot simultaneously.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
+        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+
         if self.table.num_groups == 0 {
             self.table.allocate(1);
         }
 
         let h = self.hash_key(&key);
 
-        // If at capacity, can't use fused probe (rehash would invalidate slot)
+        // At capacity: can't pre-locate a slot (growth would invalidate it)
         if self.table.len >= self.table.max_load {
-            if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
-                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            return self.entry_at_capacity(h, key);
+        }
+
+        let reduced = reduced_hash(h);
+        let gi = self.table.group_index(h);
+        let meta = unsafe { self.table.meta_ptr(gi) };
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        // Check home group for existing key
+        for si in matches {
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            if bucket.0 == key {
                 return Entry::Occupied(OccupiedEntry {
                     key,
                     value: &mut bucket.1,
                 });
             }
-            // Will need to grow on insert — fall through to Vacant with no slot
-            return Entry::Vacant(VacantEntry {
-                key,
-                hash: h,
-                slot: None,
-                table: &mut self.table,
-                hash_builder: &self.hash_builder,
-            });
         }
 
-        // Fused find-or-locate: single probe
+        // No overflow from home group → key absent, slot in home group
+        let ofw_bit = overflow_bit(h);
+        if let Some(si) = empties.lowest_set_bit() {
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                return Entry::Vacant(VacantEntry {
+                    key,
+                    hash: h,
+                    slot: Some((gi, si, 0)),
+                    table: &mut self.table,
+                    hash_builder: &self.hash_builder,
+                });
+            }
+        }
+
+        // Cold: overflow or full home group — use full find_or_locate
+        self.entry_overflow(h, key)
+    }
+
+    /// Cold path: entry when already at capacity.
+    #[cold]
+    #[inline(never)]
+    fn entry_at_capacity(&mut self, h: u64, key: K) -> Entry<'_, K, V, S> {
+        if let Some((gi, si)) = self.table.find_by_hash(h, |k| k == &key) {
+            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+            return Entry::Occupied(OccupiedEntry {
+                key,
+                value: &mut bucket.1,
+            });
+        }
+        Entry::Vacant(VacantEntry {
+            key,
+            hash: h,
+            slot: None,
+            table: &mut self.table,
+            hash_builder: &self.hash_builder,
+        })
+    }
+
+    /// Cold path: entry when home group has overflow or is full.
+    #[cold]
+    #[inline(never)]
+    fn entry_overflow(&mut self, h: u64, key: K) -> Entry<'_, K, V, S> {
         match self.table.find_or_locate(h, |k| k == &key) {
             ProbeResult::Found(gi, si) => {
                 let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
