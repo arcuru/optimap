@@ -89,17 +89,22 @@ Merged metadata and bucket arrays into one allocation:
 | ahash insert 1M | 13.1 ms | 24.0 ms | **+83% REGRESSION** |
 
 ### Analysis
-For 1M entries (u64→usize), the single allocation is ~17MB. The metadata sits at
-the far end. During insert, the CPU ping-pongs between metadata (at +16MB offset)
-and buckets (at +0), causing severe TLB pressure. The two-allocation layout keeps
-metadata compact (~1MB) and fitting in L2/L3.
+**NOTE: The "TLB pressure" diagnosis below was later found to be wrong.**
+The insert regression was actually caused by OS page fault overhead: the
+`insert_u64` benchmark allocates a fresh map on every criterion iteration.
+A single large mmap (~32MB) incurs ~11ms of page faults as the kernel
+lazily zero-fills ~7,680 pages. With two smaller allocations, glibc's
+arena caching may reuse previously freed pages across iterations, avoiding
+re-faulting. See attempt 24/26 and BENCHMARKS.md methodology note for
+the full analysis.
 
-Lookup improved because the prefetch + single allocation reduced one pointer chase
-on the critical path. But the insert regression was too severe.
+Original (incorrect) analysis: "CPU ping-pongs between metadata and
+buckets causing TLB pressure." The actual insert operations are the same
+speed regardless of allocation strategy.
 
 ### Decision
-Reverted. Two allocations are better for workloads that mix insert and lookup.
-The metadata array's compactness is more important than pointer-chase savings.
+Reverted at the time. Later re-adopted in attempt 26 after understanding
+the page fault overhead was a benchmark artifact.
 
 ---
 

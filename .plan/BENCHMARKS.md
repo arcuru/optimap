@@ -3,6 +3,33 @@
 Both us and hashbrown use foldhash as the default hasher.
 Benchmarks use SFC64 RNG and checksummed outputs (Ankerl methodology).
 
+## Methodology Note: Allocation Overhead at Large Sizes
+
+The `insert_u64` benchmark creates a fresh map (`with_capacity(n)`) on
+every criterion iteration. At 1M elements, this is a ~32MB allocation
+that goes through `mmap`. Each fresh `mmap` returns lazily zero-filled
+pages — the kernel must fault in ~7,680 pages on first write, at ~1.5µs
+per fault ≈ **~11ms of page fault overhead per iteration**.
+
+This affects both us and hashbrown equally (~11-13ms overhead each).
+The `insert_prealloc` benchmark isolates true insert throughput by
+pre-allocating once and using `clear()` between iterations:
+
+| Config | ours | hashbrown | ratio |
+|--------|-----:|----------:|:-----:|
+| insert_u64 1M (alloc per iter) | 20.8 ms | 25.3 ms | 0.82x |
+| insert_prealloc 1M (no alloc) | **9.5 ms** | 12.0 ms | **0.79x** |
+
+The ratio is consistent (~0.8x), confirming the overhead is pure OS
+page faulting, not hash table behavior. The alloc-per-iter numbers are
+still useful for comparing relative performance, but absolute 1M insert
+times should be interpreted with the ~11ms allocation tax in mind.
+
+This also explains why previous "single allocation regression" tests
+showed +40-108% at 1M: the benchmark was measuring allocation strategy
+differences (glibc arena caching for smaller allocs vs mmap/munmap for
+one large alloc), not insert performance differences.
+
 ## Load Factor Analysis
 
 Our table uses 15-slot groups with a fixed 87.5% max load factor.
