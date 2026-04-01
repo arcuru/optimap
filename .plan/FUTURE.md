@@ -18,6 +18,12 @@ gap it targets and the estimated difficulty.
   chain (Values::fold → Iter::fold → SlotIter::fold) generated worse code than
   the default next()-based fold. +5-18% regression. LLVM optimizes the simpler
   next() control flow better than deeply nested generic closures.
+- **#[inline] on entry API**: REVERTED — helps hit-heavy (-7%) but hurts
+  insert-heavy (+31%) due to code bloat. Compiler's default heuristics are correct.
+- **AVX2 multi-group probing/iteration**: SKIPPED after analysis. At 65% load,
+  93% of probes resolve in the home group (1 SIMD load) — AVX2 can't help.
+  For iteration, the bottleneck is bucket memory access, not metadata SIMD loads.
+  Probe chain statistics: 99.6% home-group at 45% load → 70% at 85% load.
 
 ---
 

@@ -747,6 +747,7 @@ Reverted. The default fold (using `next()`) already generates near-optimal code.
 | 18 | Inline find_by_hash + cold continuation | Reverted | +10-14% hit regression |
 | 19 | Custom Iterator::fold | Reverted | +5-18% regression from closure nesting |
 | 20 | #[inline] on entry API | Reverted | Helps hit-heavy (-7%), hurts insert-heavy (+31%) |
+| 21 | AVX2 multi-group probing/iteration | Skipped | Analysis shows <8% of probes overflow; iteration bottleneck is bucket access, not SIMD loads |
 
 ---
 
@@ -760,6 +761,42 @@ workloads (100% distinct), the inlined entry body caused code bloat and
 instruction cache pressure: +31% regression. The compiler's default
 heuristics (not inlining entry()) are correct — the function is too large
 and the hit/insert trade-off makes any single inline decision suboptimal.
+
+---
+
+### Attempt 21: AVX2 multi-group probing and iteration
+**Status: SKIPPED after analysis**
+
+Measured probe chain statistics at various load factors using Poisson model:
+
+| Load % | λ (elems/group) | Full groups | Home-group hit rate | Avg probes/hit |
+|-------:|----------------:|------------:|--------------------:|---------------:|
+| 45% | 6.8 | 0.4% | 99.6% | 1.00 |
+| 55% | 8.2 | 2.2% | 97.8% | 1.02 |
+| 65% | 9.8 | 7.1% | 92.9% | 1.08 |
+| 75% | 11.2 | 16.5% | 83.5% | 1.20 |
+| 85% | 12.8 | 30.0% | 70.0% | 1.43 |
+
+**For probing**: AVX2 could combine two SIMD comparisons into one 256-bit operation,
+but the quadratic probe sequence visits non-adjacent groups, so a single 32-byte load
+cannot cover two probe steps. Would need two separate 16-byte loads combined via
+`_mm256_set_m128i`, saving one cmpeq+movemask but adding a combine. At 65% load,
+only 7% of operations need >1 probe — the home group resolves 93%+ of operations.
+AVX2 cannot help the home-group fast path (it's already a single SIMD load).
+
+**For iteration**: AVX2 would halve SIMD loads (one 32-byte load → two groups of
+metadata). But iteration at small-medium sizes is bottlenecked by bucket access
+(bucket_ptr arithmetic + memory loads), not metadata SIMD loads. At 1M+ where
+iteration matters, it's already memory-bound (we tie hashbrown). Halving SIMD loads
+for metadata wouldn't move the needle.
+
+**Additional concerns**:
+- Runtime feature detection (`is_x86_feature_detected!`) adds a branch on every call
+- AVX2 can cause frequency throttling on some Intel CPUs
+- Code complexity doubles (SSE2 + AVX2 paths)
+
+**Decision**: Skipped. The analysis shows AVX2 targets the wrong bottleneck for both
+probing and iteration.
 
 ---
 
