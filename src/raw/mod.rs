@@ -48,8 +48,6 @@ pub struct RawTable<K, V> {
     pub(crate) max_load: usize,
     /// group_index = hash >> shift. For num_groups=1, shift=64 but we mask.
     pub(crate) shift: u32,
-    /// Precomputed num_groups - 1 for masking.
-    group_mask: usize,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -62,7 +60,6 @@ impl<K, V> RawTable<K, V> {
             len: 0,
             max_load: 0,
             shift: 64,
-            group_mask: 0,
             _marker: PhantomData,
         }
     }
@@ -136,7 +133,6 @@ impl<K, V> RawTable<K, V> {
         }
 
         self.num_groups = num_groups;
-        self.group_mask = num_groups.wrapping_sub(1);
         self.max_load = max_load_for_capacity(total_buckets);
         self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
@@ -161,9 +157,17 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Map hash to group index.
+    /// num_groups - 1, used for masking group indices.
+    /// Derived from num_groups rather than stored to save 8 bytes on the struct.
+    #[inline(always)]
+    fn group_mask(&self) -> usize {
+        self.num_groups.wrapping_sub(1)
+    }
+
+    /// Map hash to group index.
     #[inline(always)]
     pub(crate) fn group_index(&self, h: u64) -> usize {
-        (h.wrapping_shr(self.shift) as usize) & self.group_mask
+        (h.wrapping_shr(self.shift) as usize) & self.group_mask()
     }
 
     /// Pointer to group metadata (16-byte aligned).
@@ -237,7 +241,7 @@ impl<K, V> RawTable<K, V> {
             }
 
             probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.group_mask;
+            gi = (gi.wrapping_add(probe)) & self.group_mask();
 
             // Prefetch only on overflow — doesn't fire on miss fast path
             unsafe {
@@ -298,7 +302,7 @@ impl<K, V> RawTable<K, V> {
             unsafe { Group::set_overflow_bit(meta, ofw_bit); }
 
             probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.group_mask;
+            gi = (gi.wrapping_add(probe)) & self.group_mask();
         }
     }
 
@@ -362,7 +366,7 @@ impl<K, V> RawTable<K, V> {
         F: Fn(&K) -> bool,
     {
         let mut probe = 1usize;
-        let mut gi = (home_gi.wrapping_add(probe)) & self.group_mask;
+        let mut gi = (home_gi.wrapping_add(probe)) & self.group_mask();
 
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
@@ -394,7 +398,7 @@ impl<K, V> RawTable<K, V> {
             }
 
             probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.group_mask;
+            gi = (gi.wrapping_add(probe)) & self.group_mask();
 
             unsafe {
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
@@ -433,7 +437,7 @@ impl<K, V> RawTable<K, V> {
                 }
                 mask >>= 1;
                 set_probe += 1;
-                set_gi = (set_gi.wrapping_add(set_probe)) & self.group_mask;
+                set_gi = (set_gi.wrapping_add(set_probe)) & self.group_mask();
             }
         }
 
