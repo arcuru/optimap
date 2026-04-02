@@ -311,7 +311,6 @@ impl<K, V> RawTable<K, V> {
     #[inline(always)]
     pub(crate) fn insert_no_check(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
         let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
 
@@ -327,7 +326,8 @@ impl<K, V> RawTable<K, V> {
                 return (gi, si);
             }
 
-            // Group full -- set overflow bit in overflow array
+            // Group full — compute overflow bit lazily (only needed when group is full)
+            let ofw_bit = overflow_bit(h);
             unsafe { Group::set_overflow_bit(self.overflow_ptr(gi), ofw_bit); }
 
             probe += 1;
@@ -613,9 +613,9 @@ impl<K, V> RawTable<K, V> {
                 }
             }
 
-            let meta_size = self.num_groups() * META_GROUP_BYTES;
-            ptr::write_bytes(self.metadata, 0, meta_size);
-            ptr::write_bytes(self.overflow, 0, self.num_groups());
+            // Metadata and overflow are contiguous in memory — zero both in one call
+            let combined_size = self.num_groups() * META_GROUP_BYTES + self.num_groups();
+            ptr::write_bytes(self.metadata, 0, combined_size);
         }
 
         self.len = 0;

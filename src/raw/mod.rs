@@ -290,7 +290,6 @@ impl<K, V> RawTable<K, V> {
     #[inline(always)]
     pub(crate) fn insert_no_check(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
         let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
 
@@ -306,7 +305,8 @@ impl<K, V> RawTable<K, V> {
                 return (gi, si);
             }
 
-            // Group full — set overflow bit
+            // Group full — compute overflow bit lazily (only needed when group is full)
+            let ofw_bit = overflow_bit(h);
             unsafe { Group::set_overflow_bit(meta, ofw_bit); }
 
             probe += 1;

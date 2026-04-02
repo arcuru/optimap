@@ -503,6 +503,154 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Workload: Remove + Reinsert (tombstone-free advantage) ──────────────────
+
+fn bench_remove_reinsert(c: &mut Criterion) {
+    let mut group = c.benchmark_group("workload/remove_reinsert");
+    let n = entries_for_load(LARGE_CAPACITY, LOAD_PCT);
+    let ops = 100_000u64;
+    group.throughput(Throughput::Elements(ops));
+
+    let keys = make_random_keys(n, 42);
+
+    // Pre-build maps
+    let mut ours = UnorderedFlatMap::with_capacity(LARGE_CAPACITY);
+    let mut split = Splitsies::with_capacity(LARGE_CAPACITY);
+    let mut hb = hashbrown::HashMap::with_capacity(LARGE_CAPACITY);
+    for (i, &k) in keys.iter().enumerate() {
+        ours.insert(k, i as u64);
+        split.insert(k, i as u64);
+        hb.insert(k, i as u64);
+    }
+
+    // Pattern: remove key, immediately reinsert with new value
+    // Tombstone-free designs can reuse the slot immediately.
+    // hashbrown creates a tombstone on remove, then must find it or a new slot on insert.
+    let op_keys: Vec<u64> = {
+        let mut rng = Sfc64::new(777);
+        (0..ops as usize).map(|i| keys[rng.next() as usize % keys.len()]).collect()
+    };
+
+    group.bench_with_input(BenchmarkId::new("ours", n), &op_keys, |b, op_keys| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &k in op_keys {
+                if let Some(v) = ours.remove(&k) { checksum = checksum.wrapping_add(v); }
+                ours.insert(k, checksum);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_with_input(BenchmarkId::new("split16", n), &op_keys, |b, op_keys| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &k in op_keys {
+                if let Some(v) = split.remove(&k) { checksum = checksum.wrapping_add(v); }
+                split.insert(k, checksum);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_with_input(BenchmarkId::new("hashbrown", n), &op_keys, |b, op_keys| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &k in op_keys {
+                if let Some(v) = hb.remove(&k) { checksum = checksum.wrapping_add(v); }
+                hb.insert(k, checksum);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.finish();
+}
+
+// ── Workload: High-Load Stress (overflow path + prefetch effectiveness) ─────
+
+fn bench_high_load_stress(c: &mut Criterion) {
+    let mut group = c.benchmark_group("workload/high_load_stress");
+
+    // Test at 85% load — near max_load, many groups full, overflow common
+    let capacity = 107_520; // large
+    let min_slots = (capacity * 8 + 6) / 7;
+    let min_groups = (min_slots + 14) / 15;
+    let mut num_groups = 1;
+    while num_groups < min_groups { num_groups *= 2; }
+    let total_slots = num_groups * 15;
+    let num_entries = total_slots * 85 / 100;
+    let ops = 100_000u64;
+
+    group.throughput(Throughput::Elements(ops));
+
+    let keys = make_random_keys(num_entries, 42);
+    let miss_keys = make_random_keys(ops as usize, 9999);
+
+    let mut ours = UnorderedFlatMap::with_capacity(capacity);
+    let mut split = Splitsies::with_capacity(capacity);
+    let mut hb = hashbrown::HashMap::with_capacity(capacity);
+    for (i, &k) in keys.iter().enumerate() {
+        ours.insert(k, i as u64);
+        split.insert(k, i as u64);
+        hb.insert(k, i as u64);
+    }
+
+    // Hit at 85% load
+    group.bench_with_input(BenchmarkId::new("ours_hit85", num_entries), &keys, |b, keys| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for i in 0..ops as usize {
+                sum = sum.wrapping_add(*ours.get(&keys[i % keys.len()]).unwrap_or(&0));
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_with_input(BenchmarkId::new("split16_hit85", num_entries), &keys, |b, keys| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for i in 0..ops as usize {
+                sum = sum.wrapping_add(*split.get(&keys[i % keys.len()]).unwrap_or(&0));
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_with_input(BenchmarkId::new("hb_hit85", num_entries), &keys, |b, keys| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for i in 0..ops as usize {
+                sum = sum.wrapping_add(*hb.get(&keys[i % keys.len()]).unwrap_or(&0));
+            }
+            black_box(sum);
+        });
+    });
+
+    // Miss at 85% load
+    group.bench_with_input(BenchmarkId::new("ours_miss85", num_entries), &miss_keys, |b, mkeys| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for &k in mkeys { if ours.get(&k).is_some() { count += 1; } }
+            black_box(count);
+        });
+    });
+    group.bench_with_input(BenchmarkId::new("split16_miss85", num_entries), &miss_keys, |b, mkeys| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for &k in mkeys { if split.get(&k).is_some() { count += 1; } }
+            black_box(count);
+        });
+    });
+    group.bench_with_input(BenchmarkId::new("hb_miss85", num_entries), &miss_keys, |b, mkeys| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for &k in mkeys { if hb.get(&k).is_some() { count += 1; } }
+            black_box(count);
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     workloads,
     bench_equilibrium_churn,
@@ -511,5 +659,7 @@ criterion_group!(
     bench_counting,
     bench_post_delete_lookup,
     bench_miss_ratio_sweep,
+    bench_remove_reinsert,
+    bench_high_load_stress,
 );
 criterion_main!(workloads);

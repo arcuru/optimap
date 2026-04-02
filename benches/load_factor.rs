@@ -12,6 +12,7 @@ use criterion::{
 };
 
 use unordered_flat_map::UnorderedFlatMap;
+use unordered_flat_map::Splitsies;
 
 // ── Fast RNG ────────────────────────────────────────────────────────────
 
@@ -47,6 +48,22 @@ fn build_at_load(
 ) -> (UnorderedFlatMap<u64, u64>, Vec<u64>) {
     let mut rng = Sfc64::new(seed);
     let mut map = UnorderedFlatMap::with_capacity(target_capacity);
+    let mut keys = Vec::with_capacity(num_entries);
+    for _ in 0..num_entries {
+        let k = rng.next();
+        map.insert(k, k);
+        keys.push(k);
+    }
+    (map, keys)
+}
+
+fn build_split_at_load(
+    target_capacity: usize,
+    num_entries: usize,
+    seed: u64,
+) -> (Splitsies<u64, u64>, Vec<u64>) {
+    let mut rng = Sfc64::new(seed);
+    let mut map = Splitsies::with_capacity(target_capacity);
     let mut keys = Vec::with_capacity(num_entries);
     for _ in 0..num_entries {
         let k = rng.next();
@@ -96,6 +113,7 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
 
         let (ours, keys) = build_at_load(capacity, num_entries, 42);
+        let (split, _) = build_split_at_load(capacity, num_entries, 42);
         let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
@@ -107,6 +125,21 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
                     for i in 0..ops as usize {
                         let k = &keys[i % keys.len()];
                         sum = sum.wrapping_add(*ours.get(k).unwrap_or(&0));
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for i in 0..ops as usize {
+                        let k = &keys[i % keys.len()];
+                        sum = sum.wrapping_add(*split.get(k).unwrap_or(&0));
                     }
                     black_box(sum);
                 });
@@ -155,6 +188,7 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
 
         let (ours, _) = build_at_load(capacity, num_entries, 42);
+        let (split, _) = build_split_at_load(capacity, num_entries, 42);
         let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
@@ -164,9 +198,21 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
                 b.iter(|| {
                     let mut count = 0u64;
                     for k in miss_keys {
-                        if ours.get(k).is_some() {
-                            count += 1;
-                        }
+                        if ours.get(k).is_some() { count += 1; }
+                    }
+                    black_box(count);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            &miss_keys,
+            |b, miss_keys| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for k in miss_keys {
+                        if split.get(k).is_some() { count += 1; }
                     }
                     black_box(count);
                 });
@@ -239,6 +285,7 @@ fn bench_mixed_by_load(c: &mut Criterion) {
         };
 
         let (mut ours, _) = build_at_load(capacity, num_entries, 42);
+        let (mut split, _) = build_split_at_load(capacity, num_entries, 42);
         let (mut hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
@@ -259,6 +306,32 @@ fn bench_mixed_by_load(c: &mut Criterion) {
                             }
                             _ => { // 20% remove
                                 ours.remove(&key);
+                            }
+                        }
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            &op_keys,
+            |b, ops| {
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for &(op, key) in ops {
+                        match op {
+                            0..=4 => {
+                                split.insert(key, key);
+                            }
+                            5..=7 => {
+                                if let Some(&v) = split.get(&key) {
+                                    checksum = checksum.wrapping_add(v);
+                                }
+                            }
+                            _ => {
+                                split.remove(&key);
                             }
                         }
                     }
@@ -318,6 +391,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
 
         let (ours, keys) = build_at_load(capacity, num_entries, 42);
+        let (split, _) = build_split_at_load(capacity, num_entries, 42);
         let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         let mut miss_rng = Sfc64::new(9999);
@@ -332,6 +406,20 @@ fn bench_load_factor_1m(c: &mut Criterion) {
                     let mut sum = 0u64;
                     for i in 0..ops as usize {
                         sum = sum.wrapping_add(*ours.get(&keys[i % keys.len()]).unwrap_or(&0));
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_hit_{:.0}pct", actual_lf), num_entries),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for i in 0..ops as usize {
+                        sum = sum.wrapping_add(*split.get(&keys[i % keys.len()]).unwrap_or(&0));
                     }
                     black_box(sum);
                 });
@@ -361,6 +449,20 @@ fn bench_load_factor_1m(c: &mut Criterion) {
                     let mut count = 0u64;
                     for k in miss_keys {
                         if ours.get(k).is_some() { count += 1; }
+                    }
+                    black_box(count);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_miss_{:.0}pct", actual_lf), num_entries),
+            &miss_keys,
+            |b, miss_keys| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for k in miss_keys {
+                        if split.get(k).is_some() { count += 1; }
                     }
                     black_box(count);
                 });
