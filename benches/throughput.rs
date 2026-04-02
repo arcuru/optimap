@@ -42,10 +42,14 @@ impl Sfc64 {
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 
+// Group size for capacity calculation. Uses the 15-slot design's geometry.
+// Splitsies (16-slot) gets slightly lower actual load at the same entry count
+// (~65.6% vs 70% for medium), but relative comparisons are valid since all
+// implementations insert the same number of entries.
 const GROUP_SIZE: usize = 15;
 
 /// Compute (total_slots, max_load) for a given requested capacity.
-/// Replicates the map's internal group-count calculation.
+/// Replicates the 15-slot map's internal group-count calculation.
 fn table_geometry(capacity: usize) -> (usize, usize) {
     let min_slots = (capacity * 8 + 6) / 7;
     let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
@@ -603,6 +607,59 @@ fn bench_entry(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Throughput: Size Scaling (find cache boundaries) ────────────────────────
+
+fn bench_size_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("throughput/size_scaling");
+
+    // Test lookup hit at 70% load across sizes spanning L1→L2→L3→DRAM
+    // For u64/u64 (16B per bucket):
+    //   256 entries = 4KB  (fits L1)
+    //   4K entries = 64KB  (L1/L2 boundary)
+    //   32K entries = 512KB (L2)
+    //   256K entries = 4MB  (L2/L3 boundary)
+    //   2M entries = 32MB  (L3/DRAM boundary)
+    for &n in &[256, 4_000, 32_000, 256_000, 2_000_000] {
+        let capacity = n;
+        let keys = make_random_keys(n, 42);
+        group.throughput(Throughput::Elements(n as u64));
+
+        if n >= 2_000_000 { group.sample_size(10); }
+
+        let mut ours = UnorderedFlatMap::with_capacity(capacity);
+        let mut split = Splitsies::with_capacity(capacity);
+        let mut hb = hashbrown::HashMap::with_capacity(capacity);
+        for (i, &k) in keys.iter().enumerate() {
+            ours.insert(k, i as u64);
+            split.insert(k, i as u64);
+            hb.insert(k, i as u64);
+        }
+
+        group.bench_with_input(BenchmarkId::new("ours_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys { sum = sum.wrapping_add(*ours.get(&k).unwrap_or(&0)); }
+                black_box(sum);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("split16_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys { sum = sum.wrapping_add(*split.get(&k).unwrap_or(&0)); }
+                black_box(sum);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("hb_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys { sum = sum.wrapping_add(*hb.get(&k).unwrap_or(&0)); }
+                black_box(sum);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     throughput,
     bench_insert,
@@ -612,6 +669,7 @@ criterion_group!(
     bench_remove,
     bench_insert_existing,
     bench_iteration,
+    bench_size_scaling,
     bench_entry,
 );
 criterion_main!(throughput);
