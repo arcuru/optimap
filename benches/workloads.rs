@@ -9,6 +9,7 @@ use criterion::{
 };
 
 use unordered_flat_map::UnorderedFlatMap;
+use unordered_flat_map::Splitsies;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
 
@@ -81,6 +82,23 @@ fn bench_equilibrium_churn(c: &mut Criterion) {
             });
         });
 
+        group.bench_function(BenchmarkId::new("split16", name), |b| {
+            b.iter(|| {
+                let mut map = Splitsies::new();
+                let mut rng = Sfc64::new(42);
+                let mut checksum = 0u64;
+                for _ in 0..ops {
+                    let k = rng.next() & mask;
+                    map.insert(k, k);
+                    let k2 = rng.next() & mask;
+                    if let Some(v) = map.remove(&k2) {
+                        checksum = checksum.wrapping_add(v);
+                    }
+                }
+                black_box(checksum);
+            });
+        });
+
         group.bench_function(BenchmarkId::new("hashbrown", name), |b| {
             b.iter(|| {
                 let mut map = hashbrown::HashMap::new();
@@ -133,9 +151,11 @@ fn bench_read_heavy(c: &mut Criterion) {
     };
 
     let mut ours = UnorderedFlatMap::with_capacity(LARGE_CAPACITY);
+    let mut split = Splitsies::with_capacity(LARGE_CAPACITY);
     let mut hb = hashbrown::HashMap::with_capacity(LARGE_CAPACITY);
     for (i, &k) in keys.iter().enumerate() {
         ours.insert(k, i as u64);
+        split.insert(k, i as u64);
         hb.insert(k, i as u64);
     }
 
@@ -151,6 +171,24 @@ fn bench_read_heavy(c: &mut Criterion) {
                     }
                     95..=97 => { ours.insert(key, key); } // 3% insert
                     _ => { ours.remove(&key); } // 2% remove
+                }
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_with_input(BenchmarkId::new("split16", n), &op_seq, |b, ops| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &(op, key) in ops {
+                match op {
+                    0..=94 => {
+                        if let Some(&v) = split.get(&key) {
+                            checksum = checksum.wrapping_add(v);
+                        }
+                    }
+                    95..=97 => { split.insert(key, key); }
+                    _ => { split.remove(&key); }
                 }
             }
             black_box(checksum);
@@ -203,9 +241,11 @@ fn bench_write_heavy(c: &mut Criterion) {
     };
 
     let mut ours = UnorderedFlatMap::with_capacity(LARGE_CAPACITY);
+    let mut split = Splitsies::with_capacity(LARGE_CAPACITY);
     let mut hb = hashbrown::HashMap::with_capacity(LARGE_CAPACITY);
     for (i, &k) in keys.iter().enumerate() {
         ours.insert(k, i as u64);
+        split.insert(k, i as u64);
         hb.insert(k, i as u64);
     }
 
@@ -221,6 +261,24 @@ fn bench_write_heavy(c: &mut Criterion) {
                     }
                     5..=7 => { ours.insert(key, key); } // 30% insert
                     _ => { ours.remove(&key); } // 20% remove
+                }
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_with_input(BenchmarkId::new("split16", n), &op_seq, |b, ops| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &(op, key) in ops {
+                match op {
+                    0..=4 => {
+                        if let Some(&v) = split.get(&key) {
+                            checksum = checksum.wrapping_add(v);
+                        }
+                    }
+                    5..=7 => { split.insert(key, key); }
+                    _ => { split.remove(&key); }
                 }
             }
             black_box(checksum);
@@ -270,6 +328,18 @@ fn bench_counting(c: &mut Criterion) {
             });
         });
 
+        group.bench_function(BenchmarkId::new("split16", name), |b| {
+            b.iter(|| {
+                let mut map = Splitsies::new();
+                let mut rng = Sfc64::new(42);
+                for _ in 0..ops {
+                    let k = rng.next() % distinct;
+                    *map.entry(k).or_insert(0u64) += 1;
+                }
+                black_box(map.len());
+            });
+        });
+
         group.bench_function(BenchmarkId::new("hashbrown", name), |b| {
             b.iter(|| {
                 let mut map = hashbrown::HashMap::new();
@@ -298,13 +368,16 @@ fn bench_post_delete_lookup(c: &mut Criterion) {
 
         // Build, remove half, measure lookup of all N keys (half hit, half miss)
         let mut ours = UnorderedFlatMap::with_capacity(capacity);
+        let mut split = Splitsies::with_capacity(capacity);
         let mut hb = hashbrown::HashMap::with_capacity(capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
+            split.insert(k, i as u64);
             hb.insert(k, i as u64);
         }
         for &k in &keys[..half] {
             ours.remove(&k);
+            split.remove(&k);
             hb.remove(&k);
         }
 
@@ -313,6 +386,18 @@ fn bench_post_delete_lookup(c: &mut Criterion) {
                 let mut sum = 0u64;
                 for &k in keys {
                     if let Some(&v) = ours.get(&k) {
+                        sum = sum.wrapping_add(v);
+                    }
+                }
+                black_box(sum);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("split16", name), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys {
+                    if let Some(&v) = split.get(&k) {
                         sum = sum.wrapping_add(v);
                     }
                 }
@@ -347,9 +432,11 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
     let miss_keys = make_random_keys(n, 9999);
 
     let mut ours = UnorderedFlatMap::with_capacity(LARGE_CAPACITY);
+    let mut split = Splitsies::with_capacity(LARGE_CAPACITY);
     let mut hb = hashbrown::HashMap::with_capacity(LARGE_CAPACITY);
     for (i, &k) in hit_keys.iter().enumerate() {
         ours.insert(k, i as u64);
+        split.insert(k, i as u64);
         hb.insert(k, i as u64);
     }
 
@@ -373,6 +460,22 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
                     let mut sum = 0u64;
                     for &k in keys {
                         if let Some(&v) = ours.get(&k) {
+                            sum = sum.wrapping_add(v);
+                        }
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("split16_{}miss", miss_pct), n),
+            &lookup_keys,
+            |b, keys| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for &k in keys {
+                        if let Some(&v) = split.get(&k) {
                             sum = sum.wrapping_add(v);
                         }
                     }

@@ -200,6 +200,25 @@ fn bench_insert_large_value(c: &mut Criterion) {
             },
         );
 
+        // split_overflow (16-slot groups)
+        let mut split: Splitsies<u64, [u8; 128]> =
+            Splitsies::with_capacity(sz.capacity);
+        for &k in &keys { split.insert(k, val); }
+
+        group.bench_with_input(
+            BenchmarkId::new("split16", sz.name),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    split.clear();
+                    for &k in keys.iter() {
+                        split.insert(k, val);
+                    }
+                    black_box(split.len());
+                });
+            },
+        );
+
         let mut hb: hashbrown::HashMap<u64, [u8; 128]> =
             hashbrown::HashMap::with_capacity(sz.capacity);
         for &k in &keys { hb.insert(k, val); }
@@ -376,6 +395,24 @@ fn bench_remove(c: &mut Criterion) {
             },
         );
 
+        // split_overflow (16-slot groups)
+        let mut split = Splitsies::with_capacity(sz.capacity);
+        for (i, &k) in keys.iter().enumerate() { split.insert(k, i as u64); }
+
+        group.bench_with_input(
+            BenchmarkId::new("split16", sz.name),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    split.clear();
+                    for (i, &k) in keys.iter().enumerate() { split.insert(k, i as u64); }
+                    for &k in keys {
+                        black_box(split.remove(&k));
+                    }
+                });
+            },
+        );
+
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() { hb.insert(k, i as u64); }
 
@@ -406,9 +443,11 @@ fn bench_insert_existing(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
+        let mut split = Splitsies::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
+            split.insert(k, i as u64);
             hb.insert(k, i as u64);
         }
 
@@ -421,6 +460,19 @@ fn bench_insert_existing(c: &mut Criterion) {
                         ours.insert(k, i as u64 + 1);
                     }
                     black_box(ours.len());
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("split16", sz.name),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    for (i, &k) in keys.iter().enumerate() {
+                        split.insert(k, i as u64 + 1);
+                    }
+                    black_box(split.len());
                 });
             },
         );
@@ -513,9 +565,11 @@ fn bench_entry(c: &mut Criterion) {
     group.throughput(Throughput::Elements(sz.num_entries as u64));
 
     let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
+    let mut split = Splitsies::with_capacity(sz.capacity);
     let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
     for &k in &keys {
         ours.insert(k, 0u64);
+        split.insert(k, 0u64);
         hb.insert(k, 0u64);
     }
 
@@ -525,6 +579,15 @@ fn bench_entry(c: &mut Criterion) {
                 *ours.entry(k).or_insert(0) += 1;
             }
             black_box(ours.len());
+        });
+    });
+
+    group.bench_function("split16", |b| {
+        b.iter(|| {
+            for &k in &keys {
+                *split.entry(k).or_insert(0) += 1;
+            }
+            black_box(split.len());
         });
     });
 
