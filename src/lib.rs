@@ -9,3 +9,4 @@ pub mod split_overflow;
 pub use map::UnorderedFlatMap;
 pub use set::UnorderedFlatSet;
 pub use raw::hash::IsAvalanching;
+pub use split_overflow::Splitsies;

@@ -15,4 +15,4 @@
 pub(crate) mod raw;
 mod map;
 
-pub use map::UnorderedFlatMap;
+pub use map::Splitsies;

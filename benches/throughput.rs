@@ -15,7 +15,7 @@ use criterion::{
 };
 
 use unordered_flat_map::UnorderedFlatMap;
-use unordered_flat_map::split_overflow::UnorderedFlatMap as SplitMap;
+use unordered_flat_map::Splitsies;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
 
@@ -134,7 +134,7 @@ fn bench_insert(c: &mut Criterion) {
         );
 
         // split_overflow (16-slot groups)
-        let mut split = SplitMap::with_capacity(sz.capacity);
+        let mut split = Splitsies::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() { split.insert(k, i as u64); }
 
         group.bench_with_input(
@@ -231,7 +231,7 @@ fn bench_lookup_hit(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
-        let mut split = SplitMap::with_capacity(sz.capacity);
+        let mut split = Splitsies::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
@@ -295,7 +295,7 @@ fn bench_lookup_miss(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
-        let mut split = SplitMap::with_capacity(sz.capacity);
+        let mut split = Splitsies::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
@@ -451,7 +451,7 @@ fn bench_iteration(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
-        let mut split = SplitMap::with_capacity(sz.capacity);
+        let mut split = Splitsies::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);

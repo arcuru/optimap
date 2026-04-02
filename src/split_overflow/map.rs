@@ -1,4 +1,4 @@
-//! UnorderedFlatMap for the 16-slot split-overflow design.
+//! Splitsies for the 16-slot split-overflow design.
 //!
 //! This is a copy of the main map.rs adapted to use the split_overflow
 //! raw table. Key differences:
@@ -16,14 +16,14 @@ use crate::raw::hash;
 
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
 
-pub struct UnorderedFlatMap<K, V, S = DefaultHashBuilder> {
+pub struct Splitsies<K, V, S = DefaultHashBuilder> {
     table: RawTable<K, V>,
     hash_builder: S,
 }
 
 // ── Constructors ────────────────────────────────────────────────────────────
 
-impl<K, V> UnorderedFlatMap<K, V, DefaultHashBuilder> {
+impl<K, V> Splitsies<K, V, DefaultHashBuilder> {
     pub fn new() -> Self {
         Self::with_hasher(DefaultHashBuilder::default())
     }
@@ -33,16 +33,16 @@ impl<K, V> UnorderedFlatMap<K, V, DefaultHashBuilder> {
     }
 }
 
-impl<K, V, S> UnorderedFlatMap<K, V, S> {
+impl<K, V, S> Splitsies<K, V, S> {
     pub fn with_hasher(hash_builder: S) -> Self {
-        UnorderedFlatMap {
+        Splitsies {
             table: RawTable::new(),
             hash_builder,
         }
     }
 
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
-        UnorderedFlatMap {
+        Splitsies {
             table: RawTable::with_capacity(capacity),
             hash_builder,
         }
@@ -74,7 +74,7 @@ impl<K, V, S> UnorderedFlatMap<K, V, S> {
 
 // ── Core operations ─────────────────────────────────────────────────────────
 
-impl<K, V, S> UnorderedFlatMap<K, V, S>
+impl<K, V, S> Splitsies<K, V, S>
 where
     K: Hash + Eq,
     S: BuildHasher,
@@ -513,11 +513,11 @@ impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
-impl<K, V> Default for UnorderedFlatMap<K, V, DefaultHashBuilder> {
+impl<K, V> Default for Splitsies<K, V, DefaultHashBuilder> {
     fn default() -> Self { Self::new() }
 }
 
-impl<K, V, S> IntoIterator for UnorderedFlatMap<K, V, S> {
+impl<K, V, S> IntoIterator for Splitsies<K, V, S> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 
@@ -534,7 +534,7 @@ impl<K, V, S> IntoIterator for UnorderedFlatMap<K, V, S> {
     }
 }
 
-impl<'a, K, V, S> IntoIterator for &'a UnorderedFlatMap<K, V, S>
+impl<'a, K, V, S> IntoIterator for &'a Splitsies<K, V, S>
 where K: Hash + Eq, S: BuildHasher,
 {
     type Item = (&'a K, &'a V);
@@ -542,7 +542,7 @@ where K: Hash + Eq, S: BuildHasher,
     fn into_iter(self) -> Iter<'a, K, V> { self.iter() }
 }
 
-impl<K, V, S> FromIterator<(K, V)> for UnorderedFlatMap<K, V, S>
+impl<K, V, S> FromIterator<(K, V)> for Splitsies<K, V, S>
 where K: Hash + Eq, S: BuildHasher + Default,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
@@ -554,7 +554,7 @@ where K: Hash + Eq, S: BuildHasher + Default,
     }
 }
 
-impl<K, V, S> Extend<(K, V)> for UnorderedFlatMap<K, V, S>
+impl<K, V, S> Extend<(K, V)> for Splitsies<K, V, S>
 where K: Hash + Eq, S: BuildHasher,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
@@ -562,14 +562,14 @@ where K: Hash + Eq, S: BuildHasher,
     }
 }
 
-impl<K, V, S, Q> Index<&Q> for UnorderedFlatMap<K, V, S>
+impl<K, V, S, Q> Index<&Q> for Splitsies<K, V, S>
 where K: Hash + Eq + Borrow<Q>, Q: Hash + Eq + ?Sized, S: BuildHasher,
 {
     type Output = V;
     fn index(&self, key: &Q) -> &V { self.get(key).expect("no entry found for key") }
 }
 
-impl<K, V, S> fmt::Debug for UnorderedFlatMap<K, V, S>
+impl<K, V, S> fmt::Debug for Splitsies<K, V, S>
 where K: Hash + Eq + fmt::Debug, V: fmt::Debug, S: BuildHasher,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -577,18 +577,18 @@ where K: Hash + Eq + fmt::Debug, V: fmt::Debug, S: BuildHasher,
     }
 }
 
-impl<K, V, S> Clone for UnorderedFlatMap<K, V, S>
+impl<K, V, S> Clone for Splitsies<K, V, S>
 where K: Clone, V: Clone, S: Clone,
 {
     fn clone(&self) -> Self {
-        UnorderedFlatMap {
+        Splitsies {
             table: self.table.clone(),
             hash_builder: self.hash_builder.clone(),
         }
     }
 }
 
-impl<K, V, S> PartialEq for UnorderedFlatMap<K, V, S>
+impl<K, V, S> PartialEq for Splitsies<K, V, S>
 where K: Hash + Eq, V: PartialEq, S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -597,7 +597,7 @@ where K: Hash + Eq, V: PartialEq, S: BuildHasher,
     }
 }
 
-impl<K, V, S> Eq for UnorderedFlatMap<K, V, S>
+impl<K, V, S> Eq for Splitsies<K, V, S>
 where K: Hash + Eq, V: Eq, S: BuildHasher,
 {}
 
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn basic_operations() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         map.insert(1, "one");
         map.insert(2, "two");
         map.insert(3, "three");
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn insert_replace() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         assert_eq!(map.insert(1, "a"), None);
         assert_eq!(map.insert(1, "b"), Some("a"));
         assert_eq!(map.get(&1), Some(&"b"));
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         map.insert(1, 10);
         map.insert(2, 20);
         assert_eq!(map.remove(&1), Some(10));
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn entry_api() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         map.entry(1).or_insert(10);
         assert_eq!(map.get(&1), Some(&10));
         map.entry(1).or_insert(20);
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn large_insert() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         for i in 0..10_000 {
             map.insert(i, i * 2);
         }
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn from_iterator() {
-        let map: UnorderedFlatMap<i32, &str> =
+        let map: Splitsies<i32, &str> =
             vec![(1, "a"), (2, "b"), (3, "c")].into_iter().collect();
         assert_eq!(map.len(), 3);
         assert_eq!(map.get(&2), Some(&"b"));
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn into_iter() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         for i in 0..10 { map.insert(i, i * 10); }
         let mut pairs: Vec<(i32, i32)> = map.into_iter().collect();
         pairs.sort();
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn clone_and_eq() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         map.insert(1, 10);
         map.insert(2, 20);
         let cloned = map.clone();
@@ -687,14 +687,14 @@ mod tests {
 
     #[test]
     fn with_capacity() {
-        let map: UnorderedFlatMap<i32, i32> = UnorderedFlatMap::with_capacity(100);
+        let map: Splitsies<i32, i32> = Splitsies::with_capacity(100);
         assert!(map.capacity() >= 100);
         assert!(map.is_empty());
     }
 
     #[test]
     fn insert_remove_cycle() {
-        let mut map = UnorderedFlatMap::new();
+        let mut map = Splitsies::new();
         for cycle in 0..3 {
             for i in 0..100 {
                 map.insert(i, i + cycle * 1000);
