@@ -4,6 +4,7 @@
 mod raw;
 mod map;
 mod set;
+pub mod split_overflow;
 
 pub use map::UnorderedFlatMap;
 pub use set::UnorderedFlatSet;
