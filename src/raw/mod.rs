@@ -116,10 +116,10 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Compute the bucket offset within a single allocation.
-    /// Layout: [metadata: (num_groups+1)*16] [padding] [buckets: num_groups*15*sizeof(K,V)]
+    /// Layout: [metadata: num_groups*16] [padding] [buckets: num_groups*15*sizeof(K,V)]
     #[inline(always)]
     fn bucket_offset(num_groups: usize) -> usize {
-        let meta_size = (num_groups + 1) * META_GROUP_BYTES;
+        let meta_size = num_groups * META_GROUP_BYTES;
         let bucket_align = std::mem::align_of::<(K, V)>();
         // Round up to bucket alignment
         (meta_size + bucket_align - 1) & !(bucket_align - 1)
@@ -140,7 +140,7 @@ impl<K, V> RawTable<K, V> {
 
         let layout = Self::combined_layout(num_groups);
         let bucket_offset = Self::bucket_offset(num_groups);
-        let meta_size = (num_groups + 1) * META_GROUP_BYTES;
+        let meta_size = num_groups * META_GROUP_BYTES;
         let total_buckets = num_groups * GROUP_SIZE;
 
         unsafe {
@@ -152,9 +152,8 @@ impl<K, V> RawTable<K, V> {
             self.metadata = ptr;
             self.buckets = ptr.add(bucket_offset);
 
-            // Zero all metadata (empty groups) + sentinel
+            // Zero all metadata (empty groups)
             ptr::write_bytes(self.metadata, 0, meta_size);
-            *self.metadata.add(num_groups * META_GROUP_BYTES) = group::SENTINEL;
         }
 
         self.mask = num_groups - 1;
@@ -595,7 +594,6 @@ impl<K, V> RawTable<K, V> {
 
             let meta_size = self.num_groups() * META_GROUP_BYTES;
             ptr::write_bytes(self.metadata, 0, meta_size);
-            *self.metadata.add(self.num_groups() * META_GROUP_BYTES) = group::SENTINEL;
         }
 
         self.len = 0;
@@ -648,7 +646,7 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
         new_table.allocate(self.num_groups());
 
         unsafe {
-            let meta_size = (self.num_groups() + 1) * META_GROUP_BYTES;
+            let meta_size = self.num_groups() * META_GROUP_BYTES;
             ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
 
             let bucket_size = std::mem::size_of::<(K, V)>();

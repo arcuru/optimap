@@ -18,15 +18,13 @@ pub const META_GROUP_BYTES: usize = 16;
 /// Metadata byte: slot is empty.
 pub const EMPTY: u8 = 0x00;
 
-/// Metadata byte: sentinel (iteration terminator, placed after last group).
-pub const SENTINEL: u8 = 0x01;
-
 /// Compute the reduced hash value from the low byte of a hash.
-/// Maps to range [2, 255] while preserving `result % 8 == h % 8`.
+/// Maps to range [1, 255] while preserving `result % 8 == h % 8`.
+/// Only 0x00 is reserved (EMPTY).
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
     let low = (h & 0xFF) as u8;
-    if low < 2 { low.wrapping_add(8) } else { low }
+    if low == 0 { 8 } else { low }
 }
 
 /// Overflow bit index for a given hash value.

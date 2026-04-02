@@ -12,15 +12,13 @@ pub const META_GROUP_BYTES: usize = 16;
 /// Metadata byte: slot is empty.
 pub const EMPTY: u8 = 0x00;
 
-/// Metadata byte: sentinel (iteration terminator, placed after last group).
-pub const SENTINEL: u8 = 0x01;
-
 /// Compute the reduced hash value from the low byte of a hash.
-/// Maps to range [2, 255] while preserving `result % 8 == h % 8`.
+/// Maps to range [1, 255] while preserving `result % 8 == h % 8`.
+/// Only 0x00 is reserved (EMPTY).
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
     let low = (h & 0xFF) as u8;
-    if low < 2 { low.wrapping_add(8) } else { low }
+    if low == 0 { 8 } else { low }
 }
 
 /// Overflow bit index for a given hash value.
@@ -67,7 +65,7 @@ impl Group {
         }
     }
 
-    /// Return a bitmask of non-empty slots (occupied or sentinel).
+    /// Return a bitmask of non-empty slots (occupied).
     /// Used for fast iteration — skip groups where this is zero.
     /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
@@ -206,15 +204,6 @@ pub unsafe fn init_empty(ptr: *mut u8) {
     unsafe { std::ptr::write_bytes(ptr, 0, META_GROUP_BYTES); }
 }
 
-/// Initialize a sentinel group (slot 0 = SENTINEL, rest = EMPTY).
-#[inline(always)]
-pub unsafe fn init_sentinel(ptr: *mut u8) {
-    unsafe {
-        std::ptr::write_bytes(ptr, 0, META_GROUP_BYTES);
-        *ptr = SENTINEL;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,14 +255,14 @@ mod tests {
 
     #[test]
     fn reduced_hash_values() {
-        assert_eq!(reduced_hash(0x00), 8);
-        assert_eq!(reduced_hash(0x01), 9);
+        assert_eq!(reduced_hash(0x00), 8); // 0 maps to 8 (preserves %8)
+        assert_eq!(reduced_hash(0x01), 1); // 1 is now valid
         assert_eq!(reduced_hash(0x02), 2);
         assert_eq!(reduced_hash(0xFF), 255);
 
         for h in 0u64..=255 {
             let r = reduced_hash(h);
-            assert!(r >= 2);
+            assert!(r >= 1, "reduced_hash({h}) = {r}, must be >= 1");
             assert_eq!(r % 8, (h as u8) % 8);
         }
     }

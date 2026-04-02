@@ -36,7 +36,7 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 /// Single combined allocation:
 ///   - metadata: `num_groups * 16` bytes, 16-byte aligned (all 16 are slot metadata)
 ///   - overflow: `num_groups` bytes (one overflow byte per group)
-///   - sentinel: 1 byte (iteration terminator)
+///   - (padding to bucket alignment)
 ///   - padding to bucket alignment
 ///   - buckets: `num_groups * 16 * sizeof((K,V))`
 pub struct RawTable<K, V> {
@@ -124,12 +124,11 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Compute the bucket offset within the combined allocation.
-    /// Layout: [metadata: num_groups*16] [overflow: num_groups bytes] [sentinel: 1 byte] [padding] [buckets]
+    /// Layout: [metadata: num_groups*16] [overflow: num_groups bytes] [padding] [buckets]
     #[inline(always)]
     fn bucket_offset(num_groups: usize) -> usize {
         let meta_size = num_groups * META_GROUP_BYTES;
-        let overflow_size_with_sentinel = num_groups + 1;
-        let before_buckets = meta_size + overflow_size_with_sentinel;
+        let before_buckets = meta_size + num_groups;
         let bucket_align = std::mem::align_of::<(K, V)>().max(1);
         // Round up to bucket alignment
         (before_buckets + bucket_align - 1) & !(bucket_align - 1)
@@ -164,12 +163,9 @@ impl<K, V> RawTable<K, V> {
             self.overflow = ptr.add(overflow_offset);
             self.buckets = ptr.add(bucket_offset);
 
-            // Zero all metadata (empty groups)
+            // Zero all metadata (empty groups) and overflow bytes
             ptr::write_bytes(self.metadata, 0, meta_size);
-            // Zero overflow bytes
             ptr::write_bytes(self.overflow, 0, num_groups);
-            // Set sentinel byte at overflow[num_groups]
-            *self.overflow.add(num_groups) = group::SENTINEL;
         }
 
         self.mask = num_groups - 1;
@@ -619,10 +615,7 @@ impl<K, V> RawTable<K, V> {
 
             let meta_size = self.num_groups() * META_GROUP_BYTES;
             ptr::write_bytes(self.metadata, 0, meta_size);
-            // Zero overflow bytes
             ptr::write_bytes(self.overflow, 0, self.num_groups());
-            // Reset sentinel
-            *self.overflow.add(self.num_groups()) = group::SENTINEL;
         }
 
         self.len = 0;
@@ -679,9 +672,8 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
             let meta_size = self.num_groups() * META_GROUP_BYTES;
             ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
 
-            // Copy overflow bytes + sentinel
-            let overflow_copy_size = self.num_groups() + 1;
-            ptr::copy_nonoverlapping(self.overflow, new_table.overflow, overflow_copy_size);
+            // Copy overflow bytes
+            ptr::copy_nonoverlapping(self.overflow, new_table.overflow, self.num_groups());
 
             let bucket_size = std::mem::size_of::<(K, V)>();
             if bucket_size > 0 {
