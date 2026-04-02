@@ -134,8 +134,11 @@ where
 
         let reduced = reduced_hash(h);
         let gi = self.table.group_index(h);
-        let meta = unsafe { self.table.meta_ptr(gi) };
 
+        // Prefetch overflow byte while SIMD match executes
+        unsafe { Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8); }
+
+        let meta = unsafe { self.table.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
 
         for si in matches {
@@ -145,7 +148,7 @@ where
             }
         }
 
-        // Overflow check uses the separate overflow array
+        // Overflow byte should be in cache by now
         let ofw_bit = overflow_bit(h);
         if let Some(si) = empties.lowest_set_bit() {
             let ofw_ptr = unsafe { self.table.overflow_ptr(gi) };
@@ -226,6 +229,10 @@ where
 
         let reduced = reduced_hash(h);
         let gi = self.table.group_index(h);
+
+        // Prefetch overflow byte while SIMD match executes
+        unsafe { Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8); }
+
         let meta = unsafe { self.table.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
 
