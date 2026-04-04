@@ -99,7 +99,7 @@ fn bench_lookup_hit_by_distribution(c: &mut Criterion) {
         }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{dist_name}"), n),
+            BenchmarkId::new(format!("UFM_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -111,7 +111,7 @@ fn bench_lookup_hit_by_distribution(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{dist_name}"), n),
+            BenchmarkId::new(format!("Splitsies_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -123,7 +123,7 @@ fn bench_lookup_hit_by_distribution(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_{dist_name}"), n),
+            BenchmarkId::new(format!("hashbrown_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -174,7 +174,7 @@ fn bench_lookup_miss_by_distribution(c: &mut Criterion) {
         }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{dist_name}"), n),
+            BenchmarkId::new(format!("UFM_{dist_name}"), n),
             miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -186,7 +186,7 @@ fn bench_lookup_miss_by_distribution(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{dist_name}"), n),
+            BenchmarkId::new(format!("Splitsies_{dist_name}"), n),
             miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -198,7 +198,7 @@ fn bench_lookup_miss_by_distribution(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_{dist_name}"), n),
+            BenchmarkId::new(format!("hashbrown_{dist_name}"), n),
             miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -230,7 +230,7 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
         for (i, &k) in keys.iter().enumerate() { ours.insert(k, i as u64); }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{dist_name}"), n),
+            BenchmarkId::new(format!("UFM_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -245,7 +245,7 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
         for (i, &k) in keys.iter().enumerate() { split.insert(k, i as u64); }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{dist_name}"), n),
+            BenchmarkId::new(format!("Splitsies_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -260,7 +260,7 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
         for (i, &k) in keys.iter().enumerate() { hb.insert(k, i as u64); }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_{dist_name}"), n),
+            BenchmarkId::new(format!("hashbrown_{dist_name}"), n),
             keys,
             |b, keys| {
                 b.iter(|| {
@@ -306,7 +306,7 @@ fn bench_string_key_sizes(c: &mut Criterion) {
         }
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{len}b"), n),
+            BenchmarkId::new(format!("UFM_{len}b"), n),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -320,7 +320,7 @@ fn bench_string_key_sizes(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{len}b"), n),
+            BenchmarkId::new(format!("Splitsies_{len}b"), n),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -334,7 +334,7 @@ fn bench_string_key_sizes(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_{len}b"), n),
+            BenchmarkId::new(format!("hashbrown_{len}b"), n),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -371,7 +371,7 @@ macro_rules! bench_value_size {
 
         // Insert (clear + refill)
         $group.bench_with_input(
-            BenchmarkId::new(format!("ours_insert_{}", $name), keys.len()),
+            BenchmarkId::new(format!("UFM_insert_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -383,7 +383,7 @@ macro_rules! bench_value_size {
         );
 
         $group.bench_with_input(
-            BenchmarkId::new(format!("split16_insert_{}", $name), keys.len()),
+            BenchmarkId::new(format!("Splitsies_insert_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -395,7 +395,7 @@ macro_rules! bench_value_size {
         );
 
         $group.bench_with_input(
-            BenchmarkId::new(format!("hb_insert_{}", $name), keys.len()),
+            BenchmarkId::new(format!("hashbrown_insert_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -408,7 +408,7 @@ macro_rules! bench_value_size {
 
         // Lookup hit
         $group.bench_with_input(
-            BenchmarkId::new(format!("ours_hit_{}", $name), keys.len()),
+            BenchmarkId::new(format!("UFM_hit_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -420,7 +420,7 @@ macro_rules! bench_value_size {
         );
 
         $group.bench_with_input(
-            BenchmarkId::new(format!("split16_hit_{}", $name), keys.len()),
+            BenchmarkId::new(format!("Splitsies_hit_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -432,7 +432,7 @@ macro_rules! bench_value_size {
         );
 
         $group.bench_with_input(
-            BenchmarkId::new(format!("hb_hit_{}", $name), keys.len()),
+            BenchmarkId::new(format!("hashbrown_hit_{}", $name), keys.len()),
             &keys,
             |b, keys| {
                 b.iter(|| {

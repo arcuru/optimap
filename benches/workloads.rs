@@ -65,7 +65,7 @@ fn bench_equilibrium_churn(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
         if mask >= 0xF_FFFF { group.sample_size(10); }
 
-        group.bench_function(BenchmarkId::new("ours", name), |b| {
+        group.bench_function(BenchmarkId::new("UFM", name), |b| {
             b.iter(|| {
                 let mut map = UnorderedFlatMap::new();
                 let mut rng = Sfc64::new(42);
@@ -82,7 +82,7 @@ fn bench_equilibrium_churn(c: &mut Criterion) {
             });
         });
 
-        group.bench_function(BenchmarkId::new("split16", name), |b| {
+        group.bench_function(BenchmarkId::new("Splitsies", name), |b| {
             b.iter(|| {
                 let mut map = Splitsies::new();
                 let mut rng = Sfc64::new(42);
@@ -159,7 +159,7 @@ fn bench_read_heavy(c: &mut Criterion) {
         hb.insert(k, i as u64);
     }
 
-    group.bench_with_input(BenchmarkId::new("ours", n), &op_seq, |b, ops| {
+    group.bench_with_input(BenchmarkId::new("UFM", n), &op_seq, |b, ops| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &(op, key) in ops {
@@ -177,7 +177,7 @@ fn bench_read_heavy(c: &mut Criterion) {
         });
     });
 
-    group.bench_with_input(BenchmarkId::new("split16", n), &op_seq, |b, ops| {
+    group.bench_with_input(BenchmarkId::new("Splitsies", n), &op_seq, |b, ops| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &(op, key) in ops {
@@ -249,7 +249,7 @@ fn bench_write_heavy(c: &mut Criterion) {
         hb.insert(k, i as u64);
     }
 
-    group.bench_with_input(BenchmarkId::new("ours", n), &op_seq, |b, ops| {
+    group.bench_with_input(BenchmarkId::new("UFM", n), &op_seq, |b, ops| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &(op, key) in ops {
@@ -267,7 +267,7 @@ fn bench_write_heavy(c: &mut Criterion) {
         });
     });
 
-    group.bench_with_input(BenchmarkId::new("split16", n), &op_seq, |b, ops| {
+    group.bench_with_input(BenchmarkId::new("Splitsies", n), &op_seq, |b, ops| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &(op, key) in ops {
@@ -316,7 +316,7 @@ fn bench_counting(c: &mut Criterion) {
         let distinct = (ops * distinct_pct / 100).max(1);
         group.throughput(Throughput::Elements(ops));
 
-        group.bench_function(BenchmarkId::new("ours", name), |b| {
+        group.bench_function(BenchmarkId::new("UFM", name), |b| {
             b.iter(|| {
                 let mut map = UnorderedFlatMap::new();
                 let mut rng = Sfc64::new(42);
@@ -328,7 +328,7 @@ fn bench_counting(c: &mut Criterion) {
             });
         });
 
-        group.bench_function(BenchmarkId::new("split16", name), |b| {
+        group.bench_function(BenchmarkId::new("Splitsies", name), |b| {
             b.iter(|| {
                 let mut map = Splitsies::new();
                 let mut rng = Sfc64::new(42);
@@ -381,7 +381,7 @@ fn bench_post_delete_lookup(c: &mut Criterion) {
             hb.remove(&k);
         }
 
-        group.bench_with_input(BenchmarkId::new("ours", name), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("UFM", name), &keys, |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
                 for &k in keys {
@@ -393,7 +393,7 @@ fn bench_post_delete_lookup(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("split16", name), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("Splitsies", name), &keys, |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
                 for &k in keys {
@@ -453,7 +453,7 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
             .collect();
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{}miss", miss_pct), n),
+            BenchmarkId::new(format!("UFM_{}miss", miss_pct), n),
             &lookup_keys,
             |b, keys| {
                 b.iter(|| {
@@ -469,7 +469,7 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{}miss", miss_pct), n),
+            BenchmarkId::new(format!("Splitsies_{}miss", miss_pct), n),
             &lookup_keys,
             |b, keys| {
                 b.iter(|| {
@@ -485,7 +485,7 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_{}miss", miss_pct), n),
+            BenchmarkId::new(format!("hashbrown_{}miss", miss_pct), n),
             &lookup_keys,
             |b, keys| {
                 b.iter(|| {
@@ -531,7 +531,7 @@ fn bench_remove_reinsert(c: &mut Criterion) {
         (0..ops as usize).map(|i| keys[rng.next() as usize % keys.len()]).collect()
     };
 
-    group.bench_with_input(BenchmarkId::new("ours", n), &op_keys, |b, op_keys| {
+    group.bench_with_input(BenchmarkId::new("UFM", n), &op_keys, |b, op_keys| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &k in op_keys {
@@ -542,7 +542,7 @@ fn bench_remove_reinsert(c: &mut Criterion) {
         });
     });
 
-    group.bench_with_input(BenchmarkId::new("split16", n), &op_keys, |b, op_keys| {
+    group.bench_with_input(BenchmarkId::new("Splitsies", n), &op_keys, |b, op_keys| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &k in op_keys {
@@ -597,7 +597,7 @@ fn bench_high_load_stress(c: &mut Criterion) {
     }
 
     // Hit at 85% load
-    group.bench_with_input(BenchmarkId::new("ours_hit85", num_entries), &keys, |b, keys| {
+    group.bench_with_input(BenchmarkId::new("UFM_hit85", num_entries), &keys, |b, keys| {
         b.iter(|| {
             let mut sum = 0u64;
             for i in 0..ops as usize {
@@ -606,7 +606,7 @@ fn bench_high_load_stress(c: &mut Criterion) {
             black_box(sum);
         });
     });
-    group.bench_with_input(BenchmarkId::new("split16_hit85", num_entries), &keys, |b, keys| {
+    group.bench_with_input(BenchmarkId::new("Splitsies_hit85", num_entries), &keys, |b, keys| {
         b.iter(|| {
             let mut sum = 0u64;
             for i in 0..ops as usize {
@@ -615,7 +615,7 @@ fn bench_high_load_stress(c: &mut Criterion) {
             black_box(sum);
         });
     });
-    group.bench_with_input(BenchmarkId::new("hb_hit85", num_entries), &keys, |b, keys| {
+    group.bench_with_input(BenchmarkId::new("hashbrown_hit85", num_entries), &keys, |b, keys| {
         b.iter(|| {
             let mut sum = 0u64;
             for i in 0..ops as usize {
@@ -626,21 +626,21 @@ fn bench_high_load_stress(c: &mut Criterion) {
     });
 
     // Miss at 85% load
-    group.bench_with_input(BenchmarkId::new("ours_miss85", num_entries), &miss_keys, |b, mkeys| {
+    group.bench_with_input(BenchmarkId::new("UFM_miss85", num_entries), &miss_keys, |b, mkeys| {
         b.iter(|| {
             let mut count = 0u64;
             for &k in mkeys { if ours.get(&k).is_some() { count += 1; } }
             black_box(count);
         });
     });
-    group.bench_with_input(BenchmarkId::new("split16_miss85", num_entries), &miss_keys, |b, mkeys| {
+    group.bench_with_input(BenchmarkId::new("Splitsies_miss85", num_entries), &miss_keys, |b, mkeys| {
         b.iter(|| {
             let mut count = 0u64;
             for &k in mkeys { if split.get(&k).is_some() { count += 1; } }
             black_box(count);
         });
     });
-    group.bench_with_input(BenchmarkId::new("hb_miss85", num_entries), &miss_keys, |b, mkeys| {
+    group.bench_with_input(BenchmarkId::new("hashbrown_miss85", num_entries), &miss_keys, |b, mkeys| {
         b.iter(|| {
             let mut count = 0u64;
             for &k in mkeys { if hb.get(&k).is_some() { count += 1; } }

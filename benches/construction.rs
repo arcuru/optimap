@@ -50,7 +50,7 @@ fn bench_grow_from_empty(c: &mut Criterion) {
 
         if n >= 1_000_000 { group.sample_size(10); }
 
-        group.bench_with_input(BenchmarkId::new("ours", n), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("UFM", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut map = UnorderedFlatMap::new();
                 for (i, &k) in keys.iter().enumerate() {
@@ -60,7 +60,7 @@ fn bench_grow_from_empty(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("split16", n), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("Splitsies", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut map = Splitsies::new();
                 for (i, &k) in keys.iter().enumerate() {
@@ -94,7 +94,7 @@ fn bench_insert_with_capacity(c: &mut Criterion) {
 
         if n >= 1_000_000 { group.sample_size(10); }
 
-        group.bench_with_input(BenchmarkId::new("ours", n), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("UFM", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut map = UnorderedFlatMap::with_capacity(n);
                 for (i, &k) in keys.iter().enumerate() {
@@ -104,7 +104,7 @@ fn bench_insert_with_capacity(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("split16", n), &keys, |b, keys| {
+        group.bench_with_input(BenchmarkId::new("Splitsies", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut map = Splitsies::with_capacity(n);
                 for (i, &k) in keys.iter().enumerate() {
@@ -146,11 +146,11 @@ fn bench_clone(c: &mut Criterion) {
             hb.insert(k, i as u64);
         }
 
-        group.bench_with_input(BenchmarkId::new("ours", n), &(), |b, _| {
+        group.bench_with_input(BenchmarkId::new("UFM", n), &(), |b, _| {
             b.iter(|| black_box(ours.clone()));
         });
 
-        group.bench_with_input(BenchmarkId::new("split16", n), &(), |b, _| {
+        group.bench_with_input(BenchmarkId::new("Splitsies", n), &(), |b, _| {
             b.iter(|| black_box(split.clone()));
         });
 
@@ -173,14 +173,14 @@ fn bench_from_iter(c: &mut Criterion) {
         };
         group.throughput(Throughput::Elements(n as u64));
 
-        group.bench_with_input(BenchmarkId::new("ours", n), &pairs, |b, pairs| {
+        group.bench_with_input(BenchmarkId::new("UFM", n), &pairs, |b, pairs| {
             b.iter(|| {
                 let map: UnorderedFlatMap<u64, u64> = pairs.iter().copied().collect();
                 black_box(map.len());
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("split16", n), &pairs, |b, pairs| {
+        group.bench_with_input(BenchmarkId::new("Splitsies", n), &pairs, |b, pairs| {
             b.iter(|| {
                 let map: Splitsies<u64, u64> = pairs.iter().copied().collect();
                 black_box(map.len());

@@ -117,7 +117,7 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
         let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -132,7 +132,7 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -192,7 +192,7 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
         let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
             &miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -206,7 +206,7 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
             &miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -289,7 +289,7 @@ fn bench_mixed_by_load(c: &mut Criterion) {
         let (mut hb, _) = build_hb_at_load(capacity, num_entries, 42);
 
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
             &op_keys,
             |b, ops| {
                 b.iter(|| {
@@ -315,7 +315,7 @@ fn bench_mixed_by_load(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
             &op_keys,
             |b, ops| {
                 b.iter(|| {
@@ -399,7 +399,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
 
         // Hit
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_hit_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("UFM_hit_{:.0}pct", actual_lf), num_entries),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -413,7 +413,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_hit_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("Splitsies_hit_{:.0}pct", actual_lf), num_entries),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -427,7 +427,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_hit_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("hashbrown_hit_{:.0}pct", actual_lf), num_entries),
             &keys,
             |b, keys| {
                 b.iter(|| {
@@ -442,7 +442,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
 
         // Miss
         group.bench_with_input(
-            BenchmarkId::new(format!("ours_miss_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("UFM_miss_{:.0}pct", actual_lf), num_entries),
             &miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -456,7 +456,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("split16_miss_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("Splitsies_miss_{:.0}pct", actual_lf), num_entries),
             &miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
@@ -470,7 +470,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new(format!("hb_miss_{:.0}pct", actual_lf), num_entries),
+            BenchmarkId::new(format!("hashbrown_miss_{:.0}pct", actual_lf), num_entries),
             &miss_keys,
             |b, miss_keys| {
                 b.iter(|| {
