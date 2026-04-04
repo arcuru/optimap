@@ -88,13 +88,23 @@ len, max_load) are in the second half. On L1 cache hits, only the first
 half-line might be needed for group_index.
 **Expected**: Marginal. Modern CPUs fetch full cache lines.
 
-## Implementation Order
+## Results
 
-1. **S1** (drop overflow pointer) — free 8 bytes, test performance
-2. **S7** (combined memset in allocate) — trivial fix
-3. **S6** (lazy overflow_bit in find_by_hash) — might close hit gap
-4. **S5** (anti-drift optimization in remove) — improve remove path
-5. **S2** (home-group bucket prefetch) — test hit/miss trade-off
-6. **S3** (inline find_by_hash home group) — test if register pressure is different
-7. **S4** (entry API #[inline]) — test with Splitsies' different codegen
-8. **S8** (struct field reorder) — marginal, try last
+| # | Technique | Status | Finding |
+|---|-----------|--------|---------|
+| S1 | Drop overflow pointer | **Kept** | 64→56 bytes, performance neutral |
+| S2 | Home-group bucket prefetch | **Rejected** | +8-17% miss regression, same as UFM #7 |
+| S3 | Inline find_by_hash + cold | **Rejected** | +12-26% hit regression, same as UFM #18 |
+| S4 | Entry API #[inline] | Not tested | Expected same trade-off as UFM #20 |
+| S5 | Anti-drift optimization | Skipped | Only 2 cheap instructions, not worth refactor |
+| S6 | Lazy overflow_bit | **Rejected** | +1-3% hit improvement but +2% miss regression |
+| S7 | Combined memset | **Kept** | Applied to allocate + clone |
+| S8 | Struct field reorder | Not tested | Marginal expected impact |
+
+### Key Lesson
+The optimizations that failed on UFM (bucket prefetch, cold continuation,
+lazy overflow_bit) also fail on Splitsies for the same fundamental reasons.
+The 16-slot design doesn't change the CPU's behavior around register pressure,
+cache pollution, or serial dependencies. The gains from Splitsies come from
+the power-of-2 arithmetic being cheaper, not from enabling new optimization
+strategies.
