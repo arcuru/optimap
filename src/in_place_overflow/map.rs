@@ -140,18 +140,11 @@ where
             }
         }
 
-        // EMPTY in home group proves key is absent — insert directly
+        // EMPTY in home group proves key is absent — insert directly.
+        // Don't bother checking for tombstones in the home group; the EMPTY
+        // slot is equally close to the home position. Tombstone preference
+        // only matters in insert_no_check (cold path, longer probe chains).
         if let Some(si) = empties.lowest_set_bit() {
-            // Check for tombstone before the empty — prefer reusing tombstone
-            if let Some(tsi) = unsafe { Group::match_byte(meta, super::raw::group::TOMBSTONE) }.lowest_set_bit() {
-                unsafe {
-                    Group::set_meta(meta, tsi, reduced);
-                    self.table.bucket_ptr(gi, tsi).write((key, value));
-                }
-                self.table.len += 1;
-                // Tombstone reuse: don't decrement growth_left
-                return None;
-            }
             unsafe {
                 Group::set_meta(meta, si, reduced);
                 self.table.bucket_ptr(gi, si).write((key, value));
@@ -249,18 +242,8 @@ where
             }
         }
 
-        // EMPTY in home group proves absence
+        // EMPTY in home group proves absence — use the empty slot directly
         if let Some(si) = empties.lowest_set_bit() {
-            // Prefer tombstone slot
-            if let Some(tsi) = unsafe { Group::match_byte(meta, super::raw::group::TOMBSTONE) }.lowest_set_bit() {
-                return Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: Some((gi, tsi, 0)),
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                });
-            }
             return Entry::Vacant(VacantEntry {
                 key,
                 hash: h,
