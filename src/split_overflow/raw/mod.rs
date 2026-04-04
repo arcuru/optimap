@@ -45,7 +45,6 @@ pub struct RawTable<K, V> {
     /// For 1 group, mask = 0 and metadata is non-null.
     pub(crate) mask: usize,
     pub(crate) metadata: *mut u8,
-    overflow: *mut u8,
     buckets: *mut u8,
     pub(crate) len: usize,
     pub(crate) max_load: usize,
@@ -59,7 +58,6 @@ impl<K, V> RawTable<K, V> {
         RawTable {
             mask: 0,
             metadata: ptr::null_mut(),
-            overflow: ptr::null_mut(),
             buckets: ptr::null_mut(),
             len: 0,
             max_load: 0,
@@ -149,7 +147,6 @@ impl<K, V> RawTable<K, V> {
 
         let layout = Self::combined_layout(num_groups);
         let bucket_offset = Self::bucket_offset(num_groups);
-        let overflow_offset = Self::overflow_offset(num_groups);
         let meta_size = num_groups * META_GROUP_BYTES;
         let total_buckets = num_groups * GROUP_SIZE;
 
@@ -160,12 +157,10 @@ impl<K, V> RawTable<K, V> {
             }
 
             self.metadata = ptr;
-            self.overflow = ptr.add(overflow_offset);
             self.buckets = ptr.add(bucket_offset);
 
-            // Zero all metadata (empty groups) and overflow bytes
-            ptr::write_bytes(self.metadata, 0, meta_size);
-            ptr::write_bytes(self.overflow, 0, num_groups);
+            // Zero metadata + overflow in one call (they're contiguous)
+            ptr::write_bytes(self.metadata, 0, meta_size + num_groups);
         }
 
         self.mask = num_groups - 1;
@@ -180,7 +175,6 @@ impl<K, V> RawTable<K, V> {
         let layout = Self::combined_layout(self.num_groups());
         unsafe { alloc::dealloc(self.metadata, layout); }
         self.metadata = ptr::null_mut();
-        self.overflow = ptr::null_mut();
         self.buckets = ptr::null_mut();
     }
 
@@ -197,9 +191,11 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Pointer to the overflow byte for group `gi`.
+    /// Derived from metadata pointer: overflow array starts at metadata + num_groups * 16.
     #[inline(always)]
     pub(crate) unsafe fn overflow_ptr(&self, gi: usize) -> *mut u8 {
-        unsafe { self.overflow.add(gi) }
+        // num_groups * 16 = (mask + 1) << 4
+        unsafe { self.metadata.add(((self.mask + 1) << 4) + gi) }
     }
 
     /// Pointer to bucket slot. Uses shift+or since GROUP_SIZE=16.
@@ -252,7 +248,7 @@ impl<K, V> RawTable<K, V> {
         let ofw_bit = overflow_bit(h);
         let mut probe = 0usize;
 
-        // Prefetch overflow byte for home group
+        // Prefetch overflow byte for home group — data arrives during SIMD match
         unsafe { Group::prefetch_read(self.overflow_ptr(gi) as *const u8); }
 
         loop {
@@ -494,7 +490,6 @@ impl<K, V> RawTable<K, V> {
         let bucket_size = std::mem::size_of::<(K, V)>();
 
         self.metadata = ptr::null_mut();
-        self.overflow = ptr::null_mut();
         self.buckets = ptr::null_mut();
         self.mask = 0;
         self.len = 0;
@@ -668,12 +663,9 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
         new_table.allocate(self.num_groups());
 
         unsafe {
-            // Copy metadata (num_groups * 16 bytes)
-            let meta_size = self.num_groups() * META_GROUP_BYTES;
-            ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
-
-            // Copy overflow bytes
-            ptr::copy_nonoverlapping(self.overflow, new_table.overflow, self.num_groups());
+            // Copy metadata + overflow in one call (contiguous)
+            let combined_size = self.num_groups() * META_GROUP_BYTES + self.num_groups();
+            ptr::copy_nonoverlapping(self.metadata, new_table.metadata, combined_size);
 
             let bucket_size = std::mem::size_of::<(K, V)>();
             if bucket_size > 0 {
