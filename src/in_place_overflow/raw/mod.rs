@@ -229,15 +229,18 @@ impl<K, V> RawTable<K, V> {
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
 
-            for si in unsafe { Group::match_byte(meta, reduced) } {
+            // Load group data once, reuse for both match and empty check.
+            // On a hit, loaded_match_empty is never called (early return).
+            let data = unsafe { Group::load(meta) };
+
+            for si in unsafe { Group::loaded_match_byte(data, reduced) } {
                 let bucket = unsafe { &*self.bucket_ptr(gi, si) };
                 if eq(&bucket.0) {
                     return Some((gi, si));
                 }
             }
 
-            // Probe terminates when we find an EMPTY slot in this group
-            if unsafe { Group::match_empty(meta).any_set() } {
+            if unsafe { Group::loaded_match_empty(data).any_set() } {
                 return None;
             }
 

@@ -29,9 +29,13 @@ pub const TOMBSTONE: u8 = 0x01;
 /// Compute the reduced hash value from the low byte of a hash.
 /// Maps to range [2, 255]. Values 0 (EMPTY) and 1 (TOMBSTONE) are reserved.
 /// No need to preserve h%8 since there are no overflow bits.
+/// Uses low byte (uncorrelated with group_index which uses high bits).
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
     let low = (h & 0xFF) as u8;
+    // Branchless: OR with 2, then mask off bit 0 if it was already >= 2
+    // Actually: `if low < 2 { low + 2 }` is already branchless via cmov.
+    // The branch predictor handles the 0.78% case perfectly.
     if low < 2 { low + 2 } else { low }
 }
 
@@ -58,6 +62,33 @@ impl Group {
     pub unsafe fn match_empty(ptr: *const u8) -> BitMask {
         unsafe {
             let data = _mm_load_si128(ptr as *const __m128i);
+            let zero = _mm_setzero_si128();
+            let cmp = _mm_cmpeq_epi8(data, zero);
+            BitMask(_mm_movemask_epi8(cmp) as u16)
+        }
+    }
+
+    /// Load group metadata into an SSE2 register for reuse.
+    /// Avoids reloading for subsequent match_byte/match_empty calls.
+    #[inline(always)]
+    pub unsafe fn load(ptr: *const u8) -> __m128i {
+        unsafe { _mm_load_si128(ptr as *const __m128i) }
+    }
+
+    /// Match byte against pre-loaded group data.
+    #[inline(always)]
+    pub unsafe fn loaded_match_byte(data: __m128i, value: u8) -> BitMask {
+        unsafe {
+            let needle = _mm_set1_epi8(value as i8);
+            let cmp = _mm_cmpeq_epi8(data, needle);
+            BitMask(_mm_movemask_epi8(cmp) as u16)
+        }
+    }
+
+    /// Check for empty slots in pre-loaded group data.
+    #[inline(always)]
+    pub unsafe fn loaded_match_empty(data: __m128i) -> BitMask {
+        unsafe {
             let zero = _mm_setzero_si128();
             let cmp = _mm_cmpeq_epi8(data, zero);
             BitMask(_mm_movemask_epi8(cmp) as u16)
