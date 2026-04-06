@@ -17,6 +17,7 @@ use criterion::{
 use unordered_flat_map::UnorderedFlatMap;
 use unordered_flat_map::Splitsies;
 use unordered_flat_map::InPlaceOverflow;
+use unordered_flat_map::IPO64;
 use unordered_flat_map::Gaps;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
@@ -766,11 +767,13 @@ fn bench_size_scaling(c: &mut Criterion) {
         let mut ours = UnorderedFlatMap::with_capacity(capacity);
         let mut split = Splitsies::with_capacity(capacity);
         let mut ipo = InPlaceOverflow::with_capacity(capacity);
+        let mut ipo64 = IPO64::with_capacity(capacity);
         let mut hb = hashbrown::HashMap::with_capacity(capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
             split.insert(k, i as u64);
             ipo.insert(k, i as u64);
+            ipo64.insert(k, i as u64);
             hb.insert(k, i as u64);
         }
 
@@ -796,6 +799,13 @@ fn bench_size_scaling(c: &mut Criterion) {
                 black_box(sum);
             });
         });
+        group.bench_with_input(BenchmarkId::new("IPO64_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys { sum = sum.wrapping_add(*ipo64.get(&k).unwrap_or(&0)); }
+                black_box(sum);
+            });
+        });
         group.bench_with_input(BenchmarkId::new("hashbrown_hit", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
@@ -809,6 +819,13 @@ fn bench_size_scaling(c: &mut Criterion) {
             b.iter(|| {
                 let mut count = 0u64;
                 for &k in mkeys { if ipo.get(&k).is_some() { count += 1; } }
+                black_box(count);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("IPO64_miss", n), &miss_keys, |b, mkeys| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in mkeys { if ipo64.get(&k).is_some() { count += 1; } }
                 black_box(count);
             });
         });

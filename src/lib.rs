@@ -6,6 +6,7 @@ mod map;
 mod set;
 pub mod split_overflow;
 pub mod in_place_overflow;
+pub mod ipo64;
 pub mod gaps;
 
 pub use map::UnorderedFlatMap;
@@ -13,4 +14,5 @@ pub use set::UnorderedFlatSet;
 pub use raw::hash::IsAvalanching;
 pub use split_overflow::Splitsies;
 pub use in_place_overflow::InPlaceOverflow;
+pub use ipo64::IPO64;
 pub use gaps::Gaps;
