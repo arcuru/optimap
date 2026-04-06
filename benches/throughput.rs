@@ -694,15 +694,20 @@ fn bench_size_scaling(c: &mut Criterion) {
 
         if n >= 2_000_000 { group.sample_size(10); }
 
+        let miss_keys = make_miss_keys(n);
+
         let mut ours = UnorderedFlatMap::with_capacity(capacity);
         let mut split = Splitsies::with_capacity(capacity);
+        let mut ipo = InPlaceOverflow::with_capacity(capacity);
         let mut hb = hashbrown::HashMap::with_capacity(capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
             split.insert(k, i as u64);
+            ipo.insert(k, i as u64);
             hb.insert(k, i as u64);
         }
 
+        // Lookup hit
         group.bench_with_input(BenchmarkId::new("UFM_hit", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
@@ -717,11 +722,34 @@ fn bench_size_scaling(c: &mut Criterion) {
                 black_box(sum);
             });
         });
+        group.bench_with_input(BenchmarkId::new("IPO_hit", n), &keys, |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in keys { sum = sum.wrapping_add(*ipo.get(&k).unwrap_or(&0)); }
+                black_box(sum);
+            });
+        });
         group.bench_with_input(BenchmarkId::new("hashbrown_hit", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
                 for &k in keys { sum = sum.wrapping_add(*hb.get(&k).unwrap_or(&0)); }
                 black_box(sum);
+            });
+        });
+
+        // Lookup miss
+        group.bench_with_input(BenchmarkId::new("IPO_miss", n), &miss_keys, |b, mkeys| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in mkeys { if ipo.get(&k).is_some() { count += 1; } }
+                black_box(count);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("hashbrown_miss", n), &miss_keys, |b, mkeys| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in mkeys { if hb.get(&k).is_some() { count += 1; } }
+                black_box(count);
             });
         });
     }
