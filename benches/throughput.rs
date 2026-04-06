@@ -17,6 +17,7 @@ use criterion::{
 use unordered_flat_map::UnorderedFlatMap;
 use unordered_flat_map::Splitsies;
 use unordered_flat_map::InPlaceOverflow;
+use unordered_flat_map::Gaps;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ fn bench_insert(c: &mut Criterion) {
         let keys = make_random_keys(sz.num_entries, 42);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
-        // Ours: pre-warm, then clear + re-insert
+        // UFM: 15-slot groups, multiply-by-15 bucket addressing
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() { ours.insert(k, i as u64); }
 
@@ -138,7 +139,25 @@ fn bench_insert(c: &mut Criterion) {
             },
         );
 
-        // split_overflow (16-slot groups)
+        // Gaps: 15-slot groups with power-of-2 bucket stride
+        let mut gaps = Gaps::with_capacity(sz.capacity);
+        for (i, &k) in keys.iter().enumerate() { gaps.insert(k, i as u64); }
+
+        group.bench_with_input(
+            BenchmarkId::new("Gaps", sz.name),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    gaps.clear();
+                    for (i, &k) in keys.iter().enumerate() {
+                        gaps.insert(k, i as u64);
+                    }
+                    black_box(gaps.len());
+                });
+            },
+        );
+
+        // Splitsies: 16-slot groups with separate overflow
         let mut split = Splitsies::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() { split.insert(k, i as u64); }
 
@@ -273,11 +292,13 @@ fn bench_lookup_hit(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
+        let mut gaps = Gaps::with_capacity(sz.capacity);
         let mut split = Splitsies::with_capacity(sz.capacity);
         let mut ipo = InPlaceOverflow::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
+            gaps.insert(k, i as u64);
             split.insert(k, i as u64);
             ipo.insert(k, i as u64);
             hb.insert(k, i as u64);
@@ -291,6 +312,20 @@ fn bench_lookup_hit(c: &mut Criterion) {
                     let mut sum = 0u64;
                     for &k in keys {
                         sum = sum.wrapping_add(*ours.get(&k).unwrap_or(&0));
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("Gaps", sz.name),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for &k in keys {
+                        sum = sum.wrapping_add(*gaps.get(&k).unwrap_or(&0));
                     }
                     black_box(sum);
                 });
@@ -353,11 +388,13 @@ fn bench_lookup_miss(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
+        let mut gaps = Gaps::with_capacity(sz.capacity);
         let mut split = Splitsies::with_capacity(sz.capacity);
         let mut ipo = InPlaceOverflow::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
+            gaps.insert(k, i as u64);
             split.insert(k, i as u64);
             ipo.insert(k, i as u64);
             hb.insert(k, i as u64);
@@ -371,6 +408,20 @@ fn bench_lookup_miss(c: &mut Criterion) {
                     let mut count = 0u64;
                     for &k in miss_keys {
                         if ours.get(&k).is_some() { count += 1; }
+                    }
+                    black_box(count);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("Gaps", sz.name),
+            &miss_keys,
+            |b, miss_keys| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for &k in miss_keys {
+                        if gaps.get(&k).is_some() { count += 1; }
                     }
                     black_box(count);
                 });
@@ -558,11 +609,13 @@ fn bench_iteration(c: &mut Criterion) {
         group.throughput(Throughput::Elements(sz.num_entries as u64));
 
         let mut ours = UnorderedFlatMap::with_capacity(sz.capacity);
+        let mut gaps_map = Gaps::with_capacity(sz.capacity);
         let mut split = Splitsies::with_capacity(sz.capacity);
         let mut ipo = InPlaceOverflow::with_capacity(sz.capacity);
         let mut hb = hashbrown::HashMap::with_capacity(sz.capacity);
         for (i, &k) in keys.iter().enumerate() {
             ours.insert(k, i as u64);
+            gaps_map.insert(k, i as u64);
             split.insert(k, i as u64);
             ipo.insert(k, i as u64);
             hb.insert(k, i as u64);
@@ -575,6 +628,20 @@ fn bench_iteration(c: &mut Criterion) {
                 b.iter(|| {
                     let mut sum = 0u64;
                     for (_, &v) in ours.iter() {
+                        sum = sum.wrapping_add(v);
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("Gaps", sz.name),
+            &(),
+            |b, _| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for (_, &v) in gaps_map.iter() {
                         sum = sum.wrapping_add(v);
                     }
                     black_box(sum);
