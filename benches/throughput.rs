@@ -14,11 +14,11 @@ use criterion::{
     BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 
-use unordered_flat_map::UnorderedFlatMap;
-use unordered_flat_map::Splitsies;
-use unordered_flat_map::InPlaceOverflow;
-use unordered_flat_map::IPO64;
-use unordered_flat_map::Gaps;
+use optimap::UnorderedFlatMap;
+use optimap::Splitsies;
+use optimap::InPlaceOverflow;
+use optimap::IPO64;
+use optimap::Gaps;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
 

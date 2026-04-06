@@ -1,7 +1,7 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
-use unordered_flat_map::{UnorderedFlatMap, UnorderedFlatSet};
+use optimap::{UnorderedFlatMap, UnorderedFlatSet};
 
 /// Compare our map against std::collections::HashMap for correctness.
 #[test]

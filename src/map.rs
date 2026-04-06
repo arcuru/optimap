@@ -12,7 +12,7 @@ use crate::raw::hash;
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
 
 /// A hash map using open addressing with SIMD-accelerated group probing,
-/// inspired by `boost::unordered_flat_map`.
+/// inspired by `boost::optimap`.
 ///
 /// Elements are stored contiguously in a flat bucket array (no indirection).
 /// A companion metadata array with 15-byte groups enables fast SIMD lookups.
@@ -918,4 +918,22 @@ mod tests {
         assert!(map.capacity() >= 100);
         assert!(map.is_empty());
     }
+}
+
+// ── Map trait implementation ────────────────────────────────────────────────
+
+impl<K, V, S> crate::traits::Map<K, V> for UnorderedFlatMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn map_new() -> Self { Self::with_hasher(S::default()) }
+    fn map_with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
+    fn map_insert(&mut self, key: K, value: V) -> Option<V> { self.insert(key, value) }
+    fn map_get(&self, key: &K) -> Option<&V> { self.get(key) }
+    fn map_remove(&mut self, key: &K) -> Option<V> { self.remove(key) }
+    fn map_len(&self) -> usize { self.len() }
+    fn map_capacity(&self) -> usize { self.capacity() }
+    fn map_clear(&mut self) { self.clear() }
+    fn map_contains_key(&self, key: &K) -> bool { self.contains_key(key) }
 }

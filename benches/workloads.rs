@@ -8,8 +8,8 @@ use criterion::{
     BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 
-use unordered_flat_map::UnorderedFlatMap;
-use unordered_flat_map::Splitsies;
+use optimap::UnorderedFlatMap;
+use optimap::Splitsies;
 
 // ── Fast deterministic RNG ──────────────────────────────────────────────────
 

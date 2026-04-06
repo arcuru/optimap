@@ -1,8 +1,8 @@
 [package]
-name = "unordered-flat-map"
+name = "optimap"
 version = "0.1.0"
 edition = "2024"
-description = "SIMD-accelerated open-addressing flat hash map inspired by boost::unordered_flat_map"
+description = "OptiMap — multiple SIMD-accelerated hash map designs with different performance trade-offs"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
