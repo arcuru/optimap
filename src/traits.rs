@@ -1,54 +1,173 @@
 //! Common trait for all OptiMap hash map implementations.
 //!
-//! The `Map` trait defines the core operations shared across all designs.
-//! It uses `map_` prefixed method names to avoid conflicts with inherent
-//! methods (which have richer signatures with `Borrow<Q>` bounds).
+//! The `Map` trait defines the key-to-value mapping interface.
+//! The hash function is an implementation detail of each concrete type,
+//! not part of the trait.
 //!
-//! Use this trait for:
-//! - Writing generic code that works with any OptiMap implementation
-//! - Benchmarking multiple designs with a single generic function
-//! - Swapping implementations without changing calling code
+//! Users calling methods on concrete types (e.g. `Splitsies::insert`)
+//! do NOT need to import this trait — inherent methods work automatically.
+//! The trait is only needed for generic code over multiple implementations.
 
-use std::hash::Hash;
+use std::borrow::Borrow;
+use std::hash::{Hash, BuildHasher};
 
-/// Core hash map operations shared by all OptiMap implementations.
+/// Core hash map interface. Maps keys to values.
 ///
-/// Method names use the `map_` prefix to coexist with inherent methods
-/// (which support `Borrow<Q>` for flexible key lookups). When calling
-/// methods on a concrete type, prefer the inherent methods. Use this
-/// trait when you need generic code over multiple map implementations.
+/// The hash function is an implementation detail — each concrete type
+/// carries its own hasher internally. Generic code uses `Map<K, V>`
+/// without knowing or caring about the hasher.
+///
+/// # Usage
+///
+/// For concrete types, use inherent methods directly (no import needed):
+/// ```
+/// let mut map = optimap::Splitsies::new();
+/// map.insert("hello", 42);
+/// ```
+///
+/// For generic code, import the trait:
+/// ```
+/// use optimap::Map;
+/// fn count<M: Map<String, usize>>(m: &mut M, key: String) {
+///     let val = m.get(&key).copied().unwrap_or(0);
+///     m.insert(key, val + 1);
+/// }
+/// ```
 pub trait Map<K: Hash + Eq, V> {
-    /// Create an empty map.
-    fn map_new() -> Self;
+    /// Create an empty map with the default hasher.
+    fn new() -> Self;
 
     /// Create a map with at least the specified capacity.
-    fn map_with_capacity(capacity: usize) -> Self;
+    fn with_capacity(capacity: usize) -> Self;
 
     /// Insert a key-value pair. Returns the previous value if the key existed.
-    fn map_insert(&mut self, key: K, value: V) -> Option<V>;
+    fn insert(&mut self, key: K, value: V) -> Option<V>;
 
     /// Look up a value by key.
-    fn map_get(&self, key: &K) -> Option<&V>;
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Look up a value by key, returning a mutable reference.
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
 
     /// Remove a key, returning its value if present.
-    fn map_remove(&mut self, key: &K) -> Option<V>;
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Whether the map contains the given key.
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get(key).is_some()
+    }
 
     /// Number of elements in the map.
-    fn map_len(&self) -> usize;
+    fn len(&self) -> usize;
 
     /// Whether the map is empty.
-    fn map_is_empty(&self) -> bool {
-        self.map_len() == 0
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Number of elements the map can hold without rehashing.
-    fn map_capacity(&self) -> usize;
+    fn capacity(&self) -> usize;
 
     /// Remove all elements, keeping allocated memory.
-    fn map_clear(&mut self);
+    fn clear(&mut self);
+}
 
-    /// Whether the map contains the given key.
-    fn map_contains_key(&self, key: &K) -> bool {
-        self.map_get(key).is_some()
-    }
+// ── Macro to generate trait impl that delegates to inherent methods ──────────
+
+macro_rules! impl_map_trait {
+    ($type:ident) => {
+        impl<K, V, S> $crate::traits::Map<K, V> for $type<K, V, S>
+        where
+            K: ::std::hash::Hash + Eq,
+            S: ::std::hash::BuildHasher + Default,
+        {
+            fn new() -> Self { Self::with_hasher(S::default()) }
+            fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
+            fn insert(&mut self, key: K, value: V) -> Option<V> { $type::insert(self, key, value) }
+            fn get<Q>(&self, key: &Q) -> Option<&V>
+            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
+            { $type::get(self, key) }
+            fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
+            { $type::get_mut(self, key) }
+            fn remove<Q>(&mut self, key: &Q) -> Option<V>
+            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
+            { $type::remove(self, key) }
+            fn contains_key<Q>(&self, key: &Q) -> bool
+            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
+            { $type::contains_key(self, key) }
+            fn len(&self) -> usize { $type::len(self) }
+            fn capacity(&self) -> usize { $type::capacity(self) }
+            fn clear(&mut self) { $type::clear(self) }
+        }
+    };
+}
+
+pub(crate) use impl_map_trait;
+
+// ── hashbrown implementation ─────────────────────────────────────────────────
+
+impl<K, V, S> Map<K, V> for hashbrown::HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn new() -> Self { Self::with_hasher(S::default()) }
+    fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
+    fn insert(&mut self, key: K, value: V) -> Option<V> { hashbrown::HashMap::insert(self, key, value) }
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { hashbrown::HashMap::get(self, key) }
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { hashbrown::HashMap::get_mut(self, key) }
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { hashbrown::HashMap::remove(self, key) }
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { hashbrown::HashMap::contains_key(self, key) }
+    fn len(&self) -> usize { hashbrown::HashMap::len(self) }
+    fn capacity(&self) -> usize { hashbrown::HashMap::capacity(self) }
+    fn clear(&mut self) { hashbrown::HashMap::clear(self) }
+}
+
+// ── std::HashMap implementation ─────────────────────────────────────────────
+
+impl<K, V, S> Map<K, V> for std::collections::HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn new() -> Self { Self::with_hasher(S::default()) }
+    fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
+    fn insert(&mut self, key: K, value: V) -> Option<V> { std::collections::HashMap::insert(self, key, value) }
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { std::collections::HashMap::get(self, key) }
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { std::collections::HashMap::get_mut(self, key) }
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { std::collections::HashMap::remove(self, key) }
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
+    { std::collections::HashMap::contains_key(self, key) }
+    fn len(&self) -> usize { std::collections::HashMap::len(self) }
+    fn capacity(&self) -> usize { std::collections::HashMap::capacity(self) }
+    fn clear(&mut self) { std::collections::HashMap::clear(self) }
 }

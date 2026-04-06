@@ -920,20 +920,6 @@ mod tests {
     }
 }
 
-// ── Map trait implementation ────────────────────────────────────────────────
 
-impl<K, V, S> crate::traits::Map<K, V> for UnorderedFlatMap<K, V, S>
-where
-    K: Hash + Eq,
-    S: BuildHasher + Default,
-{
-    fn map_new() -> Self { Self::with_hasher(S::default()) }
-    fn map_with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
-    fn map_insert(&mut self, key: K, value: V) -> Option<V> { self.insert(key, value) }
-    fn map_get(&self, key: &K) -> Option<&V> { self.get(key) }
-    fn map_remove(&mut self, key: &K) -> Option<V> { self.remove(key) }
-    fn map_len(&self) -> usize { self.len() }
-    fn map_capacity(&self) -> usize { self.capacity() }
-    fn map_clear(&mut self) { self.clear() }
-    fn map_contains_key(&self, key: &K) -> bool { self.contains_key(key) }
-}
+
+crate::traits::impl_map_trait!(UnorderedFlatMap);

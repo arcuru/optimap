@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 foldhash = "0.1"
 ahash = { version = "0.8", optional = true }
+hashbrown = "0.15"
 
 [features]
 default = []
@@ -15,7 +16,6 @@ default = []
 [dev-dependencies]
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
-hashbrown = "0.15"
 indexmap = "2"
 rustc-hash = "2"
 ahash = "0.8"
