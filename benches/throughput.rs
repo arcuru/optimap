@@ -8,7 +8,7 @@ mod bench_helpers;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use bench_helpers::*;
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, IPO64, Gaps, Map};
+use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, IPO64, Gaps};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 

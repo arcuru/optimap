@@ -4,39 +4,24 @@
 //! costs that happen once per table lifetime. Use these to understand the
 //! cost of creating, growing, and copying hash maps.
 
+mod bench_helpers;
+
 use criterion::{
     BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
+use bench_helpers::*;
 
-use optimap::UnorderedFlatMap;
-use optimap::Splitsies;
+use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, IPO64, Gaps};
 
-// ── Fast deterministic RNG ──────────────────────────────────────────────────
-
-struct Sfc64 {
-    a: u64, b: u64, c: u64, counter: u64,
-}
-
-impl Sfc64 {
-    fn new(seed: u64) -> Self {
-        let mut rng = Sfc64 { a: seed, b: seed, c: seed, counter: 1 };
-        for _ in 0..12 { rng.next(); }
-        rng
-    }
-    #[inline(always)]
-    fn next(&mut self) -> u64 {
-        let tmp = self.a.wrapping_add(self.b).wrapping_add(self.counter);
-        self.counter += 1;
-        self.a = self.b ^ (self.b >> 11);
-        self.b = self.c.wrapping_add(self.c << 3);
-        self.c = self.c.rotate_left(24).wrapping_add(tmp);
-        tmp
-    }
-}
-
-fn make_random_keys(n: usize, seed: u64) -> Vec<u64> {
-    let mut rng = Sfc64::new(seed);
-    (0..n).map(|_| rng.next()).collect()
+macro_rules! all_maps {
+    ($helper:ident, $group:expr, $($args:expr),*) => {
+        $helper::<UnorderedFlatMap<u64, u64>>($group, "UFM", $($args),*);
+        $helper::<Gaps<u64, u64>>($group, "Gaps", $($args),*);
+        $helper::<Splitsies<u64, u64>>($group, "Splitsies", $($args),*);
+        $helper::<InPlaceOverflow<u64, u64>>($group, "IPO", $($args),*);
+        $helper::<IPO64<u64, u64>>($group, "IPO64", $($args),*);
+        $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
+    };
 }
 
 // ── Grow from empty (no pre-allocation) ─────────────────────────────────────
@@ -47,38 +32,9 @@ fn bench_grow_from_empty(c: &mut Criterion) {
     for &n in &[1_000, 10_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
         group.throughput(Throughput::Elements(n as u64));
-
         if n >= 1_000_000 { group.sample_size(10); }
 
-        group.bench_with_input(BenchmarkId::new("UFM", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = UnorderedFlatMap::new();
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("Splitsies", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = Splitsies::new();
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("hashbrown", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = hashbrown::HashMap::new();
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
+        all_maps!(bench_grow_for, &mut group, &keys, n);
     }
     group.finish();
 }
@@ -91,38 +47,9 @@ fn bench_insert_with_capacity(c: &mut Criterion) {
     for &n in &[1_000, 10_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
         group.throughput(Throughput::Elements(n as u64));
-
         if n >= 1_000_000 { group.sample_size(10); }
 
-        group.bench_with_input(BenchmarkId::new("UFM", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = UnorderedFlatMap::with_capacity(n);
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("Splitsies", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = Splitsies::with_capacity(n);
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("hashbrown", n), &keys, |b, keys| {
-            b.iter(|| {
-                let mut map = hashbrown::HashMap::with_capacity(n);
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        });
+        all_maps!(bench_with_capacity_for, &mut group, &keys, n);
     }
     group.finish();
 }
@@ -134,34 +61,25 @@ fn bench_clone(c: &mut Criterion) {
 
     for &n in &[1_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
-
         if n >= 1_000_000 { group.sample_size(10); }
 
-        let mut ours = UnorderedFlatMap::with_capacity(n);
-        let mut split = Splitsies::with_capacity(n);
-        let mut hb = hashbrown::HashMap::with_capacity(n);
-        for (i, &k) in keys.iter().enumerate() {
-            ours.insert(k, i as u64);
-            split.insert(k, i as u64);
-            hb.insert(k, i as u64);
-        }
-
-        group.bench_with_input(BenchmarkId::new("UFM", n), &(), |b, _| {
-            b.iter(|| black_box(ours.clone()));
-        });
-
-        group.bench_with_input(BenchmarkId::new("Splitsies", n), &(), |b, _| {
-            b.iter(|| black_box(split.clone()));
-        });
-
-        group.bench_with_input(BenchmarkId::new("hashbrown", n), &(), |b, _| {
-            b.iter(|| black_box(hb.clone()));
-        });
+        all_maps!(bench_clone_for, &mut group, &keys, n);
     }
     group.finish();
 }
 
 // ── FromIterator (collect) ──────────────────────────────────────────────────
+
+macro_rules! bench_from_iter_for {
+    ($group:expr, $name:expr, $map_type:ty, $pairs:expr, $n:expr) => {
+        $group.bench_with_input(BenchmarkId::new($name, $n), $pairs, |b, pairs| {
+            b.iter(|| {
+                let map: $map_type = pairs.iter().copied().collect();
+                black_box(map.len());
+            });
+        });
+    };
+}
 
 fn bench_from_iter(c: &mut Criterion) {
     let mut group = c.benchmark_group("construction/from_iter");
@@ -173,26 +91,12 @@ fn bench_from_iter(c: &mut Criterion) {
         };
         group.throughput(Throughput::Elements(n as u64));
 
-        group.bench_with_input(BenchmarkId::new("UFM", n), &pairs, |b, pairs| {
-            b.iter(|| {
-                let map: UnorderedFlatMap<u64, u64> = pairs.iter().copied().collect();
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("Splitsies", n), &pairs, |b, pairs| {
-            b.iter(|| {
-                let map: Splitsies<u64, u64> = pairs.iter().copied().collect();
-                black_box(map.len());
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("hashbrown", n), &pairs, |b, pairs| {
-            b.iter(|| {
-                let map: hashbrown::HashMap<u64, u64> = pairs.iter().copied().collect();
-                black_box(map.len());
-            });
-        });
+        bench_from_iter_for!(&mut group, "UFM", UnorderedFlatMap<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "Gaps", Gaps<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "Splitsies", Splitsies<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "IPO", InPlaceOverflow<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "IPO64", IPO64<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "hashbrown", hashbrown::HashMap<u64, u64>, &pairs, n);
     }
     group.finish();
 }

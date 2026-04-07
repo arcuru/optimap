@@ -7,86 +7,110 @@
 //! fill it to a target load factor, then benchmark operations.
 //! This isolates load factor from table size effects.
 
+mod bench_helpers;
+
 use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
+    Criterion, Throughput, criterion_group, criterion_main,
 };
+use bench_helpers::*;
 
-use optimap::UnorderedFlatMap;
-use optimap::Splitsies;
+use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, Map};
 
-// ── Fast RNG ────────────────────────────────────────────────────────────
+// ── Load factor helpers ─────────────────────────────────────────────────────
 
-struct Sfc64 {
-    a: u64, b: u64, c: u64, counter: u64,
+fn compute_load_info(capacity: usize, load_pct: usize) -> (usize, f64) {
+    let min_slots = (capacity * 8 + 6) / 7;
+    let min_groups = (min_slots + 14) / 15;
+    let mut num_groups = 1;
+    while num_groups < min_groups { num_groups *= 2; }
+    let total_slots = num_groups * 15;
+    let num_entries = total_slots * load_pct / 100;
+    let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
+    (num_entries, actual_lf)
 }
 
-impl Sfc64 {
-    fn new(seed: u64) -> Self {
-        let mut rng = Sfc64 { a: seed, b: seed, c: seed, counter: 1 };
-        for _ in 0..12 { rng.next(); }
-        rng
-    }
-    #[inline(always)]
-    fn next(&mut self) -> u64 {
-        let tmp = self.a.wrapping_add(self.b).wrapping_add(self.counter);
-        self.counter += 1;
-        self.a = self.b ^ (self.b >> 11);
-        self.b = self.c.wrapping_add(self.c << 3);
-        self.c = self.c.rotate_left(24).wrapping_add(tmp);
-        tmp
-    }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Pre-build a map with exactly `n` entries, using with_capacity to
-/// control the internal table size. Returns (map, keys_in_map).
-fn build_at_load(
-    target_capacity: usize,
+/// Generic helper: benchmark lookup hit at a specific load level with label.
+fn bench_lf_hit_for<M: Map<u64, u64>>(
+    group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
+    name: &str,
+    label: &str,
+    capacity: usize,
     num_entries: usize,
+    ops: u64,
     seed: u64,
-) -> (UnorderedFlatMap<u64, u64>, Vec<u64>) {
-    let mut rng = Sfc64::new(seed);
-    let mut map = UnorderedFlatMap::with_capacity(target_capacity);
-    let mut keys = Vec::with_capacity(num_entries);
-    for _ in 0..num_entries {
-        let k = rng.next();
-        map.insert(k, k);
-        keys.push(k);
-    }
-    (map, keys)
+) {
+    let (map, keys) = build_map_at_load::<M>(capacity, num_entries, seed);
+    group.bench_with_input(
+        criterion::BenchmarkId::new(format!("{name}_{label}"), num_entries),
+        &keys,
+        |b, keys| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for i in 0..ops as usize {
+                    sum = sum.wrapping_add(*map.get(&keys[i % keys.len()]).unwrap_or(&0));
+                }
+                criterion::black_box(sum);
+            });
+        },
+    );
 }
 
-fn build_split_at_load(
-    target_capacity: usize,
+fn bench_lf_miss_for<M: Map<u64, u64>>(
+    group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
+    name: &str,
+    label: &str,
+    capacity: usize,
     num_entries: usize,
+    miss_keys: &[u64],
     seed: u64,
-) -> (Splitsies<u64, u64>, Vec<u64>) {
-    let mut rng = Sfc64::new(seed);
-    let mut map = Splitsies::with_capacity(target_capacity);
-    let mut keys = Vec::with_capacity(num_entries);
-    for _ in 0..num_entries {
-        let k = rng.next();
-        map.insert(k, k);
-        keys.push(k);
-    }
-    (map, keys)
+) {
+    let (map, _) = build_map_at_load::<M>(capacity, num_entries, seed);
+    group.bench_with_input(
+        criterion::BenchmarkId::new(format!("{name}_{label}"), num_entries),
+        miss_keys,
+        |b, miss_keys| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for k in miss_keys {
+                    if map.get(k).is_some() { count += 1; }
+                }
+                criterion::black_box(count);
+            });
+        },
+    );
 }
 
-fn build_hb_at_load(
-    target_capacity: usize,
+fn bench_lf_mixed_for<M: Map<u64, u64>>(
+    group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
+    name: &str,
+    label: &str,
+    capacity: usize,
     num_entries: usize,
+    op_keys: &[(u8, u64)],
     seed: u64,
-) -> (hashbrown::HashMap<u64, u64>, Vec<u64>) {
-    let mut rng = Sfc64::new(seed);
-    let mut map = hashbrown::HashMap::with_capacity(target_capacity);
-    let mut keys = Vec::with_capacity(num_entries);
-    for _ in 0..num_entries {
-        let k = rng.next();
-        map.insert(k, k);
-        keys.push(k);
-    }
-    (map, keys)
+) {
+    let (mut map, _) = build_map_at_load::<M>(capacity, num_entries, seed);
+    group.bench_with_input(
+        criterion::BenchmarkId::new(format!("{name}_{label}"), num_entries),
+        op_keys,
+        |b, ops| {
+            b.iter(|| {
+                let mut checksum = 0u64;
+                for &(op, key) in ops {
+                    match op {
+                        0..=4 => { map.insert(key, key); }
+                        5..=7 => {
+                            if let Some(&v) = map.get(&key) {
+                                checksum = checksum.wrapping_add(v);
+                            }
+                        }
+                        _ => { map.remove(&key); }
+                    }
+                }
+                criterion::black_box(checksum);
+            });
+        },
+    );
 }
 
 // ── Benchmark: Lookup hit at varying load factors ───────────────────────
@@ -94,72 +118,18 @@ fn build_hb_at_load(
 fn bench_lookup_hit_by_load(c: &mut Criterion) {
     let mut group = c.benchmark_group("load_factor_hit");
 
-    // Use a fixed capacity that gives us ~8K groups (120K slots)
-    // Then fill to various percentages.
-    let capacity = 100_000; // will allocate enough groups for 100K
+    let capacity = 100_000;
     let ops = 100_000u64;
 
     for load_pct in [45, 55, 65, 75, 85] {
-        // Compute how many entries to get this load factor
-        // First figure out how many slots we actually get
-        let min_slots = (capacity * 8 + 6) / 7;
-        let min_groups = (min_slots + 14) / 15;
-        let mut num_groups = 1;
-        while num_groups < min_groups { num_groups *= 2; }
-        let total_slots = num_groups * 15;
-        let num_entries = total_slots * load_pct / 100;
-
-        let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
+        let (num_entries, actual_lf) = compute_load_info(capacity, load_pct);
         group.throughput(Throughput::Elements(ops));
+        let label = format!("{:.0}pct", actual_lf);
 
-        let (ours, keys) = build_at_load(capacity, num_entries, 42);
-        let (split, _) = build_split_at_load(capacity, num_entries, 42);
-        let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        let k = &keys[i % keys.len()];
-                        sum = sum.wrapping_add(*ours.get(k).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        let k = &keys[i % keys.len()];
-                        sum = sum.wrapping_add(*split.get(k).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("hashbrown_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        let k = &keys[i % keys.len()];
-                        sum = sum.wrapping_add(*hb.get(k).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
+        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, ops, 42);
     }
     group.finish();
 }
@@ -172,68 +142,18 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
     let capacity = 100_000;
     let ops = 100_000u64;
 
-    // Generate miss keys (different seed)
     let mut miss_rng = Sfc64::new(9999);
     let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next()).collect();
 
     for load_pct in [45, 55, 65, 75, 85] {
-        let min_slots = (capacity * 8 + 6) / 7;
-        let min_groups = (min_slots + 14) / 15;
-        let mut num_groups = 1;
-        while num_groups < min_groups { num_groups *= 2; }
-        let total_slots = num_groups * 15;
-        let num_entries = total_slots * load_pct / 100;
-
-        let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
+        let (num_entries, actual_lf) = compute_load_info(capacity, load_pct);
         group.throughput(Throughput::Elements(ops));
+        let label = format!("{:.0}pct", actual_lf);
 
-        let (ours, _) = build_at_load(capacity, num_entries, 42);
-        let (split, _) = build_split_at_load(capacity, num_entries, 42);
-        let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if ours.get(k).is_some() { count += 1; }
-                    }
-                    black_box(count);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if split.get(k).is_some() { count += 1; }
-                    }
-                    black_box(count);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("hashbrown_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if hb.get(k).is_some() {
-                            count += 1;
-                        }
-                    }
-                    black_box(count);
-                });
-            },
-        );
+        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, &miss_keys, 42);
     }
     group.finish();
 }
@@ -247,36 +167,24 @@ fn bench_mixed_by_load(c: &mut Criterion) {
     let ops = 100_000u64;
 
     for load_pct in [45, 55, 65, 75, 85] {
-        let min_slots = (capacity * 8 + 6) / 7;
-        let min_groups = (min_slots + 14) / 15;
-        let mut num_groups = 1;
-        while num_groups < min_groups { num_groups *= 2; }
-        let total_slots = num_groups * 15;
-        let num_entries = total_slots * load_pct / 100;
-
-        let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
+        let (num_entries, actual_lf) = compute_load_info(capacity, load_pct);
         group.throughput(Throughput::Elements(ops));
+        let label = format!("{:.0}pct", actual_lf);
 
-        // 50% insert (into occupied keys = update), 30% lookup hit, 20% lookup miss
-        let (ours_keys, _) = {
-            let (m, k) = build_at_load(capacity, num_entries, 42);
-            (k, m)
-        };
+        // Build keys for this load level to generate op sequence
+        let (_, ours_keys) = build_map_at_load::<UnorderedFlatMap<u64, u64>>(capacity, num_entries, 42);
 
         let mut mix_rng = Sfc64::new(777);
         let miss_keys: Vec<u64> = (0..ops as usize).map(|_| mix_rng.next()).collect();
 
-        // Build operation sequence
         let op_keys: Vec<(u8, u64)> = {
             let mut rng = Sfc64::new(555);
             (0..ops as usize)
                 .map(|i| {
                     let op = (rng.next() % 10) as u8;
                     let key = if op < 8 {
-                        // 80% existing keys (hit)
                         ours_keys[i % ours_keys.len()]
                     } else {
-                        // 20% miss keys
                         miss_keys[i % miss_keys.len()]
                     };
                     (op, key)
@@ -284,87 +192,10 @@ fn bench_mixed_by_load(c: &mut Criterion) {
                 .collect()
         };
 
-        let (mut ours, _) = build_at_load(capacity, num_entries, 42);
-        let (mut split, _) = build_split_at_load(capacity, num_entries, 42);
-        let (mut hb, _) = build_hb_at_load(capacity, num_entries, 42);
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("UFM_{:.0}pct", actual_lf), num_entries),
-            &op_keys,
-            |b, ops| {
-                b.iter(|| {
-                    let mut checksum = 0u64;
-                    for &(op, key) in ops {
-                        match op {
-                            0..=4 => { // 50% insert/update
-                                ours.insert(key, key);
-                            }
-                            5..=7 => { // 30% lookup
-                                if let Some(&v) = ours.get(&key) {
-                                    checksum = checksum.wrapping_add(v);
-                                }
-                            }
-                            _ => { // 20% remove
-                                ours.remove(&key);
-                            }
-                        }
-                    }
-                    black_box(checksum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("Splitsies_{:.0}pct", actual_lf), num_entries),
-            &op_keys,
-            |b, ops| {
-                b.iter(|| {
-                    let mut checksum = 0u64;
-                    for &(op, key) in ops {
-                        match op {
-                            0..=4 => {
-                                split.insert(key, key);
-                            }
-                            5..=7 => {
-                                if let Some(&v) = split.get(&key) {
-                                    checksum = checksum.wrapping_add(v);
-                                }
-                            }
-                            _ => {
-                                split.remove(&key);
-                            }
-                        }
-                    }
-                    black_box(checksum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("hashbrown_{:.0}pct", actual_lf), num_entries),
-            &op_keys,
-            |b, ops| {
-                b.iter(|| {
-                    let mut checksum = 0u64;
-                    for &(op, key) in ops {
-                        match op {
-                            0..=4 => {
-                                hb.insert(key, key);
-                            }
-                            5..=7 => {
-                                if let Some(&v) = hb.get(&key) {
-                                    checksum = checksum.wrapping_add(v);
-                                }
-                            }
-                            _ => {
-                                hb.remove(&key);
-                            }
-                        }
-                    }
-                    black_box(checksum);
-                });
-            },
-        );
+        bench_lf_mixed_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, &op_keys, 42);
+        bench_lf_mixed_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, &op_keys, 42);
+        bench_lf_mixed_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, &op_keys, 42);
+        bench_lf_mixed_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, &op_keys, 42);
     }
     group.finish();
 }
@@ -375,113 +206,28 @@ fn bench_load_factor_1m(c: &mut Criterion) {
     let mut group = c.benchmark_group("load_factor_1m");
     group.sample_size(10);
 
-    // ~1M capacity → large enough to see cache effects
     let capacity = 1_000_000;
     let ops = 500_000u64;
 
     for load_pct in [45, 65, 85] {
-        let min_slots = (capacity * 8 + 6) / 7;
-        let min_groups = (min_slots + 14) / 15;
-        let mut num_groups = 1;
-        while num_groups < min_groups { num_groups *= 2; }
-        let total_slots = num_groups * 15;
-        let num_entries = total_slots * load_pct / 100;
-
-        let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
+        let (num_entries, actual_lf) = compute_load_info(capacity, load_pct);
         group.throughput(Throughput::Elements(ops));
-
-        let (ours, keys) = build_at_load(capacity, num_entries, 42);
-        let (split, _) = build_split_at_load(capacity, num_entries, 42);
-        let (hb, _) = build_hb_at_load(capacity, num_entries, 42);
+        let label = format!("{:.0}pct", actual_lf);
 
         let mut miss_rng = Sfc64::new(9999);
         let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next()).collect();
 
         // Hit
-        group.bench_with_input(
-            BenchmarkId::new(format!("UFM_hit_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        sum = sum.wrapping_add(*ours.get(&keys[i % keys.len()]).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("Splitsies_hit_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        sum = sum.wrapping_add(*split.get(&keys[i % keys.len()]).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("hashbrown_hit_{:.0}pct", actual_lf), num_entries),
-            &keys,
-            |b, keys| {
-                b.iter(|| {
-                    let mut sum = 0u64;
-                    for i in 0..ops as usize {
-                        sum = sum.wrapping_add(*hb.get(&keys[i % keys.len()]).unwrap_or(&0));
-                    }
-                    black_box(sum);
-                });
-            },
-        );
+        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_hit", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_hit", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_hit", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_hit", &label, capacity, num_entries, ops, 42);
 
         // Miss
-        group.bench_with_input(
-            BenchmarkId::new(format!("UFM_miss_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if ours.get(k).is_some() { count += 1; }
-                    }
-                    black_box(count);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("Splitsies_miss_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if split.get(k).is_some() { count += 1; }
-                    }
-                    black_box(count);
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("hashbrown_miss_{:.0}pct", actual_lf), num_entries),
-            &miss_keys,
-            |b, miss_keys| {
-                b.iter(|| {
-                    let mut count = 0u64;
-                    for k in miss_keys {
-                        if hb.get(k).is_some() { count += 1; }
-                    }
-                    black_box(count);
-                });
-            },
-        );
+        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_miss", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_miss", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_miss", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_miss", &label, capacity, num_entries, &miss_keys, 42);
     }
     group.finish();
 }
