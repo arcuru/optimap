@@ -211,7 +211,8 @@ impl<K, V> RawTable<K, V> {
         self.find_by_hash(h, |k| k == key)
     }
 
-    /// Core lookup: SIMD match + EMPTY-based probe termination + prefetch.
+    /// Core lookup: dispatches once to the best SIMD tier, then loops without
+    /// per-iteration dispatch overhead.
     #[inline(always)]
     pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
@@ -221,34 +222,89 @@ impl<K, V> RawTable<K, V> {
             return None;
         }
 
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx512bw") {
+                return unsafe { self.find_by_hash_avx512(h, eq) };
+            }
+            if is_x86_feature_detected!("avx2") {
+                return unsafe { self.find_by_hash_avx2(h, eq) };
+            }
+        }
+        unsafe { self.find_by_hash_sse2(h, eq) }
+    }
+
+    /// AVX-512BW version — entire function compiled with avx512bw enabled.
+    /// Group methods inline with AVX-512 instructions, no per-call dispatch.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx512bw")]
+    unsafe fn find_by_hash_avx512<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
+    where
+        F: Fn(&K) -> bool,
+    {
         let reduced = reduced_hash(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
-
         loop {
-            let meta = unsafe { self.meta_ptr(gi) };
-
-            // Use match_byte_and_empty for a single-pass load of the 64-byte group.
-            let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
-
+            let meta = self.meta_ptr(gi);
+            let (matches, empties) = Group::match_byte_and_empty_avx512(meta, reduced);
             for si in matches {
-                let bucket = unsafe { &*self.bucket_ptr(gi, si) };
-                if eq(&bucket.0) {
-                    return Some((gi, si));
-                }
+                let bucket = &*self.bucket_ptr(gi, si);
+                if eq(&bucket.0) { return Some((gi, si)); }
             }
-
-            if empties.any_set() {
-                return None;
-            }
-
+            if empties.any_set() { return None; }
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.mask;
+            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+        }
+    }
 
-            unsafe {
-                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+    /// AVX2 version.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn find_by_hash_avx2<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
+    where
+        F: Fn(&K) -> bool,
+    {
+        let reduced = reduced_hash(h);
+        let mut gi = self.group_index(h);
+        let mut probe = 0usize;
+        loop {
+            let meta = self.meta_ptr(gi);
+            let (matches, empties) = Group::match_byte_and_empty_avx2(meta, reduced);
+            for si in matches {
+                let bucket = &*self.bucket_ptr(gi, si);
+                if eq(&bucket.0) { return Some((gi, si)); }
             }
+            if empties.any_set() { return None; }
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.mask;
+            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+        }
+    }
+
+    /// SSE2 fallback version.
+    unsafe fn find_by_hash_sse2<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
+    where
+        F: Fn(&K) -> bool,
+    {
+        let reduced = reduced_hash(h);
+        let mut gi = self.group_index(h);
+        let mut probe = 0usize;
+        loop {
+            let meta = self.meta_ptr(gi);
+            let (matches, empties) = Group::match_byte_and_empty(meta, reduced);
+            for si in matches {
+                let bucket = &*self.bucket_ptr(gi, si);
+                if eq(&bucket.0) { return Some((gi, si)); }
+            }
+            if empties.any_set() { return None; }
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.mask;
+            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
         }
     }
 

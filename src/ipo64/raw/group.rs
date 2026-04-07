@@ -72,9 +72,15 @@ pub struct Group;
 #[cfg(target_arch = "x86_64")]
 impl Group {
     // ── Public dispatch functions ────────────────────────────────────────
+    //
+    // Each public method dispatches to the best available SIMD tier.
+    // For hot loops, callers should use the target_feature-annotated
+    // methods directly (avx512/avx2/sse2) to avoid per-call dispatch.
 
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {
+        // Hot-path callers (find_by_hash etc.) should use direct avx512/avx2 methods.
+        // This dispatch version is for non-hot-path code (iteration, clear, etc.)
         if is_x86_feature_detected!("avx512bw") {
             unsafe { Self::match_byte_avx512(ptr, value) }
         } else if is_x86_feature_detected!("avx2") {
@@ -131,21 +137,21 @@ impl Group {
     // ── AVX-512BW: 1 load for 64 bytes ─────────────────────────────────
 
     #[target_feature(enable = "avx512bw")]
-    unsafe fn match_byte_avx512(ptr: *const u8, value: u8) -> BitMask64 {
+    pub(crate) unsafe fn match_byte_avx512(ptr: *const u8, value: u8) -> BitMask64 {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let needle = _mm512_set1_epi8(value as i8);
         BitMask64(_mm512_cmpeq_epi8_mask(data, needle))
     }
 
     #[target_feature(enable = "avx512bw")]
-    unsafe fn match_empty_avx512(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_empty_avx512(ptr: *const u8) -> BitMask64 {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let zero = _mm512_setzero_si512();
         BitMask64(_mm512_cmpeq_epi8_mask(data, zero))
     }
 
     #[target_feature(enable = "avx512bw")]
-    unsafe fn match_byte_and_empty_avx512(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
+    pub(crate) unsafe fn match_byte_and_empty_avx512(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let needle = _mm512_set1_epi8(value as i8);
         let zero = _mm512_setzero_si512();
@@ -156,7 +162,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx512bw")]
-    unsafe fn match_empty_or_tombstone_avx512(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_empty_or_tombstone_avx512(ptr: *const u8) -> BitMask64 {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let zero = _mm512_setzero_si512();
         let one = _mm512_set1_epi8(1);
@@ -166,7 +172,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx512bw")]
-    unsafe fn match_occupied_avx512(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_occupied_avx512(ptr: *const u8) -> BitMask64 {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let zero = _mm512_setzero_si512();
         let one = _mm512_set1_epi8(1);
@@ -178,7 +184,7 @@ impl Group {
     // ── AVX2: 2 loads for 64 bytes ──────────────────────────────────────
 
     #[target_feature(enable = "avx2")]
-    unsafe fn match_byte_avx2(ptr: *const u8, value: u8) -> BitMask64 {
+    pub(crate) unsafe fn match_byte_avx2(ptr: *const u8, value: u8) -> BitMask64 {
         let needle = _mm256_set1_epi8(value as i8);
         let d0 = _mm256_load_si256(ptr as *const __m256i);
         let d1 = _mm256_load_si256(ptr.add(32) as *const __m256i);
@@ -188,7 +194,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx2")]
-    unsafe fn match_empty_avx2(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_empty_avx2(ptr: *const u8) -> BitMask64 {
         let zero = _mm256_setzero_si256();
         let d0 = _mm256_load_si256(ptr as *const __m256i);
         let d1 = _mm256_load_si256(ptr.add(32) as *const __m256i);
@@ -198,7 +204,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx2")]
-    unsafe fn match_byte_and_empty_avx2(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
+    pub(crate) unsafe fn match_byte_and_empty_avx2(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
         let needle = _mm256_set1_epi8(value as i8);
         let zero = _mm256_setzero_si256();
         let d0 = _mm256_load_si256(ptr as *const __m256i);
@@ -211,7 +217,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx2")]
-    unsafe fn match_empty_or_tombstone_avx2(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_empty_or_tombstone_avx2(ptr: *const u8) -> BitMask64 {
         let zero = _mm256_setzero_si256();
         let one = _mm256_set1_epi8(1);
         let d0 = _mm256_load_si256(ptr as *const __m256i);
@@ -225,7 +231,7 @@ impl Group {
     }
 
     #[target_feature(enable = "avx2")]
-    unsafe fn match_occupied_avx2(ptr: *const u8) -> BitMask64 {
+    pub(crate) unsafe fn match_occupied_avx2(ptr: *const u8) -> BitMask64 {
         let zero = _mm256_setzero_si256();
         let one = _mm256_set1_epi8(1);
         let d0 = _mm256_load_si256(ptr as *const __m256i);
