@@ -49,14 +49,37 @@ per probe step (even with AVX-512, 3 ops vs IPO16's 2 ops) for the same
 number of probe steps. The cache-line advantage only helps when multiple
 probe steps are needed, which is rare at 70% load.
 
-## Remaining improvement ideas
+## Attempt 3: Load factor sweep with AVX-512
+**Status: CONFIRMED — IPO64 crosses over IPO16 at 99% load for misses**
 
-1. **insert_no_check with AVX-512**: Same dispatch pattern for insert.
-   Currently uses the dispatching Group methods (overhead per call).
-2. **Iteration with AVX-512**: match_occupied can use single AVX-512 load.
-3. **Higher load factor testing**: IPO64 should degrade less at 90%+ load.
-   The AVX-512 improvement would show more benefit there.
-4. **Larger value types**: When bucket access (not SIMD) dominates,
-   the 64-slot group advantage may show.
-5. **Accept the trade-off**: IPO64 is designed for high-load resilience,
-   not small-scale speed. Document as a specialty design.
+| Load | IPO16 miss | IPO64 miss | hb miss |
+|-----:|-----------:|-----------:|--------:|
+| 50% | 1.95 ns | 3.40 ns | 1.56 ns |
+| 90% | 2.95 ns | 4.56 ns | 2.19 ns |
+| 95% | 3.99 ns | 5.26 ns | 3.63 ns |
+| 97% | 4.38 ns | **4.68 ns** | 4.17 ns |
+| **99%** | **5.33 ns** | **5.13 ns** | 4.79 ns |
+
+Miss degradation 50→99%: IPO16 2.73x, **IPO64 1.51x**, hashbrown 3.07x.
+
+IPO64's flat degradation confirms the design thesis, but the crossover
+(99% load) is too extreme for general use. IPO64 is a specialty design
+for applications that need predictable high-load performance.
+
+## Conclusion
+
+IPO64 with AVX-512 is optimized as far as practical:
+- AVX-512 reduced SIMD ops from 14 to 3 per probe step
+- Dispatch-at-entry eliminated per-iteration overhead
+- Load factor sweep confirms flat degradation curve
+- Crossover with IPO16 only at 99% load (too extreme for general use)
+
+Further improvements (insert_no_check dispatch, iteration AVX-512) would
+give diminishing returns. The fundamental limitation is that 64-slot groups
+do more work per probe step than 16-slot groups, and at typical load
+factors (70-90%), both designs need only 1 probe step.
+
+**Recommendation**: IPO64 is a research/specialty design. For general use,
+IPO16 (InPlaceOverflow) or Splitsies provide better performance. IPO64's
+value is in demonstrating the cache-line-aligned approach and its
+predictable high-load behavior.
