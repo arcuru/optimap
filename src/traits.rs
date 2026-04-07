@@ -83,6 +83,9 @@ pub trait Map<K: Hash + Eq, V> {
 
     /// Remove all elements, keeping allocated memory.
     fn clear(&mut self);
+
+    /// Iterate over key-value pairs in arbitrary order.
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a;
 }
 
 // ── Macro to generate trait impl that delegates to inherent methods ──────────
@@ -112,6 +115,9 @@ macro_rules! impl_map_trait {
             fn len(&self) -> usize { $type::len(self) }
             fn capacity(&self) -> usize { $type::capacity(self) }
             fn clear(&mut self) { $type::clear(self) }
+            fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+                $type::iter(self)
+            }
         }
     };
 }
@@ -143,6 +149,9 @@ where
     fn len(&self) -> usize { hashbrown::HashMap::len(self) }
     fn capacity(&self) -> usize { hashbrown::HashMap::capacity(self) }
     fn clear(&mut self) { hashbrown::HashMap::clear(self) }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+        hashbrown::HashMap::iter(self)
+    }
 }
 
 // ── std::HashMap implementation ─────────────────────────────────────────────
@@ -170,4 +179,7 @@ where
     fn len(&self) -> usize { std::collections::HashMap::len(self) }
     fn capacity(&self) -> usize { std::collections::HashMap::capacity(self) }
     fn clear(&mut self) { std::collections::HashMap::clear(self) }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+        std::collections::HashMap::iter(self)
+    }
 }

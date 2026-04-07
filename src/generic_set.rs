@@ -81,24 +81,84 @@ impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
     pub fn clear(&mut self) {
         self.map.clear();
     }
+
+    /// Iterate over elements in arbitrary order.
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.map.iter().map(|(k, _)| k)
+    }
 }
 
 // ── Set algebra operations ──────────────────────────────────────────────────
 
-impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     /// Returns `true` if `self` has no elements in common with `other`.
-    pub fn is_disjoint<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool
-    where
-        T: Borrow<T>,
-    {
+    pub fn is_disjoint<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
         if self.len() <= other.len() {
-            // Can't iterate generically without iterator support on Map trait.
-            // For now, this requires the concrete type's iter().
-            // TODO: Add iteration to the Map trait or use a separate approach.
-            false // placeholder
+            self.iter().all(|v| !other.contains(v))
         } else {
-            false // placeholder
+            other.iter().all(|v| !self.contains(v))
         }
+    }
+
+    /// Returns `true` if every element in `self` is also in `other`.
+    pub fn is_subset<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
+        if self.len() > other.len() { return false; }
+        self.iter().all(|v| other.contains(v))
+    }
+
+    /// Returns `true` if every element in `other` is also in `self`.
+    pub fn is_superset<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
+        other.is_subset(self)
+    }
+
+    /// Returns the union of `self` and `other` as a new set.
+    pub fn union(&self, other: &Self) -> Self {
+        let mut result = Self::with_capacity(self.len() + other.len());
+        for item in self.iter() { result.insert(item.clone()); }
+        for item in other.iter() { result.insert(item.clone()); }
+        result
+    }
+
+    /// Returns the intersection of `self` and `other` as a new set.
+    pub fn intersection<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> Self {
+        let mut result = Self::new();
+        let (smaller, check) = if self.len() <= other.len() {
+            (self as &Self, other as &Set<T, M2>)
+        } else {
+            // Can't easily swap types, iterate self and check other
+            return {
+                let mut r = Self::new();
+                for item in self.iter() {
+                    if other.contains(item) { r.insert(item.clone()); }
+                }
+                r
+            };
+        };
+        for item in smaller.iter() {
+            if check.contains(item) { result.insert(item.clone()); }
+        }
+        result
+    }
+
+    /// Returns elements in `self` but not in `other`.
+    pub fn difference<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> Self {
+        let mut result = Self::new();
+        for item in self.iter() {
+            if !other.contains(item) { result.insert(item.clone()); }
+        }
+        result
+    }
+
+    /// Returns elements in either set but not both.
+    pub fn symmetric_difference(&self, other: &Self) -> Self {
+        let mut result = Self::new();
+        for item in self.iter() {
+            if !other.contains(item) { result.insert(item.clone()); }
+        }
+        for item in other.iter() {
+            if !self.contains(item) { result.insert(item.clone()); }
+        }
+        result
     }
 }
 
@@ -132,8 +192,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for Set<T, M> {
 
 impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for Set<T, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Can't iterate generically — print len
-        write!(f, "Set(len={})", self.len())
+        f.debug_set().entries(self.iter()).finish()
     }
 }
 
@@ -246,5 +305,111 @@ mod tests {
         assert_eq!(set.len(), 500);
         assert!(set.contains(&499));
         assert!(!set.contains(&500));
+    }
+
+    // ── Iterator tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn iter_ufm() {
+        let set: UfmSet<i32> = vec![1, 2, 3].into_iter().collect();
+        let mut items: Vec<i32> = set.iter().copied().collect();
+        items.sort();
+        assert_eq!(items, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn iter_splitsies() {
+        let set: SplitsiesSet<i32> = (0..100).collect();
+        assert_eq!(set.iter().count(), 100);
+        let mut items: Vec<i32> = set.iter().copied().collect();
+        items.sort();
+        assert_eq!(items, (0..100).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn iter_ipo() {
+        let set: IpoSet<i32> = (0..50).collect();
+        let sum: i32 = set.iter().sum();
+        assert_eq!(sum, (0..50).sum());
+    }
+
+    // ── Set algebra tests ───────────────────────────────────────────────
+
+    #[test]
+    fn union() {
+        let a: SplitsiesSet<i32> = vec![1, 2, 3].into_iter().collect();
+        let b: SplitsiesSet<i32> = vec![3, 4, 5].into_iter().collect();
+        let u = a.union(&b);
+        assert_eq!(u.len(), 5);
+        for i in 1..=5 { assert!(u.contains(&i)); }
+    }
+
+    #[test]
+    fn intersection() {
+        let a: IpoSet<i32> = vec![1, 2, 3, 4].into_iter().collect();
+        let b: IpoSet<i32> = vec![3, 4, 5, 6].into_iter().collect();
+        let inter = a.intersection(&b);
+        assert_eq!(inter.len(), 2);
+        assert!(inter.contains(&3));
+        assert!(inter.contains(&4));
+    }
+
+    #[test]
+    fn difference() {
+        let a: UfmSet<i32> = vec![1, 2, 3, 4].into_iter().collect();
+        let b: UfmSet<i32> = vec![3, 4, 5, 6].into_iter().collect();
+        let diff = a.difference(&b);
+        assert_eq!(diff.len(), 2);
+        assert!(diff.contains(&1));
+        assert!(diff.contains(&2));
+    }
+
+    #[test]
+    fn symmetric_difference() {
+        let a: SplitsiesSet<i32> = vec![1, 2, 3].into_iter().collect();
+        let b: SplitsiesSet<i32> = vec![2, 3, 4].into_iter().collect();
+        let sd = a.symmetric_difference(&b);
+        assert_eq!(sd.len(), 2);
+        assert!(sd.contains(&1));
+        assert!(sd.contains(&4));
+    }
+
+    #[test]
+    fn subset_superset() {
+        let a: GapsSet<i32> = vec![1, 2].into_iter().collect();
+        let b: GapsSet<i32> = vec![1, 2, 3].into_iter().collect();
+        assert!(a.is_subset(&b));
+        assert!(!b.is_subset(&a));
+        assert!(b.is_superset(&a));
+    }
+
+    #[test]
+    fn disjoint() {
+        let a: IpoSet<i32> = vec![1, 2].into_iter().collect();
+        let b: IpoSet<i32> = vec![3, 4].into_iter().collect();
+        let c: IpoSet<i32> = vec![2, 3].into_iter().collect();
+        assert!(a.is_disjoint(&b));
+        assert!(!a.is_disjoint(&c));
+    }
+
+    // ── Map trait iter test ─────────────────────────────────────────────
+
+    #[test]
+    fn map_trait_iter_generic() {
+        use crate::Map;
+        fn sum_values<M: Map<i32, i32>>(m: &M) -> i32 {
+            m.iter().map(|(_, v)| v).sum()
+        }
+
+        let mut m = crate::Splitsies::new();
+        m.insert(1, 10);
+        m.insert(2, 20);
+        m.insert(3, 30);
+        assert_eq!(sum_values(&m), 60);
+
+        let mut m2 = crate::InPlaceOverflow::new();
+        m2.insert(1, 100);
+        m2.insert(2, 200);
+        assert_eq!(sum_values(&m2), 300);
     }
 }

@@ -516,3 +516,29 @@ pub fn bench_high_load_miss_for<M: Map<u64, u64>>(
         });
     });
 }
+
+/// Benchmark iteration over a pre-built map.
+pub fn bench_iteration_for<M: Map<u64, u64>>(
+    group: &mut BenchmarkGroup<WallTime>,
+    name: &str,
+    label: &str,
+    keys: &[u64],
+    capacity: usize,
+) {
+    let mut map = M::with_capacity(capacity);
+    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+
+    group.bench_with_input(
+        BenchmarkId::new(name, label),
+        &(),
+        |b, _| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for (_, &v) in map.iter() {
+                    sum = sum.wrapping_add(v);
+                }
+                black_box(sum);
+            });
+        },
+    );
+}

@@ -98,6 +98,18 @@ fn bench_remove(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Throughput: Iteration ────────────────────────────────────────────────────
+
+fn bench_iteration(c: &mut Criterion) {
+    let mut group = c.benchmark_group("throughput/iteration");
+    for sz in test_sizes() {
+        let keys = make_random_keys(sz.num_entries, 42);
+        group.throughput(Throughput::Elements(sz.num_entries as u64));
+        all_maps!(bench_iteration_for, &mut group, sz.name, &keys, sz.capacity);
+    }
+    group.finish();
+}
+
 // ── Throughput: Size Scaling ────────────────────────────────────────────────
 
 fn bench_size_scaling(c: &mut Criterion) {
@@ -131,6 +143,7 @@ criterion_group!(
     bench_lookup_hit,
     bench_lookup_miss,
     bench_remove,
+    bench_iteration,
     bench_size_scaling,
 );
 criterion_main!(throughput);
