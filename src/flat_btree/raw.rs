@@ -540,6 +540,30 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             }
         }
 
+        // Fast path: prepend to the front (key < all existing keys).
+        // This is common for reverse-sorted inserts.
+        {
+            let first_node = self.arena.node_ptr(self.first_leaf);
+            let first_header = unsafe { NodeLayout::<K, V>::header(first_node) };
+            let first_len = first_header.len as usize;
+            if first_len > 0 {
+                let first_key = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(first_node, 0) };
+                if key < *first_key {
+                    if first_len < NodeLayout::<K, V>::LEAF_CAP {
+                        self.leaf_insert_at(self.first_leaf, 0, key, value);
+                        self.len += 1;
+                        return None;
+                    }
+                    let path = self.path_to_node(self.first_leaf);
+                    let (promoted_key, new_leaf_idx) =
+                        self.leaf_split_and_insert(self.first_leaf, 0, key, value);
+                    self.len += 1;
+                    self.propagate_split(path, promoted_key, new_leaf_idx);
+                    return None;
+                }
+            }
+        }
+
         let (leaf_idx, pos, path) = self.search_for_insert(&key);
 
         // Check if key already exists at this position
