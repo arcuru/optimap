@@ -92,9 +92,10 @@ pub use split_overflow::Splitsies;
 pub use set::UnorderedFlatSet;
 
 /// Generic set wrapper — works with any Map implementation.
-pub use generic_set::{GapsSet, Ipo64Set, IpoSet, Set, SplitsiesSet, UfmSet};
+pub use generic_set::{FlatBTreeSet, GapsSet, Ipo64Set, IpoSet, Set, SplitsiesSet, UfmSet};
 
 // ── Traits ──────────────────────────────────────────────────────────────────
 
 pub use raw::hash::IsAvalanching;
 pub use traits::Map;
+pub use traits::SortedMap;

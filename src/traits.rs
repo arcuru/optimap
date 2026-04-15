@@ -91,6 +91,32 @@ pub trait Map<K: Hash + Eq, V> {
         V: 'a;
 }
 
+/// Trait for sorted map implementations that support ordered operations.
+///
+/// Unlike [`Map`], this does not require `Hash` — it works with any
+/// key type that supports ordering.
+pub trait SortedMap<K, V> {
+    /// Returns the first (minimum) key-value pair.
+    fn first_key_value(&self) -> Option<(&K, &V)>;
+
+    /// Returns the last (maximum) key-value pair.
+    fn last_key_value(&self) -> Option<(&K, &V)>;
+
+    /// Iterate over all key-value pairs in sorted order.
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a;
+
+    /// Iterate over key-value pairs within the given range, in sorted order.
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: Borrow<Q> + 'a,
+        V: 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a;
+}
+
 // ── Macro to generate trait impl that delegates to inherent methods ──────────
 
 macro_rules! impl_map_trait {

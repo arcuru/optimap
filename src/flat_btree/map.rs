@@ -4,6 +4,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
+use std::ops::RangeBounds;
 
 use super::node::*;
 use super::raw::RawBTree;
@@ -197,6 +198,108 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
     pub fn values(&self) -> Values<'_, K, V> {
         Values { inner: self.iter() }
     }
+
+    /// Iterate over mutable values in key order.
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+        let first = self.tree.first_leaf;
+        let len = self.tree.len();
+        ValuesMut {
+            inner: IterMut {
+                tree: &mut self.tree,
+                current_leaf: first,
+                current_idx: 0,
+                remaining: len,
+            },
+        }
+    }
+
+    /// Iterate over mutable key-value pairs in sorted order.
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+        let first = self.tree.first_leaf;
+        let len = self.tree.len();
+        IterMut {
+            tree: &mut self.tree,
+            current_leaf: first,
+            current_idx: 0,
+            remaining: len,
+        }
+    }
+
+    /// Iterate over key-value pairs within the given range, in sorted order.
+    pub fn range<Q, R>(&self, range: R) -> RangeIter<'_, K, V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        use std::ops::Bound;
+
+        // Find start position
+        let (start_leaf, start_idx) = match range.start_bound() {
+            Bound::Included(key) => self.tree.lower_bound(key).unwrap_or((NO_NODE, 0)),
+            Bound::Excluded(key) => {
+                if let Some((leaf, idx)) = self.tree.lower_bound(key) {
+                    let node = self.tree.arena.node_ptr(leaf);
+                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
+                    if k.borrow() == key {
+                        let header = unsafe { NodeLayout::<K, V>::header(node) };
+                        if idx + 1 < header.len as usize {
+                            (leaf, idx + 1)
+                        } else {
+                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+                            (next, 0)
+                        }
+                    } else {
+                        (leaf, idx)
+                    }
+                } else {
+                    (NO_NODE, 0)
+                }
+            }
+            Bound::Unbounded => (self.tree.first_leaf, 0),
+        };
+
+        // Find end position: (leaf, idx) of the last element in range, exclusive
+        let (end_leaf, end_idx) = match range.end_bound() {
+            Bound::Included(key) => {
+                // Find the position AFTER the last included key
+                if let Some((leaf, idx)) = self.tree.lower_bound(key) {
+                    let node = self.tree.arena.node_ptr(leaf);
+                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
+                    if k.borrow() == key {
+                        // Include this element: end is one past
+                        let header = unsafe { NodeLayout::<K, V>::header(node) };
+                        if idx + 1 < header.len as usize {
+                            (leaf, idx + 1)
+                        } else {
+                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+                            (next, 0)
+                        }
+                    } else {
+                        // key not in tree; lower_bound points to first key > key
+                        // so end is this position
+                        (leaf, idx)
+                    }
+                } else {
+                    // All keys <= target, so include everything
+                    (NO_NODE, 0)
+                }
+            }
+            Bound::Excluded(key) => {
+                // End at first key >= target
+                self.tree.lower_bound(key).unwrap_or((NO_NODE, 0))
+            }
+            Bound::Unbounded => (NO_NODE, 0),
+        };
+
+        RangeIter {
+            tree: &self.tree,
+            current_leaf: start_leaf,
+            current_idx: start_idx,
+            end_leaf,
+            end_idx,
+        }
+    }
 }
 
 // ── Map trait impl (K: Hash + Eq + Ord) ─────────────────────────────────
@@ -340,6 +443,236 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
     }
 }
 
+/// Mutable iterator over `(&K, &mut V)` pairs in sorted order.
+pub struct IterMut<'a, K, V> {
+    tree: &'a mut RawBTree<K, V>,
+    current_leaf: NodeIdx,
+    current_idx: usize,
+    remaining: usize,
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current_leaf == NO_NODE {
+                return None;
+            }
+
+            let node = self.tree.arena.node_ptr(self.current_leaf);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            if self.current_idx < len {
+                let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, self.current_idx) };
+                let v = unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, self.current_idx) };
+                self.current_idx += 1;
+                self.remaining -= 1;
+                return Some((k, v));
+            }
+
+            self.current_leaf = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+            self.current_idx = 0;
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for IterMut<'_, K, V> {}
+impl<K, V> std::iter::FusedIterator for IterMut<'_, K, V> {}
+
+/// Iterator over mutable values in key order.
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
+    type Item = &'a mut V;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(_, v)| v)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+/// Owning iterator over `(K, V)` pairs.
+pub struct IntoIter<K, V> {
+    tree: RawBTree<K, V>,
+    current_leaf: NodeIdx,
+    current_idx: usize,
+    /// Index of first unconsumed element in current leaf.
+    /// Elements [0..consumed_start) have been read out and must NOT be dropped again.
+    consumed_start: usize,
+    remaining: usize,
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current_leaf == NO_NODE {
+                return None;
+            }
+
+            let node = self.tree.arena.node_ptr(self.current_leaf);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            if self.current_idx < len {
+                let k = unsafe { NodeLayout::<K, V>::leaf_key_ptr(node, self.current_idx).read() };
+                let v = unsafe { NodeLayout::<K, V>::leaf_val_ptr(node, self.current_idx).read() };
+                self.current_idx += 1;
+                self.consumed_start = self.current_idx;
+                self.remaining -= 1;
+                return Some((k, v));
+            }
+
+            // Move to next leaf
+            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+            // Mark current leaf as fully consumed (set len = 0 so Drop skips it)
+            unsafe { NodeLayout::<K, V>::header_mut(node).len = 0 };
+            self.current_leaf = next;
+            self.current_idx = 0;
+            self.consumed_start = 0;
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
+
+impl<K, V> Drop for IntoIter<K, V> {
+    fn drop(&mut self) {
+        // Drop remaining unconsumed elements in the current leaf
+        if self.current_leaf != NO_NODE {
+            let node = self.tree.arena.node_ptr(self.current_leaf);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            // Drop elements [consumed_start..len) that we haven't read
+            if std::mem::needs_drop::<K>() || std::mem::needs_drop::<V>() {
+                for i in self.consumed_start..len {
+                    unsafe {
+                        std::ptr::drop_in_place(NodeLayout::<K, V>::leaf_key_ptr(node, i));
+                        std::ptr::drop_in_place(NodeLayout::<K, V>::leaf_val_ptr(node, i));
+                    }
+                }
+            }
+            // Mark as consumed
+            unsafe { NodeLayout::<K, V>::header_mut(node).len = 0 };
+
+            // Drop all remaining leaves
+            let mut leaf_idx = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+            while leaf_idx != NO_NODE {
+                let node = self.tree.arena.node_ptr(leaf_idx);
+                let header = unsafe { NodeLayout::<K, V>::header(node) };
+                let nlen = header.len as usize;
+                let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+
+                if std::mem::needs_drop::<K>() || std::mem::needs_drop::<V>() {
+                    for i in 0..nlen {
+                        unsafe {
+                            std::ptr::drop_in_place(NodeLayout::<K, V>::leaf_key_ptr(node, i));
+                            std::ptr::drop_in_place(NodeLayout::<K, V>::leaf_val_ptr(node, i));
+                        }
+                    }
+                }
+                unsafe { NodeLayout::<K, V>::header_mut(node).len = 0 };
+                leaf_idx = next;
+            }
+        }
+
+        // All leaf contents are now consumed/dropped. Clear tree state
+        // so RawBTree::drop doesn't try to drop them again.
+        self.tree.first_leaf = NO_NODE;
+        self.tree.root = NO_NODE;
+        // RawBTree::drop will still drop internal node keys and free the arena.
+    }
+}
+
+/// Iterator over `(&K, &V)` pairs within a key range.
+/// End is tracked as a (leaf, idx) position. NO_NODE means unbounded.
+pub struct RangeIter<'a, K, V> {
+    tree: &'a RawBTree<K, V>,
+    current_leaf: NodeIdx,
+    current_idx: usize,
+    end_leaf: NodeIdx,
+    end_idx: usize,
+}
+
+impl<'a, K, V> Iterator for RangeIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current_leaf == NO_NODE {
+                return None;
+            }
+
+            // Check if we've reached the end position
+            if self.current_leaf == self.end_leaf && self.current_idx >= self.end_idx {
+                self.current_leaf = NO_NODE;
+                return None;
+            }
+
+            let node = self.tree.arena.node_ptr(self.current_leaf);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            if self.current_idx < len {
+                let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, self.current_idx) };
+                let v = unsafe { &*NodeLayout::<K, V>::leaf_val_ptr(node, self.current_idx) };
+                self.current_idx += 1;
+                return Some((k, v));
+            }
+
+            self.current_leaf = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+            self.current_idx = 0;
+        }
+    }
+}
+
+impl<K, V> std::iter::FusedIterator for RangeIter<'_, K, V> {}
+
+// ── SortedMap trait impl ────────────────────────────────────────────────
+
+impl<K: Ord, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
+    fn first_key_value(&self) -> Option<(&K, &V)> {
+        FlatBTree::first_key_value(self)
+    }
+
+    fn last_key_value(&self) -> Option<(&K, &V)> {
+        FlatBTree::last_key_value(self)
+    }
+
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter()
+    }
+
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: Borrow<Q> + 'a,
+        V: 'a,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q> + 'a,
+    {
+        FlatBTree::range(self, range)
+    }
+}
+
 // ── Standard traits ─────────────────────────────────────────────────────
 
 impl<K: Ord, V> Default for FlatBTree<K, V> {
@@ -403,6 +736,28 @@ where
     type IntoIter = Iter<'a, K, V>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<K, V, S> IntoIterator for FlatBTree<K, V, S>
+where
+    K: Ord,
+{
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        let first = self.tree.first_leaf;
+        let len = self.tree.len();
+        // We need to move the tree out without running FlatBTree's drop
+        let tree = unsafe { std::ptr::read(&self.tree) };
+        std::mem::forget(self);
+        IntoIter {
+            tree,
+            current_leaf: first,
+            current_idx: 0,
+            consumed_start: 0,
+            remaining: len,
+        }
     }
 }
 
@@ -609,5 +964,157 @@ mod tests {
         for (k, v) in std_map.iter() {
             assert_eq!(ours.get(k), Some(v), "post-remove mismatch for key {k}");
         }
+    }
+
+    #[test]
+    fn range_query() {
+        let mut map = FlatBTree::new();
+        for i in 0..100 {
+            map.insert(i, i * 10);
+        }
+
+        // Inclusive range
+        let r: Vec<_> = map.range(10..=20).map(|(k, _)| *k).collect();
+        assert_eq!(r, (10..=20).collect::<Vec<_>>());
+
+        // Exclusive end
+        let r: Vec<_> = map.range(90..95).map(|(k, _)| *k).collect();
+        assert_eq!(r, vec![90, 91, 92, 93, 94]);
+
+        // From start
+        let r: Vec<_> = map.range(..3).map(|(k, _)| *k).collect();
+        assert_eq!(r, vec![0, 1, 2]);
+
+        // To end
+        let r: Vec<_> = map.range(97..).map(|(k, _)| *k).collect();
+        assert_eq!(r, vec![97, 98, 99]);
+
+        // Full range
+        let r: Vec<_> = map.range(..).map(|(k, _)| *k).collect();
+        assert_eq!(r.len(), 100);
+
+        // Empty range
+        let r: Vec<_> = map.range(200..300).collect();
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn range_with_string_keys() {
+        let mut map = FlatBTree::new();
+        map.insert("apple".to_string(), 1);
+        map.insert("banana".to_string(), 2);
+        map.insert("cherry".to_string(), 3);
+        map.insert("date".to_string(), 4);
+        map.insert("elderberry".to_string(), 5);
+
+        let r: Vec<_> = map
+            .range("banana".to_string()..="date".to_string())
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(r, vec!["banana", "cherry", "date"]);
+    }
+
+    #[test]
+    fn iter_mut() {
+        let mut map = FlatBTree::new();
+        for i in 0..10 {
+            map.insert(i, i);
+        }
+
+        for (_, v) in map.iter_mut() {
+            *v *= 2;
+        }
+
+        for i in 0..10 {
+            assert_eq!(map.get(&i), Some(&(i * 2)));
+        }
+    }
+
+    #[test]
+    fn into_iter() {
+        let mut map = FlatBTree::new();
+        for i in 0..50 {
+            map.insert(i, i * 10);
+        }
+
+        let pairs: Vec<(i32, i32)> = map.into_iter().collect();
+        assert_eq!(pairs.len(), 50);
+        // Should be sorted
+        for (i, (k, v)) in pairs.iter().enumerate() {
+            assert_eq!(*k, i as i32);
+            assert_eq!(*v, (i * 10) as i32);
+        }
+    }
+
+    #[test]
+    fn sorted_map_trait() {
+        use crate::SortedMap;
+
+        fn check<M: SortedMap<i32, i32>>(m: &M) {
+            assert_eq!(m.first_key_value(), Some((&0, &0)));
+            assert_eq!(m.last_key_value(), Some((&9, &90)));
+            let r: Vec<_> = m.range(3..7).map(|(k, _)| *k).collect();
+            assert_eq!(r, vec![3, 4, 5, 6]);
+        }
+
+        let mut map = FlatBTree::new();
+        for i in 0..10 {
+            map.insert(i, i * 10);
+        }
+        check(&map);
+    }
+
+    #[test]
+    fn flat_btree_set() {
+        let mut set = crate::FlatBTreeSet::new();
+        set.insert(3);
+        set.insert(1);
+        set.insert(2);
+        assert!(set.contains(&1));
+        assert!(!set.contains(&4));
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn values_mut() {
+        let mut map = FlatBTree::new();
+        map.insert(1, "hello".to_string());
+        map.insert(2, "world".to_string());
+
+        for v in map.values_mut() {
+            v.push_str("!");
+        }
+
+        assert_eq!(map.get(&1), Some(&"hello!".to_string()));
+        assert_eq!(map.get(&2), Some(&"world!".to_string()));
+    }
+
+    #[test]
+    fn into_iter_drops_correctly() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        struct Counted(i32);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROP_COUNT.store(0, Ordering::SeqCst);
+        let mut map = FlatBTree::new();
+        for i in 0..10 {
+            map.insert(Counted(i), Counted(i));
+        }
+
+        // Partial iteration then drop
+        let mut iter = map.into_iter();
+        let _ = iter.next(); // consume 1
+        drop(iter); // should drop remaining 9 + the 1 we consumed
+
+        // 10 keys + 10 values = 20 Counted objects total
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 20);
     }
 }

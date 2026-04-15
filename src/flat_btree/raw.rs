@@ -252,6 +252,61 @@ impl<K: Ord, V> RawBTree<K, V> {
         None
     }
 
+    /// Find the first (leaf, position) where key >= target.
+    /// Returns (leaf_idx, slot_idx) or None if all keys are less than target.
+    pub fn lower_bound<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if self.root == NO_NODE {
+            return None;
+        }
+
+        let mut node_idx = self.root;
+
+        for _ in 0..self.height {
+            let node = self.arena.node_ptr(node_idx);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            let mut child_idx = len;
+            for i in 0..len {
+                let k = unsafe { &*NodeLayout::<K, V>::internal_key_ptr(node, i) };
+                if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
+                    child_idx = i;
+                    break;
+                }
+            }
+
+            node_idx = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+        }
+
+        // At leaf: find first key >= target
+        let node = self.arena.node_ptr(node_idx);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        let len = header.len as usize;
+
+        for i in 0..len {
+            let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, i) };
+            if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
+                return Some((node_idx, i));
+            }
+        }
+
+        // All keys in this leaf are less — check next leaf
+        let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+        if next != NO_NODE {
+            let next_node = self.arena.node_ptr(next);
+            let next_header = unsafe { NodeLayout::<K, V>::header(next_node) };
+            if next_header.len > 0 {
+                return Some((next, 0));
+            }
+        }
+
+        None
+    }
+
     /// Search for the leaf where a key should be inserted.
     /// Returns (leaf_idx, insert_position) where insert_position is the
     /// index at which the key should go to maintain sorted order.

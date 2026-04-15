@@ -235,6 +235,9 @@ pub type GapsSet<T> = Set<T, crate::Gaps<T, ()>>;
 /// Set backed by `IPO64` (64-slot cache-line groups with AVX-512).
 pub type Ipo64Set<T> = Set<T, crate::IPO64<T, ()>>;
 
+/// Set backed by `FlatBTree` (cache-line-optimized B+ tree, sorted iteration).
+pub type FlatBTreeSet<T> = Set<T, crate::FlatBTree<T, ()>>;
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
