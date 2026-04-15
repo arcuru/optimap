@@ -170,15 +170,15 @@ where
 
         // No overflow from home group → key is absent, insert directly
         let ofw_bit = overflow_bit(h);
-        if let Some(si) = empties.lowest_set_bit() {
-            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
-                unsafe {
-                    Group::set_meta(meta, si, reduced);
-                    self.table.bucket_ptr(gi, si).write((key, value));
-                }
-                self.table.len += 1;
-                return None;
+        if let Some(si) = empties.lowest_set_bit()
+            && !unsafe { Group::has_overflow_bit(meta, ofw_bit) }
+        {
+            unsafe {
+                Group::set_meta(meta, si, reduced);
+                self.table.bucket_ptr(gi, si).write((key, value));
             }
+            self.table.len += 1;
+            return None;
         }
 
         // Cold: overflow or full home group — full probe needed
@@ -274,16 +274,16 @@ where
 
         // No overflow from home group → key absent, slot in home group
         let ofw_bit = overflow_bit(h);
-        if let Some(si) = empties.lowest_set_bit() {
-            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
-                return Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: Some((gi, si, 0)),
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                });
-            }
+        if let Some(si) = empties.lowest_set_bit()
+            && !unsafe { Group::has_overflow_bit(meta, ofw_bit) }
+        {
+            return Entry::Vacant(VacantEntry {
+                key,
+                hash: h,
+                slot: Some((gi, si, 0)),
+                table: &mut self.table,
+                hash_builder: &self.hash_builder,
+            });
         }
 
         // Cold: overflow or full home group — use full find_or_locate
@@ -831,8 +831,8 @@ mod tests {
         let mut pairs: Vec<(i32, i32)> = map.into_iter().collect();
         pairs.sort();
         assert_eq!(pairs.len(), 10);
-        for i in 0..10 {
-            assert_eq!(pairs[i], (i as i32, (i * 10) as i32));
+        for (i, pair) in pairs.iter().enumerate().take(10) {
+            assert_eq!(*pair, (i as i32, (i * 10) as i32));
         }
     }
 

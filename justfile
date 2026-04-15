@@ -38,9 +38,9 @@ test-all: test test-doc
 
 # --- Linting ---
 
-# Run clippy
+# Run clippy (allows unsafe-op-in-unsafe-fn until edition 2024 migration is done)
 lint:
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets -- -D warnings -A unsafe-op-in-unsafe-fn -A clippy::too_many_arguments
 
 # Check formatting
 fmt-check:

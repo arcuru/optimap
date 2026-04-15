@@ -11,8 +11,6 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use crate::raw::bitmask::BitMask;
-
 /// Number of element slots per group (one cache line of metadata).
 pub const GROUP_SIZE: usize = 64;
 

@@ -91,7 +91,7 @@ fn bench_from_iter(c: &mut Criterion) {
     for &n in &[10_000, 100_000] {
         let pairs: Vec<(u64, u64)> = {
             let mut rng = Sfc64::new(42);
-            (0..n).map(|i| (rng.next(), i as u64)).collect()
+            (0..n).map(|i| (rng.next_u64(), i as u64)).collect()
         };
         group.throughput(Throughput::Elements(n as u64));
 

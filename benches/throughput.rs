@@ -15,8 +15,8 @@ use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 const GROUP_SIZE: usize = 15;
 
 fn entries_for_load(capacity: usize, load_pct: usize) -> usize {
-    let min_slots = (capacity * 8 + 6) / 7;
-    let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
+    let min_slots = (capacity * 8).div_ceil(7);
+    let min_groups = min_slots.div_ceil(GROUP_SIZE);
     let mut num_groups = 1;
     while num_groups < min_groups {
         num_groups *= 2;

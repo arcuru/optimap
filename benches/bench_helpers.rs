@@ -3,6 +3,8 @@
 //! Each helper takes a map type via generics and runs a standard benchmark.
 //! Adding a new design = one line per benchmark function.
 
+#![allow(dead_code)]
+
 use criterion::{BenchmarkGroup, BenchmarkId, black_box, measurement::WallTime};
 use optimap::Map;
 
@@ -24,12 +26,12 @@ impl Sfc64 {
             counter: 1,
         };
         for _ in 0..12 {
-            rng.next();
+            rng.next_u64();
         }
         rng
     }
     #[inline(always)]
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         let tmp = self.a.wrapping_add(self.b).wrapping_add(self.counter);
         self.counter += 1;
         self.a = self.b ^ (self.b >> 11);
@@ -41,7 +43,7 @@ impl Sfc64 {
 
 pub fn make_random_keys(n: usize, seed: u64) -> Vec<u64> {
     let mut rng = Sfc64::new(seed);
-    (0..n).map(|_| rng.next()).collect()
+    (0..n).map(|_| rng.next_u64()).collect()
 }
 
 pub fn make_miss_keys(n: usize) -> Vec<u64> {
@@ -53,8 +55,8 @@ pub fn make_miss_keys(n: usize) -> Vec<u64> {
 pub const GROUP_SIZE: usize = 15;
 
 pub fn entries_for_load(capacity: usize, load_pct: usize) -> usize {
-    let min_slots = (capacity * 8 + 6) / 7;
-    let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
+    let min_slots = (capacity * 8).div_ceil(7);
+    let min_groups = min_slots.div_ceil(GROUP_SIZE);
     let mut num_groups = 1;
     while num_groups < min_groups {
         num_groups *= 2;
@@ -228,7 +230,7 @@ pub fn build_map_at_load<M: Map<u64, u64>>(
     let mut map = M::with_capacity(target_capacity);
     let mut keys = Vec::with_capacity(num_entries);
     for _ in 0..num_entries {
-        let k = rng.next();
+        let k = rng.next_u64();
         map.insert(k, k);
         keys.push(k);
     }
@@ -418,9 +420,9 @@ pub fn bench_churn_for<M: Map<u64, u64>>(
             let mut rng = Sfc64::new(42);
             let mut checksum = 0u64;
             for _ in 0..ops {
-                let k = rng.next() & mask;
+                let k = rng.next_u64() & mask;
                 map.insert(k, k);
-                let k2 = rng.next() & mask;
+                let k2 = rng.next_u64() & mask;
                 if let Some(v) = map.remove(&k2) {
                     checksum = checksum.wrapping_add(v);
                 }

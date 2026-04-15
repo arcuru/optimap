@@ -115,7 +115,7 @@ where
     /// Fused home-group insert: EMPTY in home group proves absence.
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        use super::raw::group::{EMPTY, Group, reduced_hash};
+        use super::raw::group::{Group, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);

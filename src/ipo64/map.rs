@@ -115,7 +115,7 @@ where
     /// Fused home-group insert: EMPTY in home group proves absence.
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        use super::raw::group::{EMPTY, Group, reduced_hash};
+        use super::raw::group::{Group, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -468,7 +468,7 @@ pub struct IntoIter<K, V> {
 impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
     fn next(&mut self) -> Option<Self::Item> {
-        use super::raw::group::{EMPTY, Group, META_GROUP_BYTES};
+        use super::raw::group::{EMPTY, Group};
         loop {
             if let Some(si) = self.current_mask.next() {
                 let gi = self.group;

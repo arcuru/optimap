@@ -3,8 +3,8 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 
+use crate::raw::RawTable;
 use crate::raw::hash;
-use crate::raw::{ProbeResult, RawTable};
 
 /// Default hasher for the set. Uses foldhash for speed.
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
@@ -134,15 +134,15 @@ where
         }
 
         let ofw_bit = overflow_bit(h);
-        if let Some(si) = empties.lowest_set_bit() {
-            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
-                unsafe {
-                    Group::set_meta(meta, si, reduced);
-                    self.table.bucket_ptr(gi, si).write((value, ()));
-                }
-                self.table.len += 1;
-                return true;
+        if let Some(si) = empties.lowest_set_bit()
+            && !unsafe { Group::has_overflow_bit(meta, ofw_bit) }
+        {
+            unsafe {
+                Group::set_meta(meta, si, reduced);
+                self.table.bucket_ptr(gi, si).write((value, ()));
             }
+            self.table.len += 1;
+            return true;
         }
 
         self.insert_overflow(h, value)

@@ -17,8 +17,8 @@ use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 // ── Load factor helpers ─────────────────────────────────────────────────────
 
 fn compute_load_info(capacity: usize, load_pct: usize) -> (usize, f64) {
-    let min_slots = (capacity * 8 + 6) / 7;
-    let min_groups = (min_slots + 14) / 15;
+    let min_slots = (capacity * 8).div_ceil(7);
+    let min_groups = min_slots.div_ceil(15);
     let mut num_groups = 1;
     while num_groups < min_groups {
         num_groups *= 2;
@@ -181,7 +181,7 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
     let ops = 100_000u64;
 
     let mut miss_rng = Sfc64::new(9999);
-    let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next()).collect();
+    let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next_u64()).collect();
 
     for load_pct in [45, 55, 65, 75, 85] {
         let (num_entries, actual_lf) = compute_load_info(capacity, load_pct);
@@ -246,13 +246,13 @@ fn bench_mixed_by_load(c: &mut Criterion) {
             build_map_at_load::<UnorderedFlatMap<u64, u64>>(capacity, num_entries, 42);
 
         let mut mix_rng = Sfc64::new(777);
-        let miss_keys: Vec<u64> = (0..ops as usize).map(|_| mix_rng.next()).collect();
+        let miss_keys: Vec<u64> = (0..ops as usize).map(|_| mix_rng.next_u64()).collect();
 
         let op_keys: Vec<(u8, u64)> = {
             let mut rng = Sfc64::new(555);
             (0..ops as usize)
                 .map(|i| {
-                    let op = (rng.next() % 10) as u8;
+                    let op = (rng.next_u64() % 10) as u8;
                     let key = if op < 8 {
                         ours_keys[i % ours_keys.len()]
                     } else {
@@ -318,7 +318,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         let label = format!("{:.0}pct", actual_lf);
 
         let mut miss_rng = Sfc64::new(9999);
-        let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next()).collect();
+        let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next_u64()).collect();
 
         // Hit
         bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(

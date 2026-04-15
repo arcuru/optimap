@@ -298,7 +298,7 @@ fn bench_string_key_sizes(c: &mut Criterion) {
             (0..n)
                 .map(|_| {
                     (0..len)
-                        .map(|_| (b'a' + (rng.next() % 26) as u8) as char)
+                        .map(|_| (b'a' + (rng.next_u64() % 26) as u8) as char)
                         .collect()
                 })
                 .collect()

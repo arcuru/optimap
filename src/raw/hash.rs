@@ -1,4 +1,4 @@
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 
 /// Marker trait for hash builders that already produce well-avalanched output.
 ///
@@ -22,17 +22,13 @@ impl IsAvalanching for ahash::RandomState {}
 /// Compute hash for a key, applying the post-mixer.
 #[inline(always)]
 pub fn hash_with_mix<K: Hash + ?Sized, S: BuildHasher>(key: &K, hash_builder: &S) -> u64 {
-    let mut hasher = hash_builder.build_hasher();
-    key.hash(&mut hasher);
-    mix_hash(hasher.finish())
+    mix_hash(hash_builder.hash_one(key))
 }
 
 /// Compute hash for a key without post-mixing (for avalanching hashers).
 #[inline(always)]
 pub fn hash_no_mix<K: Hash + ?Sized, S: BuildHasher>(key: &K, hash_builder: &S) -> u64 {
-    let mut hasher = hash_builder.build_hasher();
-    key.hash(&mut hasher);
-    hasher.finish()
+    hash_builder.hash_one(key)
 }
 
 /// Fast 64-bit hash post-mixer (Fibonacci hashing).
@@ -76,9 +72,8 @@ mod tests {
     fn non_avalanching_applies_mixer() {
         let hasher = std::hash::RandomState::new();
         let h1 = hash_with_mix(&42u64, &hasher);
-        let mut raw_hasher = hasher.build_hasher();
-        42u64.hash(&mut raw_hasher);
-        let h2 = raw_hasher.finish();
+
+        let h2 = hasher.hash_one(42u64);
         assert_ne!(h1, h2);
         assert_eq!(h1, mix_hash(h2));
     }

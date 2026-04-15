@@ -58,13 +58,13 @@ fn bench_read_heavy(c: &mut Criterion) {
         let mut rng = Sfc64::new(777);
         (0..ops as usize)
             .map(|i| {
-                let op = (rng.next() % 100) as u8;
+                let op = (rng.next_u64() % 100) as u8;
                 let key = if op < 80 {
                     keys[i % keys.len()] // 80% hit
                 } else if op < 95 {
                     miss_keys[i % miss_keys.len()] // 15% miss
                 } else if op < 98 {
-                    rng.next() // 3% insert new
+                    rng.next_u64() // 3% insert new
                 } else {
                     keys[i % keys.len()] // 2% remove existing
                 };
@@ -99,11 +99,11 @@ fn bench_write_heavy(c: &mut Criterion) {
         let mut rng = Sfc64::new(777);
         (0..ops as usize)
             .map(|i| {
-                let op = (rng.next() % 10) as u8;
+                let op = (rng.next_u64() % 10) as u8;
                 let key = if op < 5 {
                     keys[i % keys.len()] // lookup existing
                 } else {
-                    rng.next() // insert/remove random
+                    rng.next_u64() // insert/remove random
                 };
                 (op, key)
             })
@@ -138,7 +138,7 @@ fn bench_counting(c: &mut Criterion) {
                 let mut map = UnorderedFlatMap::new();
                 let mut rng = Sfc64::new(42);
                 for _ in 0..ops {
-                    let k = rng.next() % distinct;
+                    let k = rng.next_u64() % distinct;
                     *map.entry(k).or_insert(0u64) += 1;
                 }
                 black_box(map.len());
@@ -150,7 +150,7 @@ fn bench_counting(c: &mut Criterion) {
                 let mut map = Splitsies::new();
                 let mut rng = Sfc64::new(42);
                 for _ in 0..ops {
-                    let k = rng.next() % distinct;
+                    let k = rng.next_u64() % distinct;
                     *map.entry(k).or_insert(0u64) += 1;
                 }
                 black_box(map.len());
@@ -162,7 +162,7 @@ fn bench_counting(c: &mut Criterion) {
                 let mut map = hashbrown::HashMap::new();
                 let mut rng = Sfc64::new(42);
                 for _ in 0..ops {
-                    let k = rng.next() % distinct;
+                    let k = rng.next_u64() % distinct;
                     *map.entry(k).or_insert(0u64) += 1;
                 }
                 black_box(map.len());
@@ -255,7 +255,7 @@ fn bench_remove_reinsert(c: &mut Criterion) {
     let op_keys: Vec<u64> = {
         let mut rng = Sfc64::new(777);
         (0..ops as usize)
-            .map(|_| keys[rng.next() as usize % keys.len()])
+            .map(|_| keys[rng.next_u64() as usize % keys.len()])
             .collect()
     };
 
@@ -278,8 +278,8 @@ fn bench_high_load_stress(c: &mut Criterion) {
 
     // Test at 85% load — near max_load, many groups full, overflow common
     let capacity = 107_520;
-    let min_slots = (capacity * 8 + 6) / 7;
-    let min_groups = (min_slots + 14) / 15;
+    let min_slots = (capacity * 8_usize).div_ceil(7);
+    let min_groups = min_slots.div_ceil(15);
     let mut num_groups = 1;
     while num_groups < min_groups {
         num_groups *= 2;

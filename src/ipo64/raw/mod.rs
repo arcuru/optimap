@@ -354,10 +354,10 @@ impl<K, V> RawTable<K, V> {
             let meta = unsafe { self.meta_ptr(gi) };
 
             // Track first tombstone slot
-            if first_tombstone.is_none() {
-                if let Some(si) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit() {
-                    first_tombstone = Some((gi, si));
-                }
+            if first_tombstone.is_none()
+                && let Some(si) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
+            {
+                first_tombstone = Some((gi, si));
             }
 
             // Check for EMPTY slot — this is our termination condition
