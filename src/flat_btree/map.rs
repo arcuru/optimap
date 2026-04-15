@@ -663,37 +663,41 @@ pub struct Iter<'a, K, V> {
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.remaining == 0 {
-                return None;
-            }
-
-            let node = self.tree.arena.node_ptr(self.front_leaf);
-
-            // Determine the effective end for the current front leaf
-            let end = if self.front_leaf == self.back_leaf {
-                self.back_idx
-            } else {
-                unsafe { NodeLayout::<K, V>::header(node).len as usize }
-            };
-
-            if self.front_idx < end {
-                let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, self.front_idx) };
-                let v = unsafe { &*NodeLayout::<K, V>::leaf_val_ptr(node, self.front_idx) };
-                self.front_idx += 1;
-                self.remaining -= 1;
-                return Some((k, v));
-            }
-
-            // Move to next leaf
-            self.front_leaf = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
-            self.front_idx = 0;
+        if self.remaining == 0 {
+            return None;
         }
+
+        let node = self.tree.arena.node_ptr(self.front_leaf);
+        let len = unsafe { NodeLayout::<K, V>::header(node).len as usize };
+
+        if self.front_idx < len {
+            let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, self.front_idx) };
+            let v = unsafe { &*NodeLayout::<K, V>::leaf_val_ptr(node, self.front_idx) };
+            self.front_idx += 1;
+            self.remaining -= 1;
+            return Some((k, v));
+        }
+
+        // Move to next leaf (cold path)
+        self.advance_front()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a, K, V> Iter<'a, K, V> {
+    #[cold]
+    #[inline(never)]
+    fn advance_front(&mut self) -> Option<(&'a K, &'a V)> {
+        let node = self.tree.arena.node_ptr(self.front_leaf);
+        self.front_leaf = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+        self.front_idx = 0;
+        // Recurse into next() — the new leaf has elements (remaining > 0 guarantees this)
+        self.next()
     }
 }
 
