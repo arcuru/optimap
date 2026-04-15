@@ -211,16 +211,13 @@ impl<'a, K: Ord + Clone, V> VacantEntry<'a, K, V> {
     pub fn insert(self, value: V) -> &'a mut V {
         if self.leaf_idx == NO_NODE {
             // Empty tree
-            self.tree.insert_first(self.key.clone(), value);
+            self.tree.insert_first(self.key, value);
             let node = self.tree.arena.node_ptr(self.tree.first_leaf);
             unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, 0) }
         } else {
-            self.tree
-                .insert_at_vacant(self.leaf_idx, self.pos, self.path, self.key.clone(), value);
-            // Find the value we just inserted. After insert (possibly with split),
-            // we need to search for it since the leaf may have split.
-            // The key was just inserted, so search will find it.
-            let (leaf_idx, slot_idx) = self.tree.search(&self.key).expect("just inserted");
+            let (leaf_idx, slot_idx) =
+                self.tree
+                    .insert_at_vacant(self.leaf_idx, self.pos, self.path, self.key, value);
             let node = self.tree.arena.node_ptr(leaf_idx);
             unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx) }
         }

@@ -403,6 +403,7 @@ impl<K: Ord, V> RawBTree<K, V> {
     }
 
     /// Insert a value at a pre-located vacant position.
+    /// Returns (leaf_idx, slot_idx) of the inserted element.
     /// Used by VacantEntry::insert.
     pub(crate) fn insert_at_vacant(
         &mut self,
@@ -411,7 +412,8 @@ impl<K: Ord, V> RawBTree<K, V> {
         path: Vec<(NodeIdx, usize)>,
         key: K,
         value: V,
-    ) where
+    ) -> (NodeIdx, usize)
+    where
         K: Clone,
     {
         let node = self.arena.node_ptr(leaf_idx);
@@ -420,11 +422,19 @@ impl<K: Ord, V> RawBTree<K, V> {
         if len < NodeLayout::<K, V>::LEAF_CAP {
             self.leaf_insert_at(leaf_idx, pos, key, value);
             self.len += 1;
+            (leaf_idx, pos)
         } else {
+            let mid = (NodeLayout::<K, V>::LEAF_CAP + 1) / 2;
             let (promoted_key, new_leaf_idx) =
                 self.leaf_split_and_insert(leaf_idx, pos, key, value);
             self.len += 1;
             self.propagate_split(path, promoted_key, new_leaf_idx);
+            // Determine which leaf the element ended up in
+            if pos < mid {
+                (leaf_idx, pos)
+            } else {
+                (new_leaf_idx, pos - mid)
+            }
         }
     }
 
