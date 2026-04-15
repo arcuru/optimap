@@ -66,6 +66,7 @@
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 
+pub mod flat_btree;
 pub mod gaps;
 mod generic_set;
 pub mod in_place_overflow;
@@ -78,6 +79,7 @@ mod traits;
 
 // ── Map types ───────────────────────────────────────────────────────────────
 
+pub use flat_btree::FlatBTree;
 pub use gaps::Gaps;
 pub use in_place_overflow::InPlaceOverflow;
 pub use ipo64::IPO64;
