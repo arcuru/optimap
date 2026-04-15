@@ -348,6 +348,87 @@ impl<K: Ord, V> RawBTree<K, V> {
 
         (node_idx, pos, path)
     }
+
+    /// Search for a key, returning either the existing location or the
+    /// insertion point with path info for the Entry API.
+    pub(crate) fn entry_search(&self, key: &K) -> EntrySearch {
+        if self.root == NO_NODE {
+            return EntrySearch::EmptyTree;
+        }
+
+        let (leaf_idx, pos, path) = self.search_for_insert(key);
+
+        // Check if key already exists at this position
+        let node = self.arena.node_ptr(leaf_idx);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        let len = header.len as usize;
+
+        if pos < len {
+            let existing_key = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, pos) };
+            if *existing_key == *key {
+                return EntrySearch::Occupied(leaf_idx, pos);
+            }
+        }
+
+        EntrySearch::Vacant(leaf_idx, pos, path)
+    }
+
+    /// Insert a value at a pre-located vacant position.
+    /// Used by VacantEntry::insert.
+    pub(crate) fn insert_at_vacant(
+        &mut self,
+        leaf_idx: NodeIdx,
+        pos: usize,
+        path: Vec<(NodeIdx, usize)>,
+        key: K,
+        value: V,
+    ) where
+        K: Clone,
+    {
+        let node = self.arena.node_ptr(leaf_idx);
+        let len = unsafe { NodeLayout::<K, V>::header(node).len } as usize;
+
+        if len < NodeLayout::<K, V>::LEAF_CAP {
+            self.leaf_insert_at(leaf_idx, pos, key, value);
+            self.len += 1;
+        } else {
+            let (promoted_key, new_leaf_idx) =
+                self.leaf_split_and_insert(leaf_idx, pos, key, value);
+            self.len += 1;
+            self.propagate_split(path, promoted_key, new_leaf_idx);
+        }
+    }
+
+    /// Create the first leaf for an empty tree and insert into it.
+    /// Used by VacantEntry::insert when tree is empty.
+    pub(crate) fn insert_first(&mut self, key: K, value: V) {
+        let leaf_idx = self.arena.alloc_node();
+        let node = self.arena.node_ptr(leaf_idx);
+        unsafe {
+            let header = NodeLayout::<K, V>::header_mut(node);
+            header.len = 1;
+            header.flags = NodeHeader::IS_LEAF;
+            header.parent = NO_NODE;
+            NodeLayout::<K, V>::leaf_key_ptr(node, 0).write(key);
+            NodeLayout::<K, V>::leaf_val_ptr(node, 0).write(value);
+            NodeLayout::<K, V>::leaf_prev_ptr(node).write(NO_NODE);
+            NodeLayout::<K, V>::leaf_next_ptr(node).write(NO_NODE);
+        }
+        self.root = leaf_idx;
+        self.first_leaf = leaf_idx;
+        self.last_leaf = leaf_idx;
+        self.len = 1;
+    }
+}
+
+/// Result of an entry search on the B-tree.
+pub(crate) enum EntrySearch {
+    /// Tree is empty.
+    EmptyTree,
+    /// Key found at (leaf_idx, slot_idx).
+    Occupied(NodeIdx, usize),
+    /// Key not found. Insert at (leaf_idx, pos) with the given path for splits.
+    Vacant(NodeIdx, usize, Vec<(NodeIdx, usize)>),
 }
 
 impl<K: Ord + Clone, V> RawBTree<K, V> {

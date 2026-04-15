@@ -81,6 +81,155 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.tree.insert(key, value)
     }
+
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+        use super::raw::EntrySearch;
+        match self.tree.entry_search(&key) {
+            EntrySearch::Occupied(leaf_idx, slot_idx) => {
+                let node = self.tree.arena.node_ptr(leaf_idx);
+                let value = unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx) };
+                Entry::Occupied(OccupiedEntry { key, value })
+            }
+            EntrySearch::Vacant(leaf_idx, pos, path) => Entry::Vacant(VacantEntry {
+                key,
+                leaf_idx,
+                pos,
+                path,
+                tree: &mut self.tree,
+            }),
+            EntrySearch::EmptyTree => Entry::Vacant(VacantEntry {
+                key,
+                leaf_idx: NO_NODE,
+                pos: 0,
+                path: Vec::new(),
+                tree: &mut self.tree,
+            }),
+        }
+    }
+}
+
+/// A view into a single entry in a FlatBTree, which may be vacant or occupied.
+pub enum Entry<'a, K, V> {
+    /// An occupied entry.
+    Occupied(OccupiedEntry<'a, K, V>),
+    /// A vacant entry.
+    Vacant(VacantEntry<'a, K, V>),
+}
+
+/// A view into an occupied entry in a FlatBTree.
+pub struct OccupiedEntry<'a, K, V> {
+    key: K,
+    value: &'a mut V,
+}
+
+/// A view into a vacant entry in a FlatBTree.
+pub struct VacantEntry<'a, K, V> {
+    key: K,
+    leaf_idx: NodeIdx,
+    pos: usize,
+    path: Vec<(NodeIdx, usize)>,
+    tree: &'a mut RawBTree<K, V>,
+}
+
+impl<'a, K: Ord + Clone, V> Entry<'a, K, V> {
+    /// Ensures a value is in the entry by inserting the default if empty,
+    /// and returns a mutable reference to the value.
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the function
+    /// if empty, and returns a mutable reference to the value.
+    pub fn or_insert_with<F: FnOnce() -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default()),
+        }
+    }
+
+    /// Returns a reference to this entry's key.
+    pub fn key(&self) -> &K {
+        match self {
+            Entry::Occupied(e) => &e.key,
+            Entry::Vacant(e) => &e.key,
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry.
+    pub fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self {
+        match self {
+            Entry::Occupied(mut e) => {
+                f(e.get_mut());
+                Entry::Occupied(e)
+            }
+            Entry::Vacant(e) => Entry::Vacant(e),
+        }
+    }
+}
+
+impl<'a, K: Ord + Clone, V: Default> Entry<'a, K, V> {
+    /// Ensures a value is in the entry by inserting the default value if empty.
+    pub fn or_default(self) -> &'a mut V {
+        self.or_insert(V::default())
+    }
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    /// Gets a reference to the value in the entry.
+    pub fn get(&self) -> &V {
+        self.value
+    }
+
+    /// Gets a mutable reference to the value in the entry.
+    pub fn get_mut(&mut self) -> &mut V {
+        self.value
+    }
+
+    /// Converts the entry into a mutable reference to the value,
+    /// with a lifetime bound to the map.
+    pub fn into_mut(self) -> &'a mut V {
+        self.value
+    }
+
+    /// Sets the value of the entry, returning the old value.
+    pub fn insert(&mut self, value: V) -> V {
+        std::mem::replace(self.value, value)
+    }
+
+    /// Returns a reference to the entry's key.
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+}
+
+impl<'a, K: Ord + Clone, V> VacantEntry<'a, K, V> {
+    /// Sets the value of the entry and returns a mutable reference to it.
+    pub fn insert(self, value: V) -> &'a mut V {
+        if self.leaf_idx == NO_NODE {
+            // Empty tree
+            self.tree.insert_first(self.key.clone(), value);
+            let node = self.tree.arena.node_ptr(self.tree.first_leaf);
+            unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, 0) }
+        } else {
+            self.tree
+                .insert_at_vacant(self.leaf_idx, self.pos, self.path, self.key.clone(), value);
+            // Find the value we just inserted. After insert (possibly with split),
+            // we need to search for it since the leaf may have split.
+            // The key was just inserted, so search will find it.
+            let (leaf_idx, slot_idx) = self.tree.search(&self.key).expect("just inserted");
+            let node = self.tree.arena.node_ptr(leaf_idx);
+            unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx) }
+        }
+    }
+
+    /// Returns a reference to the entry's key.
+    pub fn key(&self) -> &K {
+        &self.key
+    }
 }
 
 impl<K: Ord, V, S> FlatBTree<K, V, S> {
@@ -1127,5 +1276,120 @@ mod tests {
 
         // 10 keys + 10 values = 20 Counted objects total
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 20);
+    }
+
+    #[test]
+    fn entry_or_insert() {
+        let mut map = FlatBTree::new();
+        map.entry(1).or_insert("one");
+        map.entry(1).or_insert("ONE"); // should not replace
+        assert_eq!(map.get(&1), Some(&"one"));
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn entry_or_default() {
+        let mut map: FlatBTree<i32, i32> = FlatBTree::new();
+        *map.entry(1).or_default() += 10;
+        *map.entry(1).or_default() += 20;
+        assert_eq!(map.get(&1), Some(&30));
+    }
+
+    #[test]
+    fn entry_or_insert_with() {
+        let mut map = FlatBTree::new();
+        let val = map.entry(42).or_insert_with(|| "computed".to_string());
+        assert_eq!(val, "computed");
+        // Should not recompute
+        let val = map
+            .entry(42)
+            .or_insert_with(|| panic!("should not be called"));
+        assert_eq!(val, "computed");
+    }
+
+    #[test]
+    fn entry_and_modify() {
+        let mut map = FlatBTree::new();
+        map.insert(1, 10);
+
+        map.entry(1).and_modify(|v| *v += 5).or_insert(0);
+        assert_eq!(map.get(&1), Some(&15));
+
+        map.entry(2).and_modify(|v| *v += 5).or_insert(0);
+        assert_eq!(map.get(&2), Some(&0));
+    }
+
+    #[test]
+    fn entry_occupied_methods() {
+        let mut map = FlatBTree::new();
+        map.insert(1, "hello");
+
+        match map.entry(1) {
+            Entry::Occupied(mut e) => {
+                assert_eq!(e.get(), &"hello");
+                assert_eq!(e.key(), &1);
+                let old = e.insert("world");
+                assert_eq!(old, "hello");
+                assert_eq!(e.get(), &"world");
+            }
+            Entry::Vacant(_) => panic!("expected occupied"),
+        }
+
+        assert_eq!(map.get(&1), Some(&"world"));
+    }
+
+    #[test]
+    fn entry_vacant_key() {
+        let mut map: FlatBTree<i32, i32> = FlatBTree::new();
+        match map.entry(42) {
+            Entry::Vacant(e) => {
+                assert_eq!(e.key(), &42);
+                e.insert(100);
+            }
+            Entry::Occupied(_) => panic!("expected vacant"),
+        }
+        assert_eq!(map.get(&42), Some(&100));
+    }
+
+    #[test]
+    fn entry_counting_pattern() {
+        let mut map = FlatBTree::new();
+        let words = ["the", "cat", "sat", "on", "the", "mat", "the"];
+
+        for word in words {
+            *map.entry(word).or_insert(0) += 1;
+        }
+
+        assert_eq!(map.get("the"), Some(&3));
+        assert_eq!(map.get("cat"), Some(&1));
+        assert_eq!(map.get("on"), Some(&1));
+        assert_eq!(map.len(), 5);
+    }
+
+    #[test]
+    fn entry_with_splits() {
+        // Force many splits via entry API
+        let mut map = FlatBTree::new();
+        for i in (0..500).rev() {
+            *map.entry(i).or_insert(0) += 1;
+        }
+        // Insert same keys again
+        for i in 0..500 {
+            *map.entry(i).or_insert(0) += 1;
+        }
+
+        assert_eq!(map.len(), 500);
+        for i in 0..500 {
+            assert_eq!(map.get(&i), Some(&2), "wrong count for {i}");
+        }
+    }
+
+    #[test]
+    fn entry_empty_tree() {
+        let mut map: FlatBTree<String, Vec<i32>> = FlatBTree::new();
+        map.entry("hello".to_string()).or_default().push(1);
+        map.entry("hello".to_string()).or_default().push(2);
+
+        assert_eq!(map.get("hello"), Some(&vec![1, 2]));
     }
 }
