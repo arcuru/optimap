@@ -1,7 +1,7 @@
+use optimap::{UnorderedFlatMap, UnorderedFlatSet};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
-use optimap::{UnorderedFlatMap, UnorderedFlatSet};
 
 /// Compare our map against std::collections::HashMap for correctness.
 #[test]
@@ -42,7 +42,11 @@ fn map_matches_std_hashmap() {
 
     // Final verification: all keys match
     for (k, v) in &std_map {
-        assert_eq!(ours.get(k), Some(v), "final check: key {k} missing or wrong");
+        assert_eq!(
+            ours.get(k),
+            Some(v),
+            "final check: key {k} missing or wrong"
+        );
     }
 }
 
@@ -66,7 +70,10 @@ fn set_matches_std_hashset() {
             1 => {
                 let ours_removed = ours.remove(&value);
                 let std_removed = std_set.remove(&value);
-                assert_eq!(ours_removed, std_removed, "remove mismatch for value={value}");
+                assert_eq!(
+                    ours_removed, std_removed,
+                    "remove mismatch for value={value}"
+                );
             }
             2 => {
                 let ours_has = ours.contains(&value);
@@ -104,7 +111,10 @@ fn insert_delete_cycles_stress() {
     // Verify integrity: every key we can find has a valid value
     let mut count = 0;
     for (k, v) in map.iter() {
-        assert!(map.contains_key(k), "iterator yielded key not found via get");
+        assert!(
+            map.contains_key(k),
+            "iterator yielded key not found via get"
+        );
         assert_eq!(map.get(k), Some(v));
         count += 1;
     }

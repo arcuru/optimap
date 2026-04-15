@@ -6,12 +6,10 @@
 
 mod bench_helpers;
 
-use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
 use bench_helpers::*;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, IPO64, Gaps};
+use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 macro_rules! all_maps {
     ($helper:ident, $group:expr, $($args:expr),*) => {
@@ -32,7 +30,9 @@ fn bench_grow_from_empty(c: &mut Criterion) {
     for &n in &[1_000, 10_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
         group.throughput(Throughput::Elements(n as u64));
-        if n >= 1_000_000 { group.sample_size(10); }
+        if n >= 1_000_000 {
+            group.sample_size(10);
+        }
 
         all_maps!(bench_grow_for, &mut group, &keys, n);
     }
@@ -47,7 +47,9 @@ fn bench_insert_with_capacity(c: &mut Criterion) {
     for &n in &[1_000, 10_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
         group.throughput(Throughput::Elements(n as u64));
-        if n >= 1_000_000 { group.sample_size(10); }
+        if n >= 1_000_000 {
+            group.sample_size(10);
+        }
 
         all_maps!(bench_with_capacity_for, &mut group, &keys, n);
     }
@@ -61,7 +63,9 @@ fn bench_clone(c: &mut Criterion) {
 
     for &n in &[1_000, 100_000, 1_000_000] {
         let keys = make_random_keys(n, 42);
-        if n >= 1_000_000 { group.sample_size(10); }
+        if n >= 1_000_000 {
+            group.sample_size(10);
+        }
 
         all_maps!(bench_clone_for, &mut group, &keys, n);
     }

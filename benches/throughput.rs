@@ -5,10 +5,10 @@
 
 mod bench_helpers;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use bench_helpers::*;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, IPO64, Gaps};
+use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 
@@ -18,7 +18,9 @@ fn entries_for_load(capacity: usize, load_pct: usize) -> usize {
     let min_slots = (capacity * 8 + 6) / 7;
     let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
     let mut num_groups = 1;
-    while num_groups < min_groups { num_groups *= 2; }
+    while num_groups < min_groups {
+        num_groups *= 2;
+    }
     let total_slots = num_groups * GROUP_SIZE;
     total_slots * load_pct / 100
 }
@@ -27,12 +29,24 @@ const MEDIUM_CAPACITY: usize = 13_440;
 const LARGE_CAPACITY: usize = 107_520;
 const LOAD_PCT: usize = 70;
 
-struct TestSize { name: &'static str, capacity: usize, num_entries: usize }
+struct TestSize {
+    name: &'static str,
+    capacity: usize,
+    num_entries: usize,
+}
 
 fn test_sizes() -> Vec<TestSize> {
     vec![
-        TestSize { name: "medium", capacity: MEDIUM_CAPACITY, num_entries: entries_for_load(MEDIUM_CAPACITY, LOAD_PCT) },
-        TestSize { name: "large", capacity: LARGE_CAPACITY, num_entries: entries_for_load(LARGE_CAPACITY, LOAD_PCT) },
+        TestSize {
+            name: "medium",
+            capacity: MEDIUM_CAPACITY,
+            num_entries: entries_for_load(MEDIUM_CAPACITY, LOAD_PCT),
+        },
+        TestSize {
+            name: "large",
+            capacity: LARGE_CAPACITY,
+            num_entries: entries_for_load(LARGE_CAPACITY, LOAD_PCT),
+        },
     ]
 }
 
@@ -68,7 +82,13 @@ fn bench_lookup_hit(c: &mut Criterion) {
     for sz in test_sizes() {
         let keys = make_random_keys(sz.num_entries, 42);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        all_maps!(bench_lookup_hit_for, &mut group, sz.name, &keys, sz.capacity);
+        all_maps!(
+            bench_lookup_hit_for,
+            &mut group,
+            sz.name,
+            &keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -81,7 +101,14 @@ fn bench_lookup_miss(c: &mut Criterion) {
         let keys = make_random_keys(sz.num_entries, 42);
         let miss_keys = make_miss_keys(sz.num_entries);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        all_maps!(bench_lookup_miss_for, &mut group, sz.name, &keys, &miss_keys, sz.capacity);
+        all_maps!(
+            bench_lookup_miss_for,
+            &mut group,
+            sz.name,
+            &keys,
+            &miss_keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -120,19 +147,43 @@ fn bench_size_scaling(c: &mut Criterion) {
         let miss_keys = make_miss_keys(n);
         let label = n.to_string();
         group.throughput(Throughput::Elements(n as u64));
-        if n >= 2_000_000 { group.sample_size(10); }
+        if n >= 2_000_000 {
+            group.sample_size(10);
+        }
 
         // Hit — all designs
         bench_lookup_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_hit", &label, &keys, n);
         bench_lookup_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_hit", &label, &keys, n);
         bench_lookup_hit_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_hit", &label, &keys, n);
         bench_lookup_hit_for::<IPO64<u64, u64>>(&mut group, "IPO64_hit", &label, &keys, n);
-        bench_lookup_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_hit", &label, &keys, n);
+        bench_lookup_hit_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown_hit",
+            &label,
+            &keys,
+            n,
+        );
 
         // Miss — IPO variants + hashbrown
-        bench_lookup_miss_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_miss", &label, &keys, &miss_keys, n);
-        bench_lookup_miss_for::<IPO64<u64, u64>>(&mut group, "IPO64_miss", &label, &keys, &miss_keys, n);
-        bench_lookup_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_miss", &label, &keys, &miss_keys, n);
+        bench_lookup_miss_for::<InPlaceOverflow<u64, u64>>(
+            &mut group, "IPO_miss", &label, &keys, &miss_keys, n,
+        );
+        bench_lookup_miss_for::<IPO64<u64, u64>>(
+            &mut group,
+            "IPO64_miss",
+            &label,
+            &keys,
+            &miss_keys,
+            n,
+        );
+        bench_lookup_miss_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown_miss",
+            &label,
+            &keys,
+            &miss_keys,
+            n,
+        );
     }
     group.finish();
 }

@@ -159,7 +159,9 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -174,7 +176,9 @@ impl Group {
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
         let mut mask = 0u16;
         for i in 0..GROUP_SIZE {
-            if unsafe { *ptr.add(i) } == value { mask |= 1 << i; }
+            if unsafe { *ptr.add(i) } == value {
+                mask |= 1 << i;
+            }
         }
         BitMask(mask)
     }
@@ -189,7 +193,9 @@ impl Group {
         let mut mask = 0u16;
         for i in 0..GROUP_SIZE {
             let b = unsafe { *ptr.add(i) };
-            if b == EMPTY || b == TOMBSTONE { mask |= 1 << i; }
+            if b == EMPTY || b == TOMBSTONE {
+                mask |= 1 << i;
+            }
         }
         BitMask(mask)
     }
@@ -199,7 +205,9 @@ impl Group {
         let mut mask = 0u16;
         for i in 0..GROUP_SIZE {
             let b = unsafe { *ptr.add(i) };
-            if b >= 2 { mask |= 1 << i; }
+            if b >= 2 {
+                mask |= 1 << i;
+            }
         }
         BitMask(mask)
     }
@@ -221,6 +229,8 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }

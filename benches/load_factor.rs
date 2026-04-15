@@ -9,12 +9,10 @@
 
 mod bench_helpers;
 
-use criterion::{
-    Criterion, Throughput, criterion_group, criterion_main,
-};
 use bench_helpers::*;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, Map};
+use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 
 // ── Load factor helpers ─────────────────────────────────────────────────────
 
@@ -22,7 +20,9 @@ fn compute_load_info(capacity: usize, load_pct: usize) -> (usize, f64) {
     let min_slots = (capacity * 8 + 6) / 7;
     let min_groups = (min_slots + 14) / 15;
     let mut num_groups = 1;
-    while num_groups < min_groups { num_groups *= 2; }
+    while num_groups < min_groups {
+        num_groups *= 2;
+    }
     let total_slots = num_groups * 15;
     let num_entries = total_slots * load_pct / 100;
     let actual_lf = num_entries as f64 / total_slots as f64 * 100.0;
@@ -72,7 +72,9 @@ fn bench_lf_miss_for<M: Map<u64, u64>>(
             b.iter(|| {
                 let mut count = 0u64;
                 for k in miss_keys {
-                    if map.get(k).is_some() { count += 1; }
+                    if map.get(k).is_some() {
+                        count += 1;
+                    }
                 }
                 criterion::black_box(count);
             });
@@ -98,13 +100,17 @@ fn bench_lf_mixed_for<M: Map<u64, u64>>(
                 let mut checksum = 0u64;
                 for &(op, key) in ops {
                     match op {
-                        0..=4 => { map.insert(key, key); }
+                        0..=4 => {
+                            map.insert(key, key);
+                        }
                         5..=7 => {
                             if let Some(&v) = map.get(&key) {
                                 checksum = checksum.wrapping_add(v);
                             }
                         }
-                        _ => { map.remove(&key); }
+                        _ => {
+                            map.remove(&key);
+                        }
                     }
                 }
                 criterion::black_box(checksum);
@@ -126,10 +132,42 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
         let label = format!("{:.0}pct", actual_lf);
 
-        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
     }
     group.finish();
 }
@@ -150,10 +188,42 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ops));
         let label = format!("{:.0}pct", actual_lf);
 
-        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
     }
     group.finish();
 }
@@ -172,7 +242,8 @@ fn bench_mixed_by_load(c: &mut Criterion) {
         let label = format!("{:.0}pct", actual_lf);
 
         // Build keys for this load level to generate op sequence
-        let (_, ours_keys) = build_map_at_load::<UnorderedFlatMap<u64, u64>>(capacity, num_entries, 42);
+        let (_, ours_keys) =
+            build_map_at_load::<UnorderedFlatMap<u64, u64>>(capacity, num_entries, 42);
 
         let mut mix_rng = Sfc64::new(777);
         let miss_keys: Vec<u64> = (0..ops as usize).map(|_| mix_rng.next()).collect();
@@ -192,10 +263,42 @@ fn bench_mixed_by_load(c: &mut Criterion) {
                 .collect()
         };
 
-        bench_lf_mixed_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", &label, capacity, num_entries, &op_keys, 42);
-        bench_lf_mixed_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", &label, capacity, num_entries, &op_keys, 42);
-        bench_lf_mixed_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", &label, capacity, num_entries, &op_keys, 42);
-        bench_lf_mixed_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", &label, capacity, num_entries, &op_keys, 42);
+        bench_lf_mixed_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            &label,
+            capacity,
+            num_entries,
+            &op_keys,
+            42,
+        );
+        bench_lf_mixed_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            &label,
+            capacity,
+            num_entries,
+            &op_keys,
+            42,
+        );
+        bench_lf_mixed_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            &label,
+            capacity,
+            num_entries,
+            &op_keys,
+            42,
+        );
+        bench_lf_mixed_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            &label,
+            capacity,
+            num_entries,
+            &op_keys,
+            42,
+        );
     }
     group.finish();
 }
@@ -218,16 +321,80 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         let miss_keys: Vec<u64> = (0..ops as usize).map(|_| miss_rng.next()).collect();
 
         // Hit
-        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_hit", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_hit", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_hit", &label, capacity, num_entries, ops, 42);
-        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_hit", &label, capacity, num_entries, ops, 42);
+        bench_lf_hit_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM_hit",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies_hit",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO_hit",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
+        bench_lf_hit_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown_hit",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
 
         // Miss
-        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_miss", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_miss", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO_miss", &label, capacity, num_entries, &miss_keys, 42);
-        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_miss", &label, capacity, num_entries, &miss_keys, 42);
+        bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM_miss",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies_miss",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO_miss",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown_miss",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
     }
     group.finish();
 }

@@ -5,9 +5,9 @@ use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::ptr;
 
-use group::{Group, GROUP_SIZE, META_GROUP_BYTES, EMPTY, TOMBSTONE, reduced_hash};
 use crate::raw::bitmask;
 use crate::raw::hash;
+use group::{EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE, reduced_hash};
 
 /// Result of a fused find-or-locate probe.
 pub(crate) enum ProbeResult {
@@ -104,8 +104,8 @@ impl<K, V> RawTable<K, V> {
     }
 
     fn groups_for_capacity(capacity: usize) -> usize {
-        let min_slots = (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1)
-            / MAX_LOAD_FACTOR_NUM;
+        let min_slots =
+            (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
         let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
         min_groups.next_power_of_two()
     }
@@ -160,7 +160,9 @@ impl<K, V> RawTable<K, V> {
             return;
         }
         let layout = Self::combined_layout(self.num_groups());
-        unsafe { alloc::dealloc(self.metadata, layout); }
+        unsafe {
+            alloc::dealloc(self.metadata, layout);
+        }
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
     }
@@ -627,7 +629,9 @@ impl<K, V> Drop for RawTable<K, V> {
                 }
             }
         }
-        unsafe { self.deallocate(); }
+        unsafe {
+            self.deallocate();
+        }
     }
 }
 
@@ -686,9 +690,7 @@ impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
             if self.group > self.table.mask {
                 return None;
             }
-            self.current_mask = unsafe {
-                Group::match_occupied(self.table.meta_ptr(self.group))
-            };
+            self.current_mask = unsafe { Group::match_occupied(self.table.meta_ptr(self.group)) };
         }
     }
 

@@ -111,7 +111,9 @@ impl Group {
     /// `ptr` points directly to the overflow byte for this group.
     #[inline(always)]
     pub unsafe fn set_overflow_bit(ptr: *mut u8, bit: u8) {
-        unsafe { *ptr |= bit; }
+        unsafe {
+            *ptr |= bit;
+        }
     }
 
     /// Get the metadata byte for slot `idx`.
@@ -125,7 +127,9 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -178,7 +182,9 @@ impl Group {
 
     #[inline(always)]
     pub unsafe fn set_overflow_bit(ptr: *mut u8, bit: u8) {
-        unsafe { *ptr |= bit; }
+        unsafe {
+            *ptr |= bit;
+        }
     }
 
     #[inline(always)]
@@ -190,6 +196,8 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }

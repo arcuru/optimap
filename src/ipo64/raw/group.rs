@@ -45,7 +45,11 @@ impl BitMask64 {
 
     #[inline]
     pub fn lowest_set_bit(self) -> Option<usize> {
-        if self.0 == 0 { None } else { Some(self.0.trailing_zeros() as usize) }
+        if self.0 == 0 {
+            None
+        } else {
+            Some(self.0.trailing_zeros() as usize)
+        }
     }
 }
 
@@ -151,7 +155,10 @@ impl Group {
     }
 
     #[target_feature(enable = "avx512bw")]
-    pub(crate) unsafe fn match_byte_and_empty_avx512(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
+    pub(crate) unsafe fn match_byte_and_empty_avx512(
+        ptr: *const u8,
+        value: u8,
+    ) -> (BitMask64, BitMask64) {
         let data = _mm512_load_si512(ptr as *const __m512i);
         let needle = _mm512_set1_epi8(value as i8);
         let zero = _mm512_setzero_si512();
@@ -204,7 +211,10 @@ impl Group {
     }
 
     #[target_feature(enable = "avx2")]
-    pub(crate) unsafe fn match_byte_and_empty_avx2(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
+    pub(crate) unsafe fn match_byte_and_empty_avx2(
+        ptr: *const u8,
+        value: u8,
+    ) -> (BitMask64, BitMask64) {
         let needle = _mm256_set1_epi8(value as i8);
         let zero = _mm256_setzero_si256();
         let d0 = _mm256_load_si256(ptr as *const __m256i);
@@ -316,7 +326,9 @@ impl Group {
 
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
-        unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); }
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
     }
 
     #[inline(always)]
@@ -328,7 +340,9 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -343,7 +357,9 @@ impl Group {
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {
         let mut mask = 0u64;
         for i in 0..GROUP_SIZE {
-            if unsafe { *ptr.add(i) } == value { mask |= 1 << i; }
+            if unsafe { *ptr.add(i) } == value {
+                mask |= 1 << i;
+            }
         }
         BitMask64(mask)
     }
@@ -352,7 +368,9 @@ impl Group {
     pub unsafe fn match_empty(ptr: *const u8) -> BitMask64 {
         let mut mask = 0u64;
         for i in 0..GROUP_SIZE {
-            if unsafe { *ptr.add(i) } == EMPTY { mask |= 1 << i; }
+            if unsafe { *ptr.add(i) } == EMPTY {
+                mask |= 1 << i;
+            }
         }
         BitMask64(mask)
     }
@@ -362,7 +380,9 @@ impl Group {
         let mut mask = 0u64;
         for i in 0..GROUP_SIZE {
             let b = unsafe { *ptr.add(i) };
-            if b <= TOMBSTONE { mask |= 1 << i; }
+            if b <= TOMBSTONE {
+                mask |= 1 << i;
+            }
         }
         BitMask64(mask)
     }
@@ -371,7 +391,9 @@ impl Group {
     pub unsafe fn match_occupied(ptr: *const u8) -> BitMask64 {
         let mut mask = 0u64;
         for i in 0..GROUP_SIZE {
-            if unsafe { *ptr.add(i) } >= 2 { mask |= 1 << i; }
+            if unsafe { *ptr.add(i) } >= 2 {
+                mask |= 1 << i;
+            }
         }
         BitMask64(mask)
     }
@@ -393,6 +415,8 @@ impl Group {
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         debug_assert!(idx < GROUP_SIZE);
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }

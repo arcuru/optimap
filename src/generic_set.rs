@@ -30,12 +30,18 @@ pub struct Set<T: Hash + Eq, M: Map<T, ()> = crate::UnorderedFlatMap<T, ()>> {
 impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
     /// Create an empty set.
     pub fn new() -> Self {
-        Set { map: M::new(), _marker: std::marker::PhantomData }
+        Set {
+            map: M::new(),
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Create a set with at least the specified capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        Set { map: M::with_capacity(capacity), _marker: std::marker::PhantomData }
+        Set {
+            map: M::with_capacity(capacity),
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Adds a value to the set. Returns `true` if newly inserted,
@@ -102,7 +108,9 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
 
     /// Returns `true` if every element in `self` is also in `other`.
     pub fn is_subset<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
-        if self.len() > other.len() { return false; }
+        if self.len() > other.len() {
+            return false;
+        }
         self.iter().all(|v| other.contains(v))
     }
 
@@ -114,8 +122,12 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     /// Returns the union of `self` and `other` as a new set.
     pub fn union(&self, other: &Self) -> Self {
         let mut result = Self::with_capacity(self.len() + other.len());
-        for item in self.iter() { result.insert(item.clone()); }
-        for item in other.iter() { result.insert(item.clone()); }
+        for item in self.iter() {
+            result.insert(item.clone());
+        }
+        for item in other.iter() {
+            result.insert(item.clone());
+        }
         result
     }
 
@@ -129,13 +141,17 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
             return {
                 let mut r = Self::new();
                 for item in self.iter() {
-                    if other.contains(item) { r.insert(item.clone()); }
+                    if other.contains(item) {
+                        r.insert(item.clone());
+                    }
                 }
                 r
             };
         };
         for item in smaller.iter() {
-            if check.contains(item) { result.insert(item.clone()); }
+            if check.contains(item) {
+                result.insert(item.clone());
+            }
         }
         result
     }
@@ -144,7 +160,9 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     pub fn difference<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> Self {
         let mut result = Self::new();
         for item in self.iter() {
-            if !other.contains(item) { result.insert(item.clone()); }
+            if !other.contains(item) {
+                result.insert(item.clone());
+            }
         }
         result
     }
@@ -153,10 +171,14 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     pub fn symmetric_difference(&self, other: &Self) -> Self {
         let mut result = Self::new();
         for item in self.iter() {
-            if !other.contains(item) { result.insert(item.clone()); }
+            if !other.contains(item) {
+                result.insert(item.clone());
+            }
         }
         for item in other.iter() {
-            if !self.contains(item) { result.insert(item.clone()); }
+            if !self.contains(item) {
+                result.insert(item.clone());
+            }
         }
         result
     }
@@ -276,7 +298,9 @@ mod tests {
     #[test]
     fn clear() {
         let mut set = IpoSet::new();
-        for i in 0..100 { set.insert(i); }
+        for i in 0..100 {
+            set.insert(i);
+        }
         set.clear();
         assert!(set.is_empty());
         assert_eq!(set.len(), 0);
@@ -292,16 +316,22 @@ mod tests {
     #[test]
     fn gaps_set() {
         let mut set = GapsSet::new();
-        for i in 0..500 { set.insert(i); }
+        for i in 0..500 {
+            set.insert(i);
+        }
         assert_eq!(set.len(), 500);
-        for i in 0..250 { set.remove(&i); }
+        for i in 0..250 {
+            set.remove(&i);
+        }
         assert_eq!(set.len(), 250);
     }
 
     #[test]
     fn ipo64_set() {
         let mut set = Ipo64Set::new();
-        for i in 0..500 { set.insert(i); }
+        for i in 0..500 {
+            set.insert(i);
+        }
         assert_eq!(set.len(), 500);
         assert!(set.contains(&499));
         assert!(!set.contains(&500));
@@ -341,7 +371,9 @@ mod tests {
         let b: SplitsiesSet<i32> = vec![3, 4, 5].into_iter().collect();
         let u = a.union(&b);
         assert_eq!(u.len(), 5);
-        for i in 1..=5 { assert!(u.contains(&i)); }
+        for i in 1..=5 {
+            assert!(u.contains(&i));
+        }
     }
 
     #[test]

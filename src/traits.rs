@@ -9,7 +9,7 @@
 //! The trait is only needed for generic code over multiple implementations.
 
 use std::borrow::Borrow;
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 
 /// Core hash map interface. Maps keys to values.
 ///
@@ -85,7 +85,10 @@ pub trait Map<K: Hash + Eq, V> {
     fn clear(&mut self);
 
     /// Iterate over key-value pairs in arbitrary order.
-    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a;
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a;
 }
 
 // ── Macro to generate trait impl that delegates to inherent methods ──────────
@@ -97,25 +100,57 @@ macro_rules! impl_map_trait {
             K: ::std::hash::Hash + Eq,
             S: ::std::hash::BuildHasher + Default,
         {
-            fn new() -> Self { Self::with_hasher(S::default()) }
-            fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
-            fn insert(&mut self, key: K, value: V) -> Option<V> { $type::insert(self, key, value) }
+            fn new() -> Self {
+                Self::with_hasher(S::default())
+            }
+            fn with_capacity(capacity: usize) -> Self {
+                Self::with_capacity_and_hasher(capacity, S::default())
+            }
+            fn insert(&mut self, key: K, value: V) -> Option<V> {
+                $type::insert(self, key, value)
+            }
             fn get<Q>(&self, key: &Q) -> Option<&V>
-            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
-            { $type::get(self, key) }
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::get(self, key)
+            }
             fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
-            { $type::get_mut(self, key) }
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::get_mut(self, key)
+            }
             fn remove<Q>(&mut self, key: &Q) -> Option<V>
-            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
-            { $type::remove(self, key) }
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::remove(self, key)
+            }
             fn contains_key<Q>(&self, key: &Q) -> bool
-            where K: ::std::borrow::Borrow<Q>, Q: ::std::hash::Hash + Eq + ?Sized
-            { $type::contains_key(self, key) }
-            fn len(&self) -> usize { $type::len(self) }
-            fn capacity(&self) -> usize { $type::capacity(self) }
-            fn clear(&mut self) { $type::clear(self) }
-            fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::contains_key(self, key)
+            }
+            fn len(&self) -> usize {
+                $type::len(self)
+            }
+            fn capacity(&self) -> usize {
+                $type::capacity(self)
+            }
+            fn clear(&mut self) {
+                $type::clear(self)
+            }
+            fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+            where
+                K: 'a,
+                V: 'a,
+            {
                 $type::iter(self)
             }
         }
@@ -131,25 +166,57 @@ where
     K: Hash + Eq,
     S: BuildHasher + Default,
 {
-    fn new() -> Self { Self::with_hasher(S::default()) }
-    fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
-    fn insert(&mut self, key: K, value: V) -> Option<V> { hashbrown::HashMap::insert(self, key, value) }
+    fn new() -> Self {
+        Self::with_hasher(S::default())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_hasher(capacity, S::default())
+    }
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        hashbrown::HashMap::insert(self, key, value)
+    }
     fn get<Q>(&self, key: &Q) -> Option<&V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { hashbrown::HashMap::get(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::get(self, key)
+    }
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { hashbrown::HashMap::get_mut(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::get_mut(self, key)
+    }
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { hashbrown::HashMap::remove(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::remove(self, key)
+    }
     fn contains_key<Q>(&self, key: &Q) -> bool
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { hashbrown::HashMap::contains_key(self, key) }
-    fn len(&self) -> usize { hashbrown::HashMap::len(self) }
-    fn capacity(&self) -> usize { hashbrown::HashMap::capacity(self) }
-    fn clear(&mut self) { hashbrown::HashMap::clear(self) }
-    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::contains_key(self, key)
+    }
+    fn len(&self) -> usize {
+        hashbrown::HashMap::len(self)
+    }
+    fn capacity(&self) -> usize {
+        hashbrown::HashMap::capacity(self)
+    }
+    fn clear(&mut self) {
+        hashbrown::HashMap::clear(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
         hashbrown::HashMap::iter(self)
     }
 }
@@ -161,25 +228,57 @@ where
     K: Hash + Eq,
     S: BuildHasher + Default,
 {
-    fn new() -> Self { Self::with_hasher(S::default()) }
-    fn with_capacity(capacity: usize) -> Self { Self::with_capacity_and_hasher(capacity, S::default()) }
-    fn insert(&mut self, key: K, value: V) -> Option<V> { std::collections::HashMap::insert(self, key, value) }
+    fn new() -> Self {
+        Self::with_hasher(S::default())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_hasher(capacity, S::default())
+    }
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        std::collections::HashMap::insert(self, key, value)
+    }
     fn get<Q>(&self, key: &Q) -> Option<&V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { std::collections::HashMap::get(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::get(self, key)
+    }
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { std::collections::HashMap::get_mut(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::get_mut(self, key)
+    }
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { std::collections::HashMap::remove(self, key) }
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::remove(self, key)
+    }
     fn contains_key<Q>(&self, key: &Q) -> bool
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized
-    { std::collections::HashMap::contains_key(self, key) }
-    fn len(&self) -> usize { std::collections::HashMap::len(self) }
-    fn capacity(&self) -> usize { std::collections::HashMap::capacity(self) }
-    fn clear(&mut self) { std::collections::HashMap::clear(self) }
-    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)> where K: 'a, V: 'a {
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::contains_key(self, key)
+    }
+    fn len(&self) -> usize {
+        std::collections::HashMap::len(self)
+    }
+    fn capacity(&self) -> usize {
+        std::collections::HashMap::capacity(self)
+    }
+    fn clear(&mut self) {
+        std::collections::HashMap::clear(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
         std::collections::HashMap::iter(self)
     }
 }

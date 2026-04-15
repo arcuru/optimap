@@ -11,7 +11,7 @@ use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 use std::ops::Index;
 
-use super::raw::{RawTable, ProbeResult};
+use super::raw::{ProbeResult, RawTable};
 use crate::raw::hash;
 
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
@@ -120,7 +120,7 @@ where
     /// Fused home-group insert using the 16-slot split-overflow design.
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        use super::raw::group::{Group, reduced_hash, overflow_bit};
+        use super::raw::group::{Group, overflow_bit, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -136,7 +136,9 @@ where
         let gi = self.table.group_index(h);
 
         // Prefetch overflow byte while SIMD match executes
-        unsafe { Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8); }
+        unsafe {
+            Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8);
+        }
 
         let meta = unsafe { self.table.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
@@ -215,7 +217,7 @@ where
 
     /// Fused home-group entry using split-overflow.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
-        use super::raw::group::{Group, reduced_hash, overflow_bit};
+        use super::raw::group::{Group, overflow_bit, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -231,7 +233,9 @@ where
         let gi = self.table.group_index(h);
 
         // Prefetch overflow byte while SIMD match executes
-        unsafe { Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8); }
+        unsafe {
+            Group::prefetch_read(self.table.overflow_ptr(gi) as *const u8);
+        }
 
         let meta = unsafe { self.table.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
@@ -293,33 +297,33 @@ where
                     value: &mut bucket.1,
                 })
             }
-            ProbeResult::InsertSlot(gi, si, full_mask) => {
-                Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: Some((gi, si, full_mask)),
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                })
-            }
-            ProbeResult::NotFound => {
-                Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: None,
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                })
-            }
+            ProbeResult::InsertSlot(gi, si, full_mask) => Entry::Vacant(VacantEntry {
+                key,
+                hash: h,
+                slot: Some((gi, si, full_mask)),
+                table: &mut self.table,
+                hash_builder: &self.hash_builder,
+            }),
+            ProbeResult::NotFound => Entry::Vacant(VacantEntry {
+                key,
+                hash: h,
+                slot: None,
+                table: &mut self.table,
+                hash_builder: &self.hash_builder,
+            }),
         }
     }
 
     pub fn iter(&self) -> Iter<'_, K, V> {
-        Iter { inner: self.table.iter_slots() }
+        Iter {
+            inner: self.table.iter_slots(),
+        }
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
-        IterMut { inner: self.table.iter_slots() }
+        IterMut {
+            inner: self.table.iter_slots(),
+        }
     }
 
     pub fn keys(&self) -> Keys<'_, K, V> {
@@ -331,7 +335,9 @@ where
     }
 
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
-        ValuesMut { inner: self.iter_mut() }
+        ValuesMut {
+            inner: self.iter_mut(),
+        }
     }
 }
 
@@ -371,7 +377,8 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
     }
 
     pub fn or_default(self) -> &'a mut V
-    where V: Default,
+    where
+        V: Default,
     {
         self.or_insert_with(V::default)
     }
@@ -385,16 +392,25 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
 }
 
 impl<'a, K, V> OccupiedEntry<'a, K, V> {
-    pub fn get(&self) -> &V { self.value }
-    pub fn get_mut(&mut self) -> &mut V { self.value }
-    pub fn insert(&mut self, value: V) -> V { std::mem::replace(self.value, value) }
-    pub fn into_mut(self) -> &'a mut V { self.value }
+    pub fn get(&self) -> &V {
+        self.value
+    }
+    pub fn get_mut(&mut self) -> &mut V {
+        self.value
+    }
+    pub fn insert(&mut self, value: V) -> V {
+        std::mem::replace(self.value, value)
+    }
+    pub fn into_mut(self) -> &'a mut V {
+        self.value
+    }
 }
 
 impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
     pub fn insert(self, value: V) -> &'a mut V {
         if let Some((gi, si, full_mask)) = self.slot {
-            self.table.insert_at(self.hash, gi, si, self.key, value, full_mask);
+            self.table
+                .insert_at(self.hash, gi, si, self.key, value, full_mask);
             let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
             &mut bucket.1
         } else {
@@ -412,7 +428,9 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
         }
     }
 
-    pub fn key(&self) -> &K { &self.key }
+    pub fn key(&self) -> &K {
+        &self.key
+    }
 }
 
 // ── Iterators ───────────────────────────────────────────────────────────────
@@ -428,7 +446,9 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
         let bucket = unsafe { &*self.inner.table.bucket_ptr(gi, si) };
         Some((&bucket.0, &bucket.1))
     }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 impl<K, V> FusedIterator for Iter<'_, K, V> {}
 
@@ -443,7 +463,9 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
         let bucket = unsafe { &mut *self.inner.table.bucket_ptr(gi, si) };
         Some((&bucket.0, &mut bucket.1))
     }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 impl<K, V> FusedIterator for IterMut<'_, K, V> {}
 
@@ -456,7 +478,7 @@ pub struct IntoIter<K, V> {
 impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
     fn next(&mut self) -> Option<Self::Item> {
-        use super::raw::group::{Group, META_GROUP_BYTES, EMPTY};
+        use super::raw::group::{EMPTY, Group, META_GROUP_BYTES};
         loop {
             if let Some(si) = self.current_mask.next() {
                 let gi = self.group;
@@ -474,9 +496,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
                 return None;
             }
             self.current_mask = unsafe {
-                Group::match_non_empty(
-                    self.table.metadata.add(self.group * META_GROUP_BYTES)
-                )
+                Group::match_non_empty(self.table.metadata.add(self.group * META_GROUP_BYTES))
             };
         }
     }
@@ -487,34 +507,54 @@ impl<K, V> Iterator for IntoIter<K, V> {
 impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
 impl<K, V> FusedIterator for IntoIter<K, V> {}
 
-pub struct Keys<'a, K, V> { inner: Iter<'a, K, V> }
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
 impl<'a, K, V> Iterator for Keys<'a, K, V> {
     type Item = &'a K;
-    fn next(&mut self) -> Option<Self::Item> { self.inner.next().map(|(k, _)| k) }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(k, _)| k)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 impl<K, V> FusedIterator for Keys<'_, K, V> {}
 
-pub struct Values<'a, K, V> { inner: Iter<'a, K, V> }
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
 impl<'a, K, V> Iterator for Values<'a, K, V> {
     type Item = &'a V;
-    fn next(&mut self) -> Option<Self::Item> { self.inner.next().map(|(_, v)| v) }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(_, v)| v)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 impl<K, V> FusedIterator for Values<'_, K, V> {}
 
-pub struct ValuesMut<'a, K, V> { inner: IterMut<'a, K, V> }
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
     type Item = &'a mut V;
-    fn next(&mut self) -> Option<Self::Item> { self.inner.next().map(|(_, v)| v) }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.inner.size_hint() }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(_, v)| v)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
 }
 impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
 impl<K, V> Default for Splitsies<K, V, DefaultHashBuilder> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K, V, S> IntoIterator for Splitsies<K, V, S> {
@@ -530,47 +570,71 @@ impl<K, V, S> IntoIterator for Splitsies<K, V, S> {
         } else {
             unsafe { Group::match_non_empty(table.metadata) }
         };
-        IntoIter { table, group: 0, current_mask: mask }
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
     }
 }
 
 impl<'a, K, V, S> IntoIterator for &'a Splitsies<K, V, S>
-where K: Hash + Eq, S: BuildHasher,
+where
+    K: Hash + Eq,
+    S: BuildHasher,
 {
     type Item = (&'a K, &'a V);
     type IntoIter = Iter<'a, K, V>;
-    fn into_iter(self) -> Iter<'a, K, V> { self.iter() }
+    fn into_iter(self) -> Iter<'a, K, V> {
+        self.iter()
+    }
 }
 
 impl<K, V, S> FromIterator<(K, V)> for Splitsies<K, V, S>
-where K: Hash + Eq, S: BuildHasher + Default,
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
         let mut map = Self::with_capacity_and_hasher(lower, S::default());
-        for (k, v) in iter { map.insert(k, v); }
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
         map
     }
 }
 
 impl<K, V, S> Extend<(K, V)> for Splitsies<K, V, S>
-where K: Hash + Eq, S: BuildHasher,
+where
+    K: Hash + Eq,
+    S: BuildHasher,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
-        for (k, v) in iter { self.insert(k, v); }
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
     }
 }
 
 impl<K, V, S, Q> Index<&Q> for Splitsies<K, V, S>
-where K: Hash + Eq + Borrow<Q>, Q: Hash + Eq + ?Sized, S: BuildHasher,
+where
+    K: Hash + Eq + Borrow<Q>,
+    Q: Hash + Eq + ?Sized,
+    S: BuildHasher,
 {
     type Output = V;
-    fn index(&self, key: &Q) -> &V { self.get(key).expect("no entry found for key") }
+    fn index(&self, key: &Q) -> &V {
+        self.get(key).expect("no entry found for key")
+    }
 }
 
 impl<K, V, S> fmt::Debug for Splitsies<K, V, S>
-where K: Hash + Eq + fmt::Debug, V: fmt::Debug, S: BuildHasher,
+where
+    K: Hash + Eq + fmt::Debug,
+    V: fmt::Debug,
+    S: BuildHasher,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.iter()).finish()
@@ -578,7 +642,10 @@ where K: Hash + Eq + fmt::Debug, V: fmt::Debug, S: BuildHasher,
 }
 
 impl<K, V, S> Clone for Splitsies<K, V, S>
-where K: Clone, V: Clone, S: Clone,
+where
+    K: Clone,
+    V: Clone,
+    S: Clone,
 {
     fn clone(&self) -> Self {
         Splitsies {
@@ -589,17 +656,26 @@ where K: Clone, V: Clone, S: Clone,
 }
 
 impl<K, V, S> PartialEq for Splitsies<K, V, S>
-where K: Hash + Eq, V: PartialEq, S: BuildHasher,
+where
+    K: Hash + Eq,
+    V: PartialEq,
+    S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() { return false; }
+        if self.len() != other.len() {
+            return false;
+        }
         self.iter().all(|(k, v)| other.get(k) == Some(v))
     }
 }
 
 impl<K, V, S> Eq for Splitsies<K, V, S>
-where K: Hash + Eq, V: Eq, S: BuildHasher,
-{}
+where
+    K: Hash + Eq,
+    V: Eq,
+    S: BuildHasher,
+{
+}
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -661,8 +737,7 @@ mod tests {
 
     #[test]
     fn from_iterator() {
-        let map: Splitsies<i32, &str> =
-            vec![(1, "a"), (2, "b"), (3, "c")].into_iter().collect();
+        let map: Splitsies<i32, &str> = vec![(1, "a"), (2, "b"), (3, "c")].into_iter().collect();
         assert_eq!(map.len(), 3);
         assert_eq!(map.get(&2), Some(&"b"));
     }
@@ -670,7 +745,9 @@ mod tests {
     #[test]
     fn into_iter() {
         let mut map = Splitsies::new();
-        for i in 0..10 { map.insert(i, i * 10); }
+        for i in 0..10 {
+            map.insert(i, i * 10);
+        }
         let mut pairs: Vec<(i32, i32)> = map.into_iter().collect();
         pairs.sort();
         assert_eq!(pairs.len(), 10);
@@ -706,7 +783,5 @@ mod tests {
         }
     }
 }
-
-
 
 crate::traits::impl_map_trait!(Splitsies);

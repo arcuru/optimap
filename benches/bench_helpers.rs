@@ -3,19 +3,29 @@
 //! Each helper takes a map type via generics and runs a standard benchmark.
 //! Adding a new design = one line per benchmark function.
 
-use criterion::{BenchmarkId, BenchmarkGroup, black_box, measurement::WallTime};
+use criterion::{BenchmarkGroup, BenchmarkId, black_box, measurement::WallTime};
 use optimap::Map;
 
 // ── Fast deterministic RNG (shared across all benchmark files) ──────────────
 
 pub struct Sfc64 {
-    a: u64, b: u64, c: u64, counter: u64,
+    a: u64,
+    b: u64,
+    c: u64,
+    counter: u64,
 }
 
 impl Sfc64 {
     pub fn new(seed: u64) -> Self {
-        let mut rng = Sfc64 { a: seed, b: seed, c: seed, counter: 1 };
-        for _ in 0..12 { rng.next(); }
+        let mut rng = Sfc64 {
+            a: seed,
+            b: seed,
+            c: seed,
+            counter: 1,
+        };
+        for _ in 0..12 {
+            rng.next();
+        }
         rng
     }
     #[inline(always)]
@@ -46,7 +56,9 @@ pub fn entries_for_load(capacity: usize, load_pct: usize) -> usize {
     let min_slots = (capacity * 8 + 6) / 7;
     let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
     let mut num_groups = 1;
-    while num_groups < min_groups { num_groups *= 2; }
+    while num_groups < min_groups {
+        num_groups *= 2;
+    }
     let total_slots = num_groups * GROUP_SIZE;
     total_slots * load_pct / 100
 }
@@ -62,21 +74,19 @@ pub fn bench_insert_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(
-        BenchmarkId::new(name, label),
-        keys,
-        |b, keys| {
-            b.iter(|| {
-                map.clear();
-                for (i, &k) in keys.iter().enumerate() {
-                    map.insert(k, i as u64);
-                }
-                black_box(map.len());
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new(name, label), keys, |b, keys| {
+        b.iter(|| {
+            map.clear();
+            for (i, &k) in keys.iter().enumerate() {
+                map.insert(k, i as u64);
+            }
+            black_box(map.len());
+        });
+    });
 }
 
 /// Benchmark lookup hit on a pre-built map.
@@ -88,21 +98,19 @@ pub fn bench_lookup_hit_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(
-        BenchmarkId::new(name, label),
-        keys,
-        |b, keys| {
-            b.iter(|| {
-                let mut sum = 0u64;
-                for &k in keys {
-                    sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0));
-                }
-                black_box(sum);
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new(name, label), keys, |b, keys| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for &k in keys {
+                sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0));
+            }
+            black_box(sum);
+        });
+    });
 }
 
 /// Benchmark lookup miss on a pre-built map.
@@ -115,21 +123,21 @@ pub fn bench_lookup_miss_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(
-        BenchmarkId::new(name, label),
-        miss_keys,
-        |b, miss_keys| {
-            b.iter(|| {
-                let mut count = 0u64;
-                for &k in miss_keys {
-                    if map.get(&k).is_some() { count += 1; }
+    group.bench_with_input(BenchmarkId::new(name, label), miss_keys, |b, miss_keys| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for &k in miss_keys {
+                if map.get(&k).is_some() {
+                    count += 1;
                 }
-                black_box(count);
-            });
-        },
-    );
+            }
+            black_box(count);
+        });
+    });
 }
 
 /// Benchmark remove: fill then remove all keys.
@@ -141,21 +149,21 @@ pub fn bench_remove_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(
-        BenchmarkId::new(name, label),
-        keys,
-        |b, keys| {
-            b.iter(|| {
-                map.clear();
-                for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
-                for &k in keys {
-                    black_box(map.remove(&k));
-                }
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new(name, label), keys, |b, keys| {
+        b.iter(|| {
+            map.clear();
+            for (i, &k) in keys.iter().enumerate() {
+                map.insert(k, i as u64);
+            }
+            for &k in keys {
+                black_box(map.remove(&k));
+            }
+        });
+    });
 }
 
 /// Benchmark grow from empty (no pre-allocation).
@@ -202,7 +210,9 @@ pub fn bench_clone_for<M: Map<u64, u64> + Clone>(
     n: usize,
 ) {
     let mut map = M::with_capacity(n);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
     group.bench_with_input(BenchmarkId::new(name, n), &(), |b, _| {
         b.iter(|| black_box(map.clone()));
     });
@@ -235,19 +245,15 @@ pub fn bench_load_hit_for<M: Map<u64, u64>>(
     seed: u64,
 ) {
     let (map, keys) = build_map_at_load::<M>(capacity, num_entries, seed);
-    group.bench_with_input(
-        BenchmarkId::new(name, num_entries),
-        &keys,
-        |b, keys| {
-            b.iter(|| {
-                let mut sum = 0u64;
-                for i in 0..ops as usize {
-                    sum = sum.wrapping_add(*map.get(&keys[i % keys.len()]).unwrap_or(&0));
-                }
-                black_box(sum);
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new(name, num_entries), &keys, |b, keys| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for i in 0..ops as usize {
+                sum = sum.wrapping_add(*map.get(&keys[i % keys.len()]).unwrap_or(&0));
+            }
+            black_box(sum);
+        });
+    });
 }
 
 /// Benchmark lookup miss at a specific load level.
@@ -267,7 +273,9 @@ pub fn bench_load_miss_for<M: Map<u64, u64>>(
             b.iter(|| {
                 let mut count = 0u64;
                 for k in miss_keys {
-                    if map.get(k).is_some() { count += 1; }
+                    if map.get(k).is_some() {
+                        count += 1;
+                    }
                 }
                 black_box(count);
             });
@@ -285,27 +293,27 @@ pub fn bench_load_mixed_for<M: Map<u64, u64>>(
     seed: u64,
 ) {
     let (mut map, _) = build_map_at_load::<M>(capacity, num_entries, seed);
-    group.bench_with_input(
-        BenchmarkId::new(name, num_entries),
-        op_keys,
-        |b, ops| {
-            b.iter(|| {
-                let mut checksum = 0u64;
-                for &(op, key) in ops {
-                    match op {
-                        0..=4 => { map.insert(key, key); }
-                        5..=7 => {
-                            if let Some(&v) = map.get(&key) {
-                                checksum = checksum.wrapping_add(v);
-                            }
+    group.bench_with_input(BenchmarkId::new(name, num_entries), op_keys, |b, ops| {
+        b.iter(|| {
+            let mut checksum = 0u64;
+            for &(op, key) in ops {
+                match op {
+                    0..=4 => {
+                        map.insert(key, key);
+                    }
+                    5..=7 => {
+                        if let Some(&v) = map.get(&key) {
+                            checksum = checksum.wrapping_add(v);
                         }
-                        _ => { map.remove(&key); }
+                    }
+                    _ => {
+                        map.remove(&key);
                     }
                 }
-                black_box(checksum);
-            });
-        },
-    );
+            }
+            black_box(checksum);
+        });
+    });
 }
 
 /// Benchmark post-delete lookup: build, remove half, measure lookup of all keys.
@@ -318,8 +326,12 @@ pub fn bench_post_delete_for<M: Map<u64, u64>>(
 ) {
     let half = keys.len() / 2;
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
-    for &k in &keys[..half] { map.remove(&k); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
+    for &k in &keys[..half] {
+        map.remove(&k);
+    }
 
     group.bench_with_input(BenchmarkId::new(name, label), keys, |b, keys| {
         b.iter(|| {
@@ -344,13 +356,17 @@ pub fn bench_remove_reinsert_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(BenchmarkId::new(name, label), op_keys, |b, op_keys| {
         b.iter(|| {
             let mut checksum = 0u64;
             for &k in op_keys {
-                if let Some(v) = map.remove(&k) { checksum = checksum.wrapping_add(v); }
+                if let Some(v) = map.remove(&k) {
+                    checksum = checksum.wrapping_add(v);
+                }
                 map.insert(k, checksum);
             }
             black_box(checksum);
@@ -367,7 +383,9 @@ pub fn bench_miss_ratio_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(
         BenchmarkId::new(name, keys.len()),
@@ -422,7 +440,9 @@ pub fn bench_mixed_workload_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(BenchmarkId::new(name, label), op_seq, |b, ops| {
         b.iter(|| {
@@ -434,8 +454,12 @@ pub fn bench_mixed_workload_for<M: Map<u64, u64>>(
                             checksum = checksum.wrapping_add(v);
                         }
                     }
-                    95..=97 => { map.insert(key, key); }
-                    _ => { map.remove(&key); }
+                    95..=97 => {
+                        map.insert(key, key);
+                    }
+                    _ => {
+                        map.remove(&key);
+                    }
                 }
             }
             black_box(checksum);
@@ -453,7 +477,9 @@ pub fn bench_write_heavy_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(BenchmarkId::new(name, label), op_seq, |b, ops| {
         b.iter(|| {
@@ -465,8 +491,12 @@ pub fn bench_write_heavy_for<M: Map<u64, u64>>(
                             checksum = checksum.wrapping_add(v);
                         }
                     }
-                    5..=7 => { map.insert(key, key); }
-                    _ => { map.remove(&key); }
+                    5..=7 => {
+                        map.insert(key, key);
+                    }
+                    _ => {
+                        map.remove(&key);
+                    }
                 }
             }
             black_box(checksum);
@@ -483,7 +513,9 @@ pub fn bench_high_load_hit_for<M: Map<u64, u64>>(
     ops: u64,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(BenchmarkId::new(name, keys.len()), keys, |b, keys| {
         b.iter(|| {
@@ -506,15 +538,25 @@ pub fn bench_high_load_miss_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(BenchmarkId::new(name, num_entries), miss_keys, |b, mkeys| {
-        b.iter(|| {
-            let mut count = 0u64;
-            for &k in mkeys { if map.get(&k).is_some() { count += 1; } }
-            black_box(count);
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new(name, num_entries),
+        miss_keys,
+        |b, mkeys| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in mkeys {
+                    if map.get(&k).is_some() {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        },
+    );
 }
 
 /// Benchmark iteration over a pre-built map.
@@ -526,19 +568,17 @@ pub fn bench_iteration_for<M: Map<u64, u64>>(
     capacity: usize,
 ) {
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
-    group.bench_with_input(
-        BenchmarkId::new(name, label),
-        &(),
-        |b, _| {
-            b.iter(|| {
-                let mut sum = 0u64;
-                for (_, &v) in map.iter() {
-                    sum = sum.wrapping_add(v);
-                }
-                black_box(sum);
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new(name, label), &(), |b, _| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for (_, &v) in map.iter() {
+                sum = sum.wrapping_add(v);
+            }
+            black_box(sum);
+        });
+    });
 }

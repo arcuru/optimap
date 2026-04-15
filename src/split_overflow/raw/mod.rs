@@ -5,9 +5,9 @@ use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::ptr;
 
-use group::{Group, GROUP_SIZE, META_GROUP_BYTES, EMPTY, reduced_hash, overflow_bit};
 use crate::raw::bitmask;
 use crate::raw::hash;
+use group::{EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, overflow_bit, reduced_hash};
 
 /// Result of a fused find-or-locate probe.
 pub(crate) enum ProbeResult {
@@ -108,8 +108,8 @@ impl<K, V> RawTable<K, V> {
     }
 
     fn groups_for_capacity(capacity: usize) -> usize {
-        let min_slots = (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1)
-            / MAX_LOAD_FACTOR_NUM;
+        let min_slots =
+            (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
         let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
         min_groups.next_power_of_two()
     }
@@ -173,7 +173,9 @@ impl<K, V> RawTable<K, V> {
             return;
         }
         let layout = Self::combined_layout(self.num_groups());
-        unsafe { alloc::dealloc(self.metadata, layout); }
+        unsafe {
+            alloc::dealloc(self.metadata, layout);
+        }
         self.metadata = ptr::null_mut();
         self.buckets = ptr::null_mut();
     }
@@ -249,7 +251,9 @@ impl<K, V> RawTable<K, V> {
         let mut probe = 0usize;
 
         // Prefetch overflow byte for home group — data arrives during SIMD match
-        unsafe { Group::prefetch_read(self.overflow_ptr(gi) as *const u8); }
+        unsafe {
+            Group::prefetch_read(self.overflow_ptr(gi) as *const u8);
+        }
 
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
@@ -324,7 +328,9 @@ impl<K, V> RawTable<K, V> {
 
             // Group full — compute overflow bit lazily (only needed when group is full)
             let ofw_bit = overflow_bit(h);
-            unsafe { Group::set_overflow_bit(self.overflow_ptr(gi), ofw_bit); }
+            unsafe {
+                Group::set_overflow_bit(self.overflow_ptr(gi), ofw_bit);
+            }
 
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.mask;
@@ -458,7 +464,9 @@ impl<K, V> RawTable<K, V> {
             let mut mask = full_mask;
             while mask != 0 {
                 if mask & 1 != 0 {
-                    unsafe { Group::set_overflow_bit(self.overflow_ptr(set_gi), ofw_bit); }
+                    unsafe {
+                        Group::set_overflow_bit(self.overflow_ptr(set_gi), ofw_bit);
+                    }
                 }
                 mask >>= 1;
                 set_probe += 1;
@@ -539,7 +547,11 @@ impl<K, V> RawTable<K, V> {
         }
 
         if self.len >= self.max_load {
-            let new_groups = if !self.is_allocated() { 1 } else { self.num_groups() * 2 };
+            let new_groups = if !self.is_allocated() {
+                1
+            } else {
+                self.num_groups() * 2
+            };
             self.rehash_with(new_groups, hash_builder);
         }
 
@@ -646,7 +658,9 @@ impl<K, V> Drop for RawTable<K, V> {
                 }
             }
         }
-        unsafe { self.deallocate(); }
+        unsafe {
+            self.deallocate();
+        }
     }
 }
 
@@ -705,9 +719,7 @@ impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
             if self.group > self.table.mask {
                 return None;
             }
-            self.current_mask = unsafe {
-                Group::match_non_empty(self.table.meta_ptr(self.group))
-            };
+            self.current_mask = unsafe { Group::match_non_empty(self.table.meta_ptr(self.group)) };
         }
     }
 

@@ -13,13 +13,13 @@
 
 mod bench_helpers;
 
-use criterion::{
-    BenchmarkId, BenchmarkGroup, Criterion, Throughput, black_box, criterion_group,
-    criterion_main, measurement::WallTime,
-};
 use bench_helpers::*;
+use criterion::{
+    BenchmarkGroup, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
+    measurement::WallTime,
+};
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow, Map};
+use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 
@@ -50,7 +50,9 @@ fn bench_lookup_hit_dist_for<M: Map<u64, u64>>(
 ) {
     let n = keys.len();
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(
         BenchmarkId::new(format!("{name}_{dist_name}"), n),
@@ -58,7 +60,9 @@ fn bench_lookup_hit_dist_for<M: Map<u64, u64>>(
         |b, keys| {
             b.iter(|| {
                 let mut sum = 0u64;
-                for &k in keys { sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0)); }
+                for &k in keys {
+                    sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0));
+                }
                 black_box(sum);
             });
         },
@@ -75,7 +79,9 @@ fn bench_lookup_miss_dist_for<M: Map<u64, u64>>(
 ) {
     let n = insert_keys.len();
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in insert_keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in insert_keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(
         BenchmarkId::new(format!("{name}_{dist_name}"), n),
@@ -83,7 +89,11 @@ fn bench_lookup_miss_dist_for<M: Map<u64, u64>>(
         |b, miss_keys| {
             b.iter(|| {
                 let mut count = 0u64;
-                for &k in miss_keys { if map.get(&k).is_some() { count += 1; } }
+                for &k in miss_keys {
+                    if map.get(&k).is_some() {
+                        count += 1;
+                    }
+                }
                 black_box(count);
             });
         },
@@ -99,7 +109,9 @@ fn bench_insert_dist_for<M: Map<u64, u64>>(
 ) {
     let n = keys.len();
     let mut map = M::with_capacity(capacity);
-    for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+    for (i, &k) in keys.iter().enumerate() {
+        map.insert(k, i as u64);
+    }
 
     group.bench_with_input(
         BenchmarkId::new(format!("{name}_{dist_name}"), n),
@@ -107,7 +119,9 @@ fn bench_insert_dist_for<M: Map<u64, u64>>(
         |b, keys| {
             b.iter(|| {
                 map.clear();
-                for (i, &k) in keys.iter().enumerate() { map.insert(k, i as u64); }
+                for (i, &k) in keys.iter().enumerate() {
+                    map.insert(k, i as u64);
+                }
                 black_box(map.len());
             });
         },
@@ -128,10 +142,34 @@ fn bench_lookup_hit_by_distribution(c: &mut Criterion) {
     ];
 
     for (dist_name, keys) in &distributions {
-        bench_lookup_hit_dist_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", dist_name, keys, LARGE_CAPACITY);
-        bench_lookup_hit_dist_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", dist_name, keys, LARGE_CAPACITY);
-        bench_lookup_hit_dist_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", dist_name, keys, LARGE_CAPACITY);
-        bench_lookup_hit_dist_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", dist_name, keys, LARGE_CAPACITY);
+        bench_lookup_hit_dist_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_hit_dist_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_hit_dist_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_hit_dist_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -158,15 +196,45 @@ fn bench_lookup_miss_by_distribution(c: &mut Criterion) {
         (
             "byteswapped",
             make_byteswapped_keys(n),
-            (n as u64..n as u64 + num_ops as u64).map(|i| i.swap_bytes()).collect(),
+            (n as u64..n as u64 + num_ops as u64)
+                .map(|i| i.swap_bytes())
+                .collect(),
         ),
     ];
 
     for (dist_name, insert_keys, miss_keys) in &distributions {
-        bench_lookup_miss_dist_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", dist_name, insert_keys, miss_keys, LARGE_CAPACITY);
-        bench_lookup_miss_dist_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", dist_name, insert_keys, miss_keys, LARGE_CAPACITY);
-        bench_lookup_miss_dist_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", dist_name, insert_keys, miss_keys, LARGE_CAPACITY);
-        bench_lookup_miss_dist_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", dist_name, insert_keys, miss_keys, LARGE_CAPACITY);
+        bench_lookup_miss_dist_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            dist_name,
+            insert_keys,
+            miss_keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_miss_dist_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            dist_name,
+            insert_keys,
+            miss_keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_miss_dist_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            dist_name,
+            insert_keys,
+            miss_keys,
+            LARGE_CAPACITY,
+        );
+        bench_lookup_miss_dist_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            dist_name,
+            insert_keys,
+            miss_keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -185,10 +253,34 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
     ];
 
     for (dist_name, keys) in &distributions {
-        bench_insert_dist_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM", dist_name, keys, LARGE_CAPACITY);
-        bench_insert_dist_for::<Splitsies<u64, u64>>(&mut group, "Splitsies", dist_name, keys, LARGE_CAPACITY);
-        bench_insert_dist_for::<InPlaceOverflow<u64, u64>>(&mut group, "IPO", dist_name, keys, LARGE_CAPACITY);
-        bench_insert_dist_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown", dist_name, keys, LARGE_CAPACITY);
+        bench_insert_dist_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            "UFM",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_insert_dist_for::<Splitsies<u64, u64>>(
+            &mut group,
+            "Splitsies",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_insert_dist_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            "IPO",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_insert_dist_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            "hashbrown",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -214,8 +306,7 @@ fn bench_string_key_sizes(c: &mut Criterion) {
 
         let mut ours: UnorderedFlatMap<String, u64> =
             UnorderedFlatMap::with_capacity(MEDIUM_CAPACITY);
-        let mut split: Splitsies<String, u64> =
-            Splitsies::with_capacity(MEDIUM_CAPACITY);
+        let mut split: Splitsies<String, u64> = Splitsies::with_capacity(MEDIUM_CAPACITY);
         let mut hb: hashbrown::HashMap<String, u64> =
             hashbrown::HashMap::with_capacity(MEDIUM_CAPACITY);
         for (i, k) in keys.iter().enumerate() {
@@ -276,17 +367,21 @@ macro_rules! bench_value_size {
         let keys = $keys;
         let val: $val_type = $val;
 
-        let mut ours: UnorderedFlatMap<u64, $val_type> =
-            UnorderedFlatMap::with_capacity($capacity);
-        for &k in &keys { ours.insert(k, val); }
+        let mut ours: UnorderedFlatMap<u64, $val_type> = UnorderedFlatMap::with_capacity($capacity);
+        for &k in &keys {
+            ours.insert(k, val);
+        }
 
-        let mut split: Splitsies<u64, $val_type> =
-            Splitsies::with_capacity($capacity);
-        for &k in &keys { split.insert(k, val); }
+        let mut split: Splitsies<u64, $val_type> = Splitsies::with_capacity($capacity);
+        for &k in &keys {
+            split.insert(k, val);
+        }
 
         let mut hb: hashbrown::HashMap<u64, $val_type> =
             hashbrown::HashMap::with_capacity($capacity);
-        for &k in &keys { hb.insert(k, val); }
+        for &k in &keys {
+            hb.insert(k, val);
+        }
 
         // Insert (clear + refill)
         $group.bench_with_input(
@@ -295,7 +390,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     ours.clear();
-                    for &k in keys.iter() { ours.insert(k, val); }
+                    for &k in keys.iter() {
+                        ours.insert(k, val);
+                    }
                     black_box(ours.len());
                 });
             },
@@ -307,7 +404,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     split.clear();
-                    for &k in keys.iter() { split.insert(k, val); }
+                    for &k in keys.iter() {
+                        split.insert(k, val);
+                    }
                     black_box(split.len());
                 });
             },
@@ -319,7 +418,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     hb.clear();
-                    for &k in keys.iter() { hb.insert(k, val); }
+                    for &k in keys.iter() {
+                        hb.insert(k, val);
+                    }
                     black_box(hb.len());
                 });
             },
@@ -332,7 +433,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     let mut sum = 0u64;
-                    for &k in keys { sum = sum.wrapping_add(ours.get(&k).map(|v| v[0] as u64).unwrap_or(0)); }
+                    for &k in keys {
+                        sum = sum.wrapping_add(ours.get(&k).map(|v| v[0] as u64).unwrap_or(0));
+                    }
                     black_box(sum);
                 });
             },
@@ -344,7 +447,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     let mut sum = 0u64;
-                    for &k in keys { sum = sum.wrapping_add(split.get(&k).map(|v| v[0] as u64).unwrap_or(0)); }
+                    for &k in keys {
+                        sum = sum.wrapping_add(split.get(&k).map(|v| v[0] as u64).unwrap_or(0));
+                    }
                     black_box(sum);
                 });
             },
@@ -356,7 +461,9 @@ macro_rules! bench_value_size {
             |b, keys| {
                 b.iter(|| {
                     let mut sum = 0u64;
-                    for &k in keys { sum = sum.wrapping_add(hb.get(&k).map(|v| v[0] as u64).unwrap_or(0)); }
+                    for &k in keys {
+                        sum = sum.wrapping_add(hb.get(&k).map(|v| v[0] as u64).unwrap_or(0));
+                    }
                     black_box(sum);
                 });
             },
@@ -370,9 +477,33 @@ fn bench_value_sizes(c: &mut Criterion) {
     let keys = make_random_keys(n, 42);
     group.throughput(Throughput::Elements(n as u64));
 
-    bench_value_size!(c, group, "64B", [u8; 64], [0u8; 64], keys.clone(), MEDIUM_CAPACITY);
-    bench_value_size!(c, group, "128B", [u8; 128], [0u8; 128], keys.clone(), MEDIUM_CAPACITY);
-    bench_value_size!(c, group, "256B", [u8; 256], [0u8; 256], keys.clone(), MEDIUM_CAPACITY);
+    bench_value_size!(
+        c,
+        group,
+        "64B",
+        [u8; 64],
+        [0u8; 64],
+        keys.clone(),
+        MEDIUM_CAPACITY
+    );
+    bench_value_size!(
+        c,
+        group,
+        "128B",
+        [u8; 128],
+        [0u8; 128],
+        keys.clone(),
+        MEDIUM_CAPACITY
+    );
+    bench_value_size!(
+        c,
+        group,
+        "256B",
+        [u8; 256],
+        [0u8; 256],
+        keys.clone(),
+        MEDIUM_CAPACITY
+    );
 
     group.finish();
 }

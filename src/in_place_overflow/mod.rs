@@ -11,7 +11,7 @@
 //! termination, but gains simpler memory layout (no overflow array) and
 //! potentially faster lookup hit (no overflow byte access on hit path).
 
-pub(crate) mod raw;
 mod map;
+pub(crate) mod raw;
 
 pub use map::InPlaceOverflow;

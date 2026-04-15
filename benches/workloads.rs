@@ -6,12 +6,10 @@
 
 mod bench_helpers;
 
-use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
 use bench_helpers::*;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use optimap::{UnorderedFlatMap, Splitsies, InPlaceOverflow};
+use optimap::{InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Macro for main designs ──────────────────────────────────────────────────
 
@@ -35,7 +33,9 @@ fn bench_equilibrium_churn(c: &mut Criterion) {
 
     for &(name, mask) in &[("4K", 0xFFFu64), ("64K", 0xFFFFu64), ("1M", 0xF_FFFFu64)] {
         group.throughput(Throughput::Elements(ops));
-        if mask >= 0xF_FFFF { group.sample_size(10); }
+        if mask >= 0xF_FFFF {
+            group.sample_size(10);
+        }
 
         main_maps!(bench_churn_for, &mut group, name, ops, mask);
     }
@@ -74,7 +74,14 @@ fn bench_read_heavy(c: &mut Criterion) {
     };
 
     let n_str = n.to_string();
-    main_maps!(bench_mixed_workload_for, &mut group, &n_str, &keys, &op_seq, LARGE_CAPACITY);
+    main_maps!(
+        bench_mixed_workload_for,
+        &mut group,
+        &n_str,
+        &keys,
+        &op_seq,
+        LARGE_CAPACITY
+    );
     group.finish();
 }
 
@@ -104,7 +111,14 @@ fn bench_write_heavy(c: &mut Criterion) {
     };
 
     let n_str = n.to_string();
-    main_maps!(bench_write_heavy_for, &mut group, &n_str, &keys, &op_seq, LARGE_CAPACITY);
+    main_maps!(
+        bench_write_heavy_for,
+        &mut group,
+        &n_str,
+        &keys,
+        &op_seq,
+        LARGE_CAPACITY
+    );
     group.finish();
 }
 
@@ -196,10 +210,34 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
             .collect();
 
         let label = format!("{}miss", miss_pct);
-        bench_miss_ratio_for::<UnorderedFlatMap<u64, u64>>(&mut group, &format!("UFM_{label}"), &hit_keys, &lookup_keys, LARGE_CAPACITY);
-        bench_miss_ratio_for::<Splitsies<u64, u64>>(&mut group, &format!("Splitsies_{label}"), &hit_keys, &lookup_keys, LARGE_CAPACITY);
-        bench_miss_ratio_for::<InPlaceOverflow<u64, u64>>(&mut group, &format!("IPO_{label}"), &hit_keys, &lookup_keys, LARGE_CAPACITY);
-        bench_miss_ratio_for::<hashbrown::HashMap<u64, u64>>(&mut group, &format!("hashbrown_{label}"), &hit_keys, &lookup_keys, LARGE_CAPACITY);
+        bench_miss_ratio_for::<UnorderedFlatMap<u64, u64>>(
+            &mut group,
+            &format!("UFM_{label}"),
+            &hit_keys,
+            &lookup_keys,
+            LARGE_CAPACITY,
+        );
+        bench_miss_ratio_for::<Splitsies<u64, u64>>(
+            &mut group,
+            &format!("Splitsies_{label}"),
+            &hit_keys,
+            &lookup_keys,
+            LARGE_CAPACITY,
+        );
+        bench_miss_ratio_for::<InPlaceOverflow<u64, u64>>(
+            &mut group,
+            &format!("IPO_{label}"),
+            &hit_keys,
+            &lookup_keys,
+            LARGE_CAPACITY,
+        );
+        bench_miss_ratio_for::<hashbrown::HashMap<u64, u64>>(
+            &mut group,
+            &format!("hashbrown_{label}"),
+            &hit_keys,
+            &lookup_keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -216,11 +254,20 @@ fn bench_remove_reinsert(c: &mut Criterion) {
 
     let op_keys: Vec<u64> = {
         let mut rng = Sfc64::new(777);
-        (0..ops as usize).map(|_| keys[rng.next() as usize % keys.len()]).collect()
+        (0..ops as usize)
+            .map(|_| keys[rng.next() as usize % keys.len()])
+            .collect()
     };
 
     let n_str = n.to_string();
-    main_maps!(bench_remove_reinsert_for, &mut group, &n_str, &keys, &op_keys, LARGE_CAPACITY);
+    main_maps!(
+        bench_remove_reinsert_for,
+        &mut group,
+        &n_str,
+        &keys,
+        &op_keys,
+        LARGE_CAPACITY
+    );
     group.finish();
 }
 
@@ -234,7 +281,9 @@ fn bench_high_load_stress(c: &mut Criterion) {
     let min_slots = (capacity * 8 + 6) / 7;
     let min_groups = (min_slots + 14) / 15;
     let mut num_groups = 1;
-    while num_groups < min_groups { num_groups *= 2; }
+    while num_groups < min_groups {
+        num_groups *= 2;
+    }
     let total_slots = num_groups * 15;
     let num_entries = total_slots * 85 / 100;
     let ops = 100_000u64;
@@ -245,14 +294,53 @@ fn bench_high_load_stress(c: &mut Criterion) {
     let miss_keys = make_random_keys(ops as usize, 9999);
 
     // Hit at 85% load
-    bench_high_load_hit_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_hit85", &keys, capacity, ops);
-    bench_high_load_hit_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_hit85", &keys, capacity, ops);
-    bench_high_load_hit_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_hit85", &keys, capacity, ops);
+    bench_high_load_hit_for::<UnorderedFlatMap<u64, u64>>(
+        &mut group,
+        "UFM_hit85",
+        &keys,
+        capacity,
+        ops,
+    );
+    bench_high_load_hit_for::<Splitsies<u64, u64>>(
+        &mut group,
+        "Splitsies_hit85",
+        &keys,
+        capacity,
+        ops,
+    );
+    bench_high_load_hit_for::<hashbrown::HashMap<u64, u64>>(
+        &mut group,
+        "hashbrown_hit85",
+        &keys,
+        capacity,
+        ops,
+    );
 
     // Miss at 85% load
-    bench_high_load_miss_for::<UnorderedFlatMap<u64, u64>>(&mut group, "UFM_miss85", num_entries, &miss_keys, &keys, capacity);
-    bench_high_load_miss_for::<Splitsies<u64, u64>>(&mut group, "Splitsies_miss85", num_entries, &miss_keys, &keys, capacity);
-    bench_high_load_miss_for::<hashbrown::HashMap<u64, u64>>(&mut group, "hashbrown_miss85", num_entries, &miss_keys, &keys, capacity);
+    bench_high_load_miss_for::<UnorderedFlatMap<u64, u64>>(
+        &mut group,
+        "UFM_miss85",
+        num_entries,
+        &miss_keys,
+        &keys,
+        capacity,
+    );
+    bench_high_load_miss_for::<Splitsies<u64, u64>>(
+        &mut group,
+        "Splitsies_miss85",
+        num_entries,
+        &miss_keys,
+        &keys,
+        capacity,
+    );
+    bench_high_load_miss_for::<hashbrown::HashMap<u64, u64>>(
+        &mut group,
+        "hashbrown_miss85",
+        num_entries,
+        &miss_keys,
+        &keys,
+        capacity,
+    );
 
     group.finish();
 }

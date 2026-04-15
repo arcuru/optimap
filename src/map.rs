@@ -4,8 +4,8 @@ use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 use std::ops::Index;
 
-use crate::raw::{RawTable, ProbeResult};
 use crate::raw::hash;
+use crate::raw::{ProbeResult, RawTable};
 
 /// Default hasher for the map. Uses foldhash for speed
 /// (same fast hasher used by hashbrown).
@@ -140,7 +140,7 @@ where
     /// the key is absent and the home group has space.
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+        use crate::raw::group::{Group, overflow_bit, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -243,7 +243,7 @@ where
     /// Uses the same fused home-group pattern as insert(): a single SIMD load
     /// checks for the key and locates an empty slot simultaneously.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, S> {
-        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+        use crate::raw::group::{Group, overflow_bit, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -322,24 +322,20 @@ where
                     value: &mut bucket.1,
                 })
             }
-            ProbeResult::InsertSlot(gi, si, full_mask) => {
-                Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: Some((gi, si, full_mask)),
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                })
-            }
-            ProbeResult::NotFound => {
-                Entry::Vacant(VacantEntry {
-                    key,
-                    hash: h,
-                    slot: None,
-                    table: &mut self.table,
-                    hash_builder: &self.hash_builder,
-                })
-            }
+            ProbeResult::InsertSlot(gi, si, full_mask) => Entry::Vacant(VacantEntry {
+                key,
+                hash: h,
+                slot: Some((gi, si, full_mask)),
+                table: &mut self.table,
+                hash_builder: &self.hash_builder,
+            }),
+            ProbeResult::NotFound => Entry::Vacant(VacantEntry {
+                key,
+                hash: h,
+                slot: None,
+                table: &mut self.table,
+                hash_builder: &self.hash_builder,
+            }),
         }
     }
 
@@ -359,16 +355,12 @@ where
 
     /// Iterate over keys.
     pub fn keys(&self) -> Keys<'_, K, V> {
-        Keys {
-            inner: self.iter(),
-        }
+        Keys { inner: self.iter() }
     }
 
     /// Iterate over values.
     pub fn values(&self) -> Values<'_, K, V> {
-        Values {
-            inner: self.iter(),
-        }
+        Values { inner: self.iter() }
     }
 
     /// Iterate over mutable values.
@@ -463,7 +455,8 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
     pub fn insert(self, value: V) -> &'a mut V {
         if let Some((gi, si, full_mask)) = self.slot {
             // Fast path: use pre-located slot from fused probe
-            self.table.insert_at(self.hash, gi, si, self.key, value, full_mask);
+            self.table
+                .insert_at(self.hash, gi, si, self.key, value, full_mask);
             let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
             &mut bucket.1
         } else {
@@ -548,9 +541,10 @@ impl<K, V> Iterator for IntoIter<K, V> {
                     let ptr = self.table.bucket_ptr(gi, si);
                     let kv = ptr.read();
                     // Mark as empty so Drop doesn't double-free
-                    let meta = self.table.metadata.add(
-                        gi * crate::raw::group::META_GROUP_BYTES + si,
-                    );
+                    let meta = self
+                        .table
+                        .metadata
+                        .add(gi * crate::raw::group::META_GROUP_BYTES + si);
                     *meta = crate::raw::group::EMPTY;
                     self.table.len -= 1;
                     return Some(kv);
@@ -562,7 +556,9 @@ impl<K, V> Iterator for IntoIter<K, V> {
             }
             self.current_mask = unsafe {
                 crate::raw::group::Group::match_non_empty(
-                    self.table.metadata.add(self.group * crate::raw::group::META_GROUP_BYTES)
+                    self.table
+                        .metadata
+                        .add(self.group * crate::raw::group::META_GROUP_BYTES),
                 )
             };
         }
@@ -919,7 +915,5 @@ mod tests {
         assert!(map.is_empty());
     }
 }
-
-
 
 crate::traits::impl_map_trait!(UnorderedFlatMap);

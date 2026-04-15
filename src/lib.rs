@@ -66,23 +66,23 @@
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 
-mod raw;
-mod map;
-mod set;
-mod traits;
+pub mod gaps;
 mod generic_set;
-pub mod split_overflow;
 pub mod in_place_overflow;
 pub mod ipo64;
-pub mod gaps;
+mod map;
+mod raw;
+mod set;
+pub mod split_overflow;
+mod traits;
 
 // ── Map types ───────────────────────────────────────────────────────────────
 
-pub use map::UnorderedFlatMap;
-pub use split_overflow::Splitsies;
+pub use gaps::Gaps;
 pub use in_place_overflow::InPlaceOverflow;
 pub use ipo64::IPO64;
-pub use gaps::Gaps;
+pub use map::UnorderedFlatMap;
+pub use split_overflow::Splitsies;
 
 // ── Set types ───────────────────────────────────────────────────────────────
 
@@ -90,9 +90,9 @@ pub use gaps::Gaps;
 pub use set::UnorderedFlatSet;
 
 /// Generic set wrapper — works with any Map implementation.
-pub use generic_set::{Set, UfmSet, SplitsiesSet, IpoSet, GapsSet, Ipo64Set};
+pub use generic_set::{GapsSet, Ipo64Set, IpoSet, Set, SplitsiesSet, UfmSet};
 
 // ── Traits ──────────────────────────────────────────────────────────────────
 
-pub use traits::Map;
 pub use raw::hash::IsAvalanching;
+pub use traits::Map;

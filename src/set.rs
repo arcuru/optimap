@@ -3,8 +3,8 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FusedIterator;
 
-use crate::raw::{RawTable, ProbeResult};
 use crate::raw::hash;
+use crate::raw::{ProbeResult, RawTable};
 
 /// Default hasher for the set. Uses foldhash for speed.
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
@@ -99,7 +99,9 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(value);
-        self.table.find_by_hash(h, |v| v.borrow() == value).is_some()
+        self.table
+            .find_by_hash(h, |v| v.borrow() == value)
+            .is_some()
     }
 
     /// Adds a value to the set. Returns true if newly inserted, false if already present.
@@ -107,7 +109,7 @@ where
     /// Uses a fused home-group fast path (same as map insert).
     #[inline]
     pub fn insert(&mut self, value: T) -> bool {
-        use crate::raw::group::{Group, reduced_hash, overflow_bit};
+        use crate::raw::group::{Group, overflow_bit, reduced_hash};
 
         if !self.table.is_allocated() {
             self.table.allocate(1);
@@ -189,7 +191,9 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(value);
-        self.table.remove_by_hash(h, |v| v.borrow() == value).is_some()
+        self.table
+            .remove_by_hash(h, |v| v.borrow() == value)
+            .is_some()
     }
 
     /// Iterate over values.
@@ -330,9 +334,10 @@ impl<T> Iterator for SetIntoIter<T> {
                 unsafe {
                     let ptr = self.table.bucket_ptr(gi, si);
                     let (key, ()) = ptr.read();
-                    let meta = self.table.metadata.add(
-                        gi * crate::raw::group::META_GROUP_BYTES + si,
-                    );
+                    let meta = self
+                        .table
+                        .metadata
+                        .add(gi * crate::raw::group::META_GROUP_BYTES + si);
                     *meta = crate::raw::group::EMPTY;
                     self.table.len -= 1;
                     return Some(key);
@@ -344,7 +349,9 @@ impl<T> Iterator for SetIntoIter<T> {
             }
             self.current_mask = unsafe {
                 crate::raw::group::Group::match_non_empty(
-                    self.table.metadata.add(self.group * crate::raw::group::META_GROUP_BYTES)
+                    self.table
+                        .metadata
+                        .add(self.group * crate::raw::group::META_GROUP_BYTES),
                 )
             };
         }

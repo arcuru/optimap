@@ -12,7 +12,7 @@
 //! Trade-off: overflow byte is in a separate array (not adjacent to metadata),
 //! requiring a prefetch to hide the latency of the separate access.
 
-pub(crate) mod raw;
 mod map;
+pub(crate) mod raw;
 
 pub use map::Splitsies;
