@@ -1,7 +1,7 @@
 # OptiMap
 
-A Rust library providing multiple SIMD-accelerated hash map implementations
-with different performance trade-offs, benchmarked against hashbrown (Rust's std HashMap).
+A Rust library providing multiple hash map and sorted map implementations
+with different performance trade-offs, benchmarked against hashbrown and std::BTreeMap.
 
 ## Designs at a Glance
 
@@ -12,6 +12,7 @@ with different performance trade-offs, benchmarked against hashbrown (Rust's std
 | **InPlaceOverflow** | 16-slot Swiss-table style | Lookup hit, insert |
 | **IPO64** | 64-slot cache-line, AVX-512 | Specialty: high-load resilience |
 | **Gaps** | 15-slot + power-of-2 buckets | Iteration |
+| **FlatBTree** | 256-byte B+ tree nodes | Sorted iteration, range queries |
 
 ## Common Properties
 

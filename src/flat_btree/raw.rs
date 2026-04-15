@@ -57,7 +57,7 @@ impl Arena {
     #[inline(always)]
     pub fn node_ptr(&self, idx: NodeIdx) -> *mut u8 {
         debug_assert!(idx != NO_NODE);
-        debug_assert!((idx as u32) < self.len);
+        debug_assert!(idx < self.len);
         unsafe { self.ptr.add(idx as usize * NODE_SIZE) }
     }
 
@@ -169,11 +169,7 @@ impl<K, V> RawBTree<K, V> {
         NodeLayout::<K, V>::assert_capacities();
         // Estimate nodes needed: capacity / leaf_cap + some internal nodes
         let leaf_cap = NodeLayout::<K, V>::LEAF_CAP;
-        let leaves = if leaf_cap > 0 {
-            (capacity + leaf_cap - 1) / leaf_cap
-        } else {
-            capacity
-        };
+        let leaves = capacity.div_ceil(leaf_cap.max(1));
         // Internal nodes are roughly leaves / internal_cap per level; overshoot a bit
         let estimated = (leaves as u32).saturating_add(leaves as u32 / 4).max(4);
         RawBTree {
@@ -672,6 +668,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
 
     /// Split a full internal node and insert a key + right_child.
     /// Returns (promoted_key, new_right_internal_idx).
+    #[allow(clippy::needless_range_loop)]
     fn internal_split_and_insert(
         &mut self,
         left_idx: NodeIdx,

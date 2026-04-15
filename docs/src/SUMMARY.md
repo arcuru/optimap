@@ -10,6 +10,7 @@
 - [InPlaceOverflow](designs/in_place_overflow.md)
 - [IPO64](designs/ipo64.md)
 - [Gaps](designs/gaps.md)
+- [FlatBTree](designs/flat_btree.md)
 
 # Benchmarks
 

@@ -53,6 +53,7 @@ impl<K, V> NodeLayout<K, V> {
 
     /// Maximum keys in a leaf node.
     /// Layout: [keys: K × N][values: V × N][prev: u32][next: u32]
+    #[allow(clippy::manual_checked_ops)]
     pub const LEAF_CAP: usize = {
         let kv_size = std::mem::size_of::<K>() + std::mem::size_of::<V>();
         if kv_size == 0 {
@@ -66,6 +67,7 @@ impl<K, V> NodeLayout<K, V> {
     /// Maximum keys in an internal node.
     /// Layout: [keys: K × N][children: u32 × (N+1)]
     /// Constraint: N * size_of::<K>() + (N+1) * 4 <= PAYLOAD
+    #[allow(clippy::manual_checked_ops)]
     pub const INTERNAL_CAP: usize = {
         let k_plus_child = std::mem::size_of::<K>() + std::mem::size_of::<NodeIdx>();
         if k_plus_child == 0 {
@@ -88,9 +90,10 @@ impl<K, V> NodeLayout<K, V> {
 
     /// Force compile-time assertion evaluation.
     #[inline(always)]
+    #[allow(clippy::manual_checked_ops, path_statements)]
     pub fn assert_capacities() {
-        let _ = Self::_ASSERT_LEAF;
-        let _ = Self::_ASSERT_INTERNAL;
+        Self::_ASSERT_LEAF;
+        Self::_ASSERT_INTERNAL;
     }
 
     // ── Leaf pointer arithmetic ─────────────────────────────────────

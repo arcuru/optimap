@@ -708,6 +708,17 @@ impl<K: Ord + PartialEq, V: PartialEq, S> PartialEq for FlatBTree<K, V, S> {
 
 impl<K: Ord + Eq, V: Eq, S> Eq for FlatBTree<K, V, S> {}
 
+impl<K: Ord, V, S, Q> std::ops::Index<&Q> for FlatBTree<K, V, S>
+where
+    K: Borrow<Q>,
+    Q: Ord + ?Sized,
+{
+    type Output = V;
+    fn index(&self, key: &Q) -> &V {
+        self.get(key).expect("no entry found for key")
+    }
+}
+
 impl<K: Ord + Clone, V, S: Default> FromIterator<(K, V)> for FlatBTree<K, V, S> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let iter = iter.into_iter();
@@ -872,8 +883,8 @@ mod tests {
         // Verify sorted iteration
         let keys: Vec<_> = map.keys().copied().collect();
         assert_eq!(keys.len(), n);
-        for i in 0..n {
-            assert_eq!(keys[i], i, "iteration order wrong at {i}");
+        for (i, &k) in keys.iter().enumerate() {
+            assert_eq!(k, i, "iteration order wrong at {i}");
         }
     }
 
@@ -1082,7 +1093,7 @@ mod tests {
         map.insert(2, "world".to_string());
 
         for v in map.values_mut() {
-            v.push_str("!");
+            v.push('!');
         }
 
         assert_eq!(map.get(&1), Some(&"hello!".to_string()));
