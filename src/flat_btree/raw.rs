@@ -124,6 +124,28 @@ impl Arena {
         self.cap = new_cap;
     }
 
+    /// Create a byte-for-byte copy of the arena. All node indices remain valid.
+    pub fn clone_arena(&self) -> Arena {
+        if self.ptr.is_null() {
+            return Arena::new();
+        }
+        let layout = Self::layout(self.cap);
+        let new_ptr = unsafe { alloc::alloc(layout) };
+        if new_ptr.is_null() {
+            alloc::handle_alloc_error(layout);
+        }
+        // Copy the used portion
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.ptr, new_ptr, self.len as usize * NODE_SIZE);
+        }
+        Arena {
+            ptr: new_ptr,
+            cap: self.cap,
+            len: self.len,
+            free_head: self.free_head,
+        }
+    }
+
     /// Number of allocated node slots (high-water, not accounting for free list).
     pub fn allocated_nodes(&self) -> u32 {
         self.len
@@ -1056,6 +1078,95 @@ impl<K, V> RawBTree<K, V> {
         // Drop keys in internal nodes
         if std::mem::needs_drop::<K>() {
             self.drop_internal_keys(self.root);
+        }
+    }
+}
+
+impl<K: Clone, V: Clone> RawBTree<K, V> {
+    /// Clone the tree by bulk-copying the arena, then cloning K/V values in-place.
+    /// Much faster than re-inserting every element through the tree.
+    pub fn clone_tree(&self) -> Self {
+        if self.root == NO_NODE {
+            return RawBTree {
+                arena: Arena::new(),
+                root: NO_NODE,
+                first_leaf: NO_NODE,
+                last_leaf: NO_NODE,
+                len: 0,
+                height: 0,
+                _marker: PhantomData,
+            };
+        }
+
+        // Bulk-copy the entire arena (all node indices stay valid)
+        let new_arena = self.arena.clone_arena();
+
+        // Now clone the K/V values in leaf nodes in-place.
+        // The arena copy has bitwise copies of K and V, which is only valid
+        // for Copy types. For non-Copy types, we need to clone each value
+        // and write it over the bitwise copy (which we must NOT drop).
+        let mut leaf_idx = self.first_leaf;
+        while leaf_idx != NO_NODE {
+            let src_node = self.arena.node_ptr(leaf_idx);
+            let dst_node = new_arena.node_ptr(leaf_idx);
+            let header = unsafe { NodeLayout::<K, V>::header(src_node) };
+            let len = header.len as usize;
+            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(src_node).read() };
+
+            for i in 0..len {
+                unsafe {
+                    // Read from source, clone, write to dest (overwriting bitwise copy)
+                    let src_k = &*NodeLayout::<K, V>::leaf_key_ptr(src_node, i);
+                    let src_v = &*NodeLayout::<K, V>::leaf_val_ptr(src_node, i);
+                    let dst_k = NodeLayout::<K, V>::leaf_key_ptr(dst_node, i);
+                    let dst_v = NodeLayout::<K, V>::leaf_val_ptr(dst_node, i);
+                    // Write cloned values over the bitwise copy without dropping it
+                    std::ptr::write(dst_k, src_k.clone());
+                    std::ptr::write(dst_v, src_v.clone());
+                }
+            }
+
+            leaf_idx = next;
+        }
+
+        // Clone keys in internal nodes
+        self.clone_internal_keys(&new_arena, self.root);
+
+        RawBTree {
+            arena: new_arena,
+            root: self.root,
+            first_leaf: self.first_leaf,
+            last_leaf: self.last_leaf,
+            len: self.len,
+            height: self.height,
+            _marker: PhantomData,
+        }
+    }
+
+    fn clone_internal_keys(&self, new_arena: &Arena, node_idx: NodeIdx) {
+        if node_idx == NO_NODE {
+            return;
+        }
+        let src_node = self.arena.node_ptr(node_idx);
+        let header = unsafe { NodeLayout::<K, V>::header(src_node) };
+        if header.is_leaf() {
+            return;
+        }
+        let len = header.len as usize;
+        let dst_node = new_arena.node_ptr(node_idx);
+
+        for i in 0..len {
+            unsafe {
+                let src_k = &*NodeLayout::<K, V>::internal_key_ptr(src_node, i);
+                let dst_k = NodeLayout::<K, V>::internal_key_ptr(dst_node, i);
+                std::ptr::write(dst_k, src_k.clone());
+            }
+        }
+
+        // Recurse into children
+        for i in 0..=len {
+            let child = unsafe { NodeLayout::<K, V>::internal_child_ptr(src_node, i).read() };
+            self.clone_internal_keys(new_arena, child);
         }
     }
 }

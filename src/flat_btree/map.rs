@@ -832,11 +832,10 @@ impl<K: Ord, V> Default for FlatBTree<K, V> {
 
 impl<K: Ord + Clone, V: Clone, S: Default> Clone for FlatBTree<K, V, S> {
     fn clone(&self) -> Self {
-        let mut new = FlatBTree::with_capacity_and_hasher(self.len(), S::default());
-        for (k, v) in self.iter() {
-            new.insert(k.clone(), v.clone());
+        FlatBTree {
+            tree: self.tree.clone_tree(),
+            _hasher: PhantomData,
         }
-        new
     }
 }
 
