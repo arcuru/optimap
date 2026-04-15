@@ -286,6 +286,16 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
         self.tree.capacity()
     }
 
+    /// Pre-allocate arena space for at least `additional` more elements.
+    pub fn reserve(&mut self, additional: usize) {
+        let leaf_cap = NodeLayout::<K, V>::LEAF_CAP.max(1);
+        let needed_leaves = additional.div_ceil(leaf_cap);
+        let current = self.tree.arena.allocated_nodes();
+        // Leaves + ~25% overhead for internal nodes
+        let target = current + needed_leaves as u32 + needed_leaves as u32 / 4;
+        self.tree.arena.ensure_capacity(target);
+    }
+
     /// Remove all elements.
     pub fn clear(&mut self) {
         self.tree.clear();

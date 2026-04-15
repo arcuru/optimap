@@ -150,6 +150,13 @@ impl Arena {
     pub fn allocated_nodes(&self) -> u32 {
         self.len
     }
+
+    /// Ensure capacity for at least `min_cap` nodes.
+    pub fn ensure_capacity(&mut self, min_cap: u32) {
+        while self.cap < min_cap {
+            self.grow();
+        }
+    }
 }
 
 impl Drop for Arena {
