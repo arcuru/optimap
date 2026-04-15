@@ -82,6 +82,15 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
         self.tree.insert(key, value)
     }
 
+    /// Remove a key, returning its value if present.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.tree.remove(key)
+    }
+
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         use super::raw::EntrySearch;
@@ -246,15 +255,6 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
         Q: Ord + ?Sized,
     {
         self.tree.get_mut(key)
-    }
-
-    /// Remove a key, returning its value if present.
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        self.tree.remove(key)
     }
 
     /// Whether the map contains the given key.

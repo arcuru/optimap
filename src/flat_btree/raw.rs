@@ -1043,7 +1043,9 @@ impl<K: Ord, V> RawBTree<K, V> {
         }
         None
     }
+}
 
+impl<K: Ord + Clone, V> RawBTree<K, V> {
     /// Remove by equality (O(n) leaf scan). Used by Map trait impl.
     pub fn remove_by_eq<Q>(&mut self, key: &Q) -> Option<V>
     where
@@ -1078,19 +1080,17 @@ impl<K: Ord, V> RawBTree<K, V> {
         Some(self.leaf_remove_at(leaf_idx, slot_idx))
     }
 
-    /// Remove the element at position `idx` in a leaf. No rebalancing (lazy).
+    /// Remove the element at position `idx` in a leaf, then rebalance if needed.
     fn leaf_remove_at(&mut self, leaf_idx: NodeIdx, idx: usize) -> V {
         let node = self.arena.node_ptr(leaf_idx);
         let header = unsafe { NodeLayout::<K, V>::header_mut(node) };
         let len = header.len as usize;
         debug_assert!(idx < len);
 
-        unsafe {
-            // Read the key and value to return
+        let value = unsafe {
             let _key = NodeLayout::<K, V>::leaf_key_ptr(node, idx).read();
             let value = NodeLayout::<K, V>::leaf_val_ptr(node, idx).read();
 
-            // Shift remaining elements left
             for i in idx..len - 1 {
                 let src_k = NodeLayout::<K, V>::leaf_key_ptr(node, i + 1);
                 let dst_k = NodeLayout::<K, V>::leaf_key_ptr(node, i);
@@ -1102,11 +1102,447 @@ impl<K: Ord, V> RawBTree<K, V> {
             }
 
             header.len = (len - 1) as u16;
-            // Drop the key
             drop(_key);
             self.len -= 1;
             value
+        };
+
+        // Rebalance if underflow (skip for root leaf or single-node tree)
+        let new_len = len - 1;
+        let min_keys = NodeLayout::<K, V>::LEAF_CAP / 2;
+        if new_len < min_keys && self.height > 0 {
+            self.rebalance_leaf(leaf_idx);
         }
+
+        value
+    }
+
+    /// Rebalance a leaf that has fewer than LEAF_CAP/2 elements.
+    fn rebalance_leaf(&mut self, leaf_idx: NodeIdx)
+    where
+        K: Clone,
+    {
+        let node = self.arena.node_ptr(leaf_idx);
+        let parent_idx = unsafe { NodeLayout::<K, V>::header(node).parent };
+        if parent_idx == NO_NODE {
+            return; // root leaf, nothing to rebalance
+        }
+
+        let leaf_len = unsafe { NodeLayout::<K, V>::header(node).len } as usize;
+        let min_keys = NodeLayout::<K, V>::LEAF_CAP / 2;
+
+        // Find our position in parent
+        let parent_node = self.arena.node_ptr(parent_idx);
+        let parent_len = unsafe { NodeLayout::<K, V>::header(parent_node).len } as usize;
+        let mut child_pos = 0;
+        for i in 0..=parent_len {
+            if unsafe { NodeLayout::<K, V>::internal_child_ptr(parent_node, i).read() } == leaf_idx
+            {
+                child_pos = i;
+                break;
+            }
+        }
+
+        // Try steal from right sibling
+        if child_pos < parent_len {
+            let right_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(parent_node, child_pos + 1).read()
+            };
+            let right_node = self.arena.node_ptr(right_idx);
+            let right_len = unsafe { NodeLayout::<K, V>::header(right_node).len } as usize;
+
+            if right_len > min_keys {
+                // Steal first element from right sibling
+                unsafe {
+                    let node = self.arena.node_ptr(leaf_idx);
+                    // Append right's first key+value to our end
+                    let right_node = self.arena.node_ptr(right_idx);
+                    let stolen_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, 0).read();
+                    let stolen_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, 0).read();
+                    NodeLayout::<K, V>::leaf_key_ptr(node, leaf_len).write(stolen_k);
+                    NodeLayout::<K, V>::leaf_val_ptr(node, leaf_len).write(stolen_v);
+                    NodeLayout::<K, V>::header_mut(node).len = (leaf_len + 1) as u16;
+
+                    // Shift right sibling left
+                    let right_node = self.arena.node_ptr(right_idx);
+                    for i in 0..right_len - 1 {
+                        let src_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i + 1);
+                        let dst_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i);
+                        std::ptr::copy_nonoverlapping(src_k, dst_k, 1);
+                        let src_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i + 1);
+                        let dst_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i);
+                        std::ptr::copy_nonoverlapping(src_v, dst_v, 1);
+                    }
+                    NodeLayout::<K, V>::header_mut(right_node).len = (right_len - 1) as u16;
+
+                    // Update separator key in parent (= new first key of right)
+                    let right_node = self.arena.node_ptr(right_idx);
+                    let new_sep = (*NodeLayout::<K, V>::leaf_key_ptr(right_node, 0)).clone();
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    let old_sep =
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos).read();
+                    drop(old_sep);
+                    NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos).write(new_sep);
+                }
+                return;
+            }
+        }
+
+        // Try steal from left sibling
+        if child_pos > 0 {
+            let left_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(parent_node, child_pos - 1).read()
+            };
+            let left_node = self.arena.node_ptr(left_idx);
+            let left_len = unsafe { NodeLayout::<K, V>::header(left_node).len } as usize;
+
+            if left_len > min_keys {
+                unsafe {
+                    let node = self.arena.node_ptr(leaf_idx);
+                    // Shift our elements right to make room at position 0
+                    for i in (0..leaf_len).rev() {
+                        let src_k = NodeLayout::<K, V>::leaf_key_ptr(node, i);
+                        let dst_k = NodeLayout::<K, V>::leaf_key_ptr(node, i + 1);
+                        std::ptr::copy_nonoverlapping(src_k, dst_k, 1);
+                        let src_v = NodeLayout::<K, V>::leaf_val_ptr(node, i);
+                        let dst_v = NodeLayout::<K, V>::leaf_val_ptr(node, i + 1);
+                        std::ptr::copy_nonoverlapping(src_v, dst_v, 1);
+                    }
+
+                    // Move last element from left sibling to our position 0
+                    let left_node = self.arena.node_ptr(left_idx);
+                    let stolen_k = NodeLayout::<K, V>::leaf_key_ptr(left_node, left_len - 1).read();
+                    let stolen_v = NodeLayout::<K, V>::leaf_val_ptr(left_node, left_len - 1).read();
+                    let node = self.arena.node_ptr(leaf_idx);
+                    NodeLayout::<K, V>::leaf_key_ptr(node, 0).write(stolen_k);
+                    NodeLayout::<K, V>::leaf_val_ptr(node, 0).write(stolen_v);
+                    NodeLayout::<K, V>::header_mut(node).len = (leaf_len + 1) as u16;
+
+                    let left_node = self.arena.node_ptr(left_idx);
+                    NodeLayout::<K, V>::header_mut(left_node).len = (left_len - 1) as u16;
+
+                    // Update separator key in parent (= new first key of us)
+                    let node = self.arena.node_ptr(leaf_idx);
+                    let new_sep = (*NodeLayout::<K, V>::leaf_key_ptr(node, 0)).clone();
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    let old_sep =
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos - 1).read();
+                    drop(old_sep);
+                    NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos - 1).write(new_sep);
+                }
+                return;
+            }
+        }
+
+        // Neither sibling can donate: merge with a sibling
+        if child_pos < parent_len {
+            // Merge with right sibling (move right's elements into us)
+            self.merge_leaves(leaf_idx, child_pos, parent_idx);
+        } else {
+            // Merge with left sibling (move our elements into left)
+            let left_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(
+                    self.arena.node_ptr(parent_idx),
+                    child_pos - 1,
+                )
+                .read()
+            };
+            self.merge_leaves(left_idx, child_pos - 1, parent_idx);
+        }
+    }
+
+    /// Merge leaf at `left_child_pos` with the leaf at `left_child_pos + 1`.
+    /// Removes the separator key from parent.
+    fn merge_leaves(&mut self, left_idx: NodeIdx, left_child_pos: usize, parent_idx: NodeIdx)
+    where
+        K: Clone,
+    {
+        let parent_node = self.arena.node_ptr(parent_idx);
+        let right_idx = unsafe {
+            NodeLayout::<K, V>::internal_child_ptr(parent_node, left_child_pos + 1).read()
+        };
+
+        let left_node = self.arena.node_ptr(left_idx);
+        let left_len = unsafe { NodeLayout::<K, V>::header(left_node).len } as usize;
+        let right_node = self.arena.node_ptr(right_idx);
+        let right_len = unsafe { NodeLayout::<K, V>::header(right_node).len } as usize;
+
+        // Move all elements from right into left
+        unsafe {
+            let left_node = self.arena.node_ptr(left_idx);
+            let right_node = self.arena.node_ptr(right_idx);
+            for i in 0..right_len {
+                let k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i).read();
+                let v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i).read();
+                NodeLayout::<K, V>::leaf_key_ptr(left_node, left_len + i).write(k);
+                NodeLayout::<K, V>::leaf_val_ptr(left_node, left_len + i).write(v);
+            }
+            NodeLayout::<K, V>::header_mut(left_node).len = (left_len + right_len) as u16;
+        }
+
+        // Update leaf chain: left.next = right.next
+        let right_next =
+            unsafe { NodeLayout::<K, V>::leaf_next_ptr(self.arena.node_ptr(right_idx)).read() };
+        unsafe {
+            NodeLayout::<K, V>::leaf_next_ptr(self.arena.node_ptr(left_idx)).write(right_next);
+        }
+        if right_next != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::leaf_prev_ptr(self.arena.node_ptr(right_next)).write(left_idx);
+            }
+        } else {
+            self.last_leaf = left_idx;
+        }
+
+        // Free the right leaf
+        self.arena.free_node(right_idx);
+
+        // Remove separator key + right child pointer from parent
+        self.internal_remove_at(parent_idx, left_child_pos);
+    }
+
+    /// Remove key at `idx` and child at `idx + 1` from an internal node.
+    /// Then rebalance the internal node if needed.
+    fn internal_remove_at(&mut self, node_idx: NodeIdx, idx: usize)
+    where
+        K: Clone,
+    {
+        let node = self.arena.node_ptr(node_idx);
+        let header = unsafe { NodeLayout::<K, V>::header_mut(node) };
+        let len = header.len as usize;
+
+        unsafe {
+            // Drop the separator key
+            std::ptr::drop_in_place(NodeLayout::<K, V>::internal_key_ptr(node, idx));
+
+            // Shift keys left
+            for i in idx..len - 1 {
+                let src = NodeLayout::<K, V>::internal_key_ptr(node, i + 1);
+                let dst = NodeLayout::<K, V>::internal_key_ptr(node, i);
+                std::ptr::copy_nonoverlapping(src, dst, 1);
+            }
+
+            // Shift children left (remove child at idx + 1)
+            for i in (idx + 1)..len {
+                let src = NodeLayout::<K, V>::internal_child_ptr(node, i + 1);
+                let dst = NodeLayout::<K, V>::internal_child_ptr(node, i);
+                std::ptr::copy_nonoverlapping(src, dst, 1);
+            }
+
+            header.len = (len - 1) as u16;
+        }
+
+        // If root becomes empty (0 keys, 1 child), collapse
+        let new_len = len - 1;
+        if node_idx == self.root && new_len == 0 {
+            let only_child = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, 0).read() };
+            let child_node = self.arena.node_ptr(only_child);
+            unsafe {
+                NodeLayout::<K, V>::header_mut(child_node).parent = NO_NODE;
+            }
+            self.arena.free_node(self.root);
+            self.root = only_child;
+            self.height -= 1;
+            return;
+        }
+
+        // Rebalance internal node if underflow
+        let min_keys = NodeLayout::<K, V>::INTERNAL_CAP / 2;
+        if new_len < min_keys && node_idx != self.root {
+            self.rebalance_internal(node_idx);
+        }
+    }
+
+    /// Rebalance an internal node that has fewer than INTERNAL_CAP/2 keys.
+    fn rebalance_internal(&mut self, node_idx: NodeIdx)
+    where
+        K: Clone,
+    {
+        let node = self.arena.node_ptr(node_idx);
+        let parent_idx = unsafe { NodeLayout::<K, V>::header(node).parent };
+        if parent_idx == NO_NODE {
+            return;
+        }
+
+        let node_len = unsafe { NodeLayout::<K, V>::header(node).len } as usize;
+        let min_keys = NodeLayout::<K, V>::INTERNAL_CAP / 2;
+
+        // Find our position in parent
+        let parent_node = self.arena.node_ptr(parent_idx);
+        let parent_len = unsafe { NodeLayout::<K, V>::header(parent_node).len } as usize;
+        let mut child_pos = 0;
+        for i in 0..=parent_len {
+            if unsafe { NodeLayout::<K, V>::internal_child_ptr(parent_node, i).read() } == node_idx
+            {
+                child_pos = i;
+                break;
+            }
+        }
+
+        // Try steal from right sibling
+        if child_pos < parent_len {
+            let right_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(parent_node, child_pos + 1).read()
+            };
+            let right_len =
+                unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(right_idx)).len } as usize;
+
+            if right_len > min_keys {
+                unsafe {
+                    // Rotate: parent separator → end of us, right's first key → parent separator
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    let sep_key =
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos).read();
+
+                    let node = self.arena.node_ptr(node_idx);
+                    NodeLayout::<K, V>::internal_key_ptr(node, node_len).write(sep_key);
+
+                    // Move right's first child to our end
+                    let right_node = self.arena.node_ptr(right_idx);
+                    let moved_child = NodeLayout::<K, V>::internal_child_ptr(right_node, 0).read();
+                    let node = self.arena.node_ptr(node_idx);
+                    NodeLayout::<K, V>::internal_child_ptr(node, node_len + 1).write(moved_child);
+                    NodeLayout::<K, V>::header_mut(node).len = (node_len + 1) as u16;
+
+                    // Update moved child's parent
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(moved_child)).parent =
+                        node_idx;
+
+                    // Right's first key becomes new parent separator
+                    let right_node = self.arena.node_ptr(right_idx);
+                    let new_sep = NodeLayout::<K, V>::internal_key_ptr(right_node, 0).read();
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos).write(new_sep);
+
+                    // Shift right's keys and children left
+                    let right_node = self.arena.node_ptr(right_idx);
+                    for i in 0..right_len - 1 {
+                        let src = NodeLayout::<K, V>::internal_key_ptr(right_node, i + 1);
+                        let dst = NodeLayout::<K, V>::internal_key_ptr(right_node, i);
+                        std::ptr::copy_nonoverlapping(src, dst, 1);
+                    }
+                    for i in 0..right_len {
+                        let src = NodeLayout::<K, V>::internal_child_ptr(right_node, i + 1);
+                        let dst = NodeLayout::<K, V>::internal_child_ptr(right_node, i);
+                        std::ptr::copy_nonoverlapping(src, dst, 1);
+                    }
+                    NodeLayout::<K, V>::header_mut(right_node).len = (right_len - 1) as u16;
+                }
+                return;
+            }
+        }
+
+        // Try steal from left sibling
+        if child_pos > 0 {
+            let left_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(parent_node, child_pos - 1).read()
+            };
+            let left_len =
+                unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(left_idx)).len } as usize;
+
+            if left_len > min_keys {
+                unsafe {
+                    // Rotate: parent separator → start of us, left's last key → parent separator
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    let sep_key =
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos - 1).read();
+
+                    // Shift our keys and children right
+                    let node = self.arena.node_ptr(node_idx);
+                    for i in (0..node_len).rev() {
+                        let src = NodeLayout::<K, V>::internal_key_ptr(node, i);
+                        let dst = NodeLayout::<K, V>::internal_key_ptr(node, i + 1);
+                        std::ptr::copy_nonoverlapping(src, dst, 1);
+                    }
+                    for i in (0..=node_len).rev() {
+                        let src = NodeLayout::<K, V>::internal_child_ptr(node, i);
+                        let dst = NodeLayout::<K, V>::internal_child_ptr(node, i + 1);
+                        std::ptr::copy_nonoverlapping(src, dst, 1);
+                    }
+                    NodeLayout::<K, V>::internal_key_ptr(node, 0).write(sep_key);
+
+                    // Move left's last child to our position 0
+                    let left_node = self.arena.node_ptr(left_idx);
+                    let moved_child =
+                        NodeLayout::<K, V>::internal_child_ptr(left_node, left_len).read();
+                    let node = self.arena.node_ptr(node_idx);
+                    NodeLayout::<K, V>::internal_child_ptr(node, 0).write(moved_child);
+                    NodeLayout::<K, V>::header_mut(node).len = (node_len + 1) as u16;
+
+                    // Update moved child's parent
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(moved_child)).parent =
+                        node_idx;
+
+                    // Left's last key becomes new parent separator
+                    let left_node = self.arena.node_ptr(left_idx);
+                    let new_sep =
+                        NodeLayout::<K, V>::internal_key_ptr(left_node, left_len - 1).read();
+                    NodeLayout::<K, V>::header_mut(left_node).len = (left_len - 1) as u16;
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos - 1).write(new_sep);
+                }
+                return;
+            }
+        }
+
+        // Neither sibling can donate: merge
+        if child_pos < parent_len {
+            self.merge_internals(node_idx, child_pos, parent_idx);
+        } else {
+            let left_idx = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(
+                    self.arena.node_ptr(parent_idx),
+                    child_pos - 1,
+                )
+                .read()
+            };
+            self.merge_internals(left_idx, child_pos - 1, parent_idx);
+        }
+    }
+
+    /// Merge internal node at `left_child_pos` with node at `left_child_pos + 1`.
+    fn merge_internals(&mut self, left_idx: NodeIdx, left_child_pos: usize, parent_idx: NodeIdx)
+    where
+        K: Clone,
+    {
+        let parent_node = self.arena.node_ptr(parent_idx);
+        let right_idx = unsafe {
+            NodeLayout::<K, V>::internal_child_ptr(parent_node, left_child_pos + 1).read()
+        };
+
+        let left_len =
+            unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(left_idx)).len } as usize;
+        let right_len =
+            unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(right_idx)).len } as usize;
+
+        unsafe {
+            // Pull separator key from parent into left
+            let parent_node = self.arena.node_ptr(parent_idx);
+            let sep_key = NodeLayout::<K, V>::internal_key_ptr(parent_node, left_child_pos).read();
+            let left_node = self.arena.node_ptr(left_idx);
+            NodeLayout::<K, V>::internal_key_ptr(left_node, left_len).write(sep_key);
+
+            // Move all keys and children from right into left
+            let right_node = self.arena.node_ptr(right_idx);
+            let left_node = self.arena.node_ptr(left_idx);
+            for i in 0..right_len {
+                let k = NodeLayout::<K, V>::internal_key_ptr(right_node, i).read();
+                NodeLayout::<K, V>::internal_key_ptr(left_node, left_len + 1 + i).write(k);
+            }
+            for i in 0..=right_len {
+                let child = NodeLayout::<K, V>::internal_child_ptr(right_node, i).read();
+                NodeLayout::<K, V>::internal_child_ptr(left_node, left_len + 1 + i).write(child);
+                // Update child's parent
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(child)).parent = left_idx;
+            }
+            NodeLayout::<K, V>::header_mut(left_node).len = (left_len + 1 + right_len) as u16;
+        }
+
+        // Free the right internal node
+        self.arena.free_node(right_idx);
+
+        // Remove separator + right child from parent
+        self.internal_remove_at(parent_idx, left_child_pos);
     }
 }
 
