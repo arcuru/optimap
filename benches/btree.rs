@@ -559,6 +559,299 @@ fn bench_large_scale(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Equilibrium Churn ──────────────────────────────────────────────────
+
+fn bench_churn(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/churn");
+
+    for &n in &[4_000, 64_000, 1_000_000] {
+        let label = format!("{}", n);
+        let n_ops = 2_000_000usize;
+        let keys = make_random_keys(n, 42);
+
+        // Pre-build maps to equilibrium size
+        let mut flat = FlatBTree::with_capacity(n);
+        let mut std_map = BTreeMap::new();
+        for &k in &keys {
+            flat.insert(k, k);
+            std_map.insert(k, k);
+        }
+
+        // Build op sequence: 50% insert random, 50% remove random existing
+        let mut rng = Sfc64::new(77);
+        let ops: Vec<(bool, u64)> = (0..n_ops)
+            .map(|_| {
+                let is_insert = rng.next_u64() % 2 == 0;
+                let key = if is_insert {
+                    rng.next_u64()
+                } else {
+                    keys[rng.next_u64() as usize % keys.len()]
+                };
+                (is_insert, key)
+            })
+            .collect();
+
+        group.throughput(Throughput::Elements(n_ops as u64));
+        if n >= 1_000_000 {
+            group.sample_size(10);
+        }
+
+        group.bench_function(BenchmarkId::new("FlatBTree", &label), |b| {
+            b.iter_batched(
+                || flat.clone(),
+                |mut map| {
+                    for &(is_insert, key) in &ops {
+                        if is_insert {
+                            map.insert(key, key);
+                        } else {
+                            map.remove(&key);
+                        }
+                    }
+                    black_box(&map);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("BTreeMap", &label), |b| {
+            b.iter_batched(
+                || std_map.clone(),
+                |mut map| {
+                    for &(is_insert, key) in &ops {
+                        if is_insert {
+                            map.insert(key, key);
+                        } else {
+                            map.remove(&key);
+                        }
+                    }
+                    black_box(&map);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+// ── Large Values ──────────────────────────────────────────────────────
+
+/// A value type that occupies `N` bytes.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BigVal<const N: usize>([u8; N]);
+
+impl<const N: usize> BigVal<N> {
+    fn new(seed: u64) -> Self {
+        let mut arr = [0u8; N];
+        // Fill with deterministic bytes
+        let bytes = seed.to_le_bytes();
+        for (i, b) in arr.iter_mut().enumerate() {
+            *b = bytes[i % 8];
+        }
+        BigVal(arr)
+    }
+}
+
+fn bench_large_values(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/large_values");
+
+    // Test with 64B, 128B, 256B, 512B values
+    macro_rules! bench_value_size {
+        ($name:expr, $n:expr, $size:expr, $ty:ty) => {
+            let keys = make_random_keys($n, 42);
+
+            // Insert
+            group.bench_function(
+                BenchmarkId::new(concat!("FlatBTree_insert_", $name), $n),
+                |b| {
+                    b.iter(|| {
+                        let mut map: FlatBTree<u64, $ty> = FlatBTree::with_capacity($n);
+                        for &k in &keys {
+                            map.insert(k, <$ty>::new(k));
+                        }
+                        black_box(&map);
+                    });
+                },
+            );
+            group.bench_function(
+                BenchmarkId::new(concat!("BTreeMap_insert_", $name), $n),
+                |b| {
+                    b.iter(|| {
+                        let mut map: BTreeMap<u64, $ty> = BTreeMap::new();
+                        for &k in &keys {
+                            map.insert(k, <$ty>::new(k));
+                        }
+                        black_box(&map);
+                    });
+                },
+            );
+
+            // Lookup hit
+            {
+                let mut flat: FlatBTree<u64, $ty> = FlatBTree::with_capacity($n);
+                let mut std_map: BTreeMap<u64, $ty> = BTreeMap::new();
+                for &k in &keys {
+                    flat.insert(k, <$ty>::new(k));
+                    std_map.insert(k, <$ty>::new(k));
+                }
+
+                group.bench_function(
+                    BenchmarkId::new(concat!("FlatBTree_hit_", $name), $n),
+                    |b| {
+                        b.iter(|| {
+                            let mut sum = 0u8;
+                            for &k in &keys {
+                                sum = sum.wrapping_add(flat.get(&k).unwrap().0[0]);
+                            }
+                            black_box(sum);
+                        });
+                    },
+                );
+                group.bench_function(BenchmarkId::new(concat!("BTreeMap_hit_", $name), $n), |b| {
+                    b.iter(|| {
+                        let mut sum = 0u8;
+                        for &k in &keys {
+                            sum = sum.wrapping_add(std_map.get(&k).unwrap().0[0]);
+                        }
+                        black_box(sum);
+                    });
+                });
+            }
+
+            // Iteration
+            {
+                let mut flat: FlatBTree<u64, $ty> = FlatBTree::with_capacity($n);
+                let mut std_map: BTreeMap<u64, $ty> = BTreeMap::new();
+                for &k in &keys {
+                    flat.insert(k, <$ty>::new(k));
+                    std_map.insert(k, <$ty>::new(k));
+                }
+
+                group.bench_function(
+                    BenchmarkId::new(concat!("FlatBTree_iter_", $name), $n),
+                    |b| {
+                        b.iter(|| {
+                            let mut sum = 0u8;
+                            for (_, v) in flat.iter() {
+                                sum = sum.wrapping_add(v.0[0]);
+                            }
+                            black_box(sum);
+                        });
+                    },
+                );
+                group.bench_function(
+                    BenchmarkId::new(concat!("BTreeMap_iter_", $name), $n),
+                    |b| {
+                        b.iter(|| {
+                            let mut sum = 0u8;
+                            for (_, v) in std_map.iter() {
+                                sum = sum.wrapping_add(v.0[0]);
+                            }
+                            black_box(sum);
+                        });
+                    },
+                );
+            }
+        };
+    }
+
+    let n = 10_000;
+    group.throughput(Throughput::Elements(n as u64));
+    bench_value_size!("64B", n, 64, BigVal<64>);
+    bench_value_size!("128B", n, 128, BigVal<128>);
+    bench_value_size!("200B", n, 200, BigVal<200>);
+
+    group.finish();
+}
+
+// ── String Keys ───────────────────────────────────────────────────────
+
+fn bench_string_keys(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/string_keys");
+    let n = 10_000;
+    group.throughput(Throughput::Elements(n as u64));
+
+    let mut rng = Sfc64::new(42);
+    let keys: Vec<String> = (0..n)
+        .map(|_| format!("key_{:016x}", rng.next_u64()))
+        .collect();
+    let miss_keys: Vec<String> = (0..n)
+        .map(|_| format!("miss_{:016x}", rng.next_u64()))
+        .collect();
+
+    // Insert
+    group.bench_function("FlatBTree_insert", |b| {
+        b.iter(|| {
+            let mut map = FlatBTree::new();
+            for k in &keys {
+                map.insert(k.clone(), 1u64);
+            }
+            black_box(&map);
+        });
+    });
+    group.bench_function("BTreeMap_insert", |b| {
+        b.iter(|| {
+            let mut map = BTreeMap::new();
+            for k in &keys {
+                map.insert(k.clone(), 1u64);
+            }
+            black_box(&map);
+        });
+    });
+
+    // Lookup hit
+    let mut flat = FlatBTree::new();
+    let mut std_map = BTreeMap::new();
+    for k in &keys {
+        flat.insert(k.clone(), 1u64);
+        std_map.insert(k.clone(), 1u64);
+    }
+
+    group.bench_function("FlatBTree_hit", |b| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for k in &keys {
+                sum += flat.get(k.as_str()).unwrap();
+            }
+            black_box(sum);
+        });
+    });
+    group.bench_function("BTreeMap_hit", |b| {
+        b.iter(|| {
+            let mut sum = 0u64;
+            for k in &keys {
+                sum += std_map.get(k.as_str()).unwrap();
+            }
+            black_box(sum);
+        });
+    });
+
+    // Lookup miss
+    group.bench_function("FlatBTree_miss", |b| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for k in &miss_keys {
+                if flat.contains_key(k.as_str()) {
+                    count += 1;
+                }
+            }
+            black_box(count);
+        });
+    });
+    group.bench_function("BTreeMap_miss", |b| {
+        b.iter(|| {
+            let mut count = 0u64;
+            for k in &miss_keys {
+                if std_map.contains_key(k.as_str()) {
+                    count += 1;
+                }
+            }
+            black_box(count);
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     btree_benches,
     bench_insert,
@@ -573,5 +866,8 @@ criterion_group!(
     bench_sorted_insert,
     bench_clone,
     bench_large_scale,
+    bench_churn,
+    bench_large_values,
+    bench_string_keys,
 );
 criterion_main!(btree_benches);
