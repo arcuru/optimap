@@ -5,7 +5,7 @@ tombstone-free overflow-bit design with power-of-2 bucket addressing.
 
 ## Memory Layout
 
-```
+```text
 Metadata: [h0 h1 ... h15] × num_groups  (16 bytes per group, all 16 valid)
 Overflow: [ovf0 ovf1 ... ovf_{n-1}]     (1 byte per group, separate contiguous array)
 Buckets:  [slot0 slot1 ... slot15] × num_groups

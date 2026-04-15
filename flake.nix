@@ -24,6 +24,8 @@
             rustToolchain
             pkgs.cargo-watch
             pkgs.cargo-nextest
+            pkgs.just
+            pkgs.mdbook
           ];
 
           RUSTFLAGS = "-C target-cpu=native";

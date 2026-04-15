@@ -6,7 +6,7 @@ of hashbrown's 128.
 
 ## Memory Layout
 
-```
+```text
 Metadata: [h0 h1 ... h15] × num_groups  (16 bytes per group, all 16 valid)
 Buckets:  [slot0 slot1 ... slot15] × num_groups
 (No overflow array)

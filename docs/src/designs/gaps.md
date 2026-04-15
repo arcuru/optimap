@@ -5,7 +5,7 @@ UnorderedFlatMap except for a gap (unused 16th slot) in the bucket array.
 
 ## Memory Layout
 
-```
+```text
 Metadata: [h0 h1 ... h14 OVF] × num_groups  (same as UFM)
 Buckets:  [slot0 ... slot14 GAP] × num_groups  (16 slots allocated, 15 used)
 ```

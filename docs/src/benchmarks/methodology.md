@@ -25,7 +25,7 @@ At 70% load: medium = ~10,752 entries, large = ~86,016 entries.
 
 ## Benchmark Suite
 
-```
+```text
 benches/
   throughput.rs      — Core single-operation throughput (pre-allocated, controlled LF)
   construction.rs    — Allocation, growth, clone, drop costs

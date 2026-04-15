@@ -8,7 +8,7 @@ with a companion SIMD metadata array that accelerates lookup, insertion, and del
 
 ## Memory Layout
 
-```
+```text
 Metadata array:  2^n  ×  16-byte "group words"
 ┌─────────────────────────────────┬─────┐
 │ hi0 hi1 hi2 … hi13 hi14        │ ofw │  ← 1 group = 15 metadata bytes + 1 overflow byte
@@ -51,7 +51,7 @@ probing stops immediately.
 
 ### Lookup
 
-```
+```text
 1. h = hash(key)
 2. group_index = h >> (W - n)          // initial (home) group
 3. reduced = reduced_hash(h)
@@ -70,7 +70,7 @@ probing stops immediately.
 
 Combines the duplicate check and empty-slot search into a single SIMD load:
 
-```
+```text
 1. h = hash(key)
 2. If len >= max_load → cold path: find + grow + insert
 3. Single SIMD load on home group metadata:
@@ -88,7 +88,7 @@ The fast path handles >85% of inserts at typical load factors with one SIMD load
 
 ### Deletion (Tombstone-Free)
 
-```
+```text
 1. Find element via lookup
 2. Set metadata byte to EMPTY (0x00)
 3. Decrement count
@@ -120,7 +120,7 @@ Portable scalar fallback: iterate over 15 bytes with a simple loop.
 
 ## Struct Layout (56 bytes)
 
-```
+```text
 mask:       usize   (8)  — num_groups - 1, hot-path masking
 metadata:   *mut u8 (8)  — pointer to group metadata array
 buckets:    *mut u8 (8)  — pointer to bucket array

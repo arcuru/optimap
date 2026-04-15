@@ -5,7 +5,7 @@ design for applications that need predictable high-load performance.
 
 ## Memory Layout
 
-```
+```text
 Metadata: [h0 h1 ... h63] × num_groups  (64 bytes per group, cache-line aligned)
 Buckets:  [slot0 slot1 ... slot63] × num_groups
 ```
