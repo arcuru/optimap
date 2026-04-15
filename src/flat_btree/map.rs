@@ -1038,13 +1038,27 @@ where
 
 impl<K: Ord + Clone, V, S: Default> FromIterator<(K, V)> for FlatBTree<K, V, S> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let iter = iter.into_iter();
-        let (lower, _) = iter.size_hint();
-        let mut map = FlatBTree::with_capacity_and_hasher(lower, S::default());
-        for (k, v) in iter {
-            map.insert(k, v);
+        let mut pairs: Vec<(K, V)> = iter.into_iter().collect();
+        if pairs.is_empty() {
+            return FlatBTree::with_hasher(S::default());
         }
-        map
+
+        // Sort and deduplicate (keep last value for duplicate keys)
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        pairs.dedup_by(|b, a| {
+            if a.0 == b.0 {
+                // Keep the later value (b), move it to a's slot
+                std::mem::swap(&mut a.1, &mut b.1);
+                true
+            } else {
+                false
+            }
+        });
+
+        FlatBTree {
+            tree: RawBTree::bulk_load(pairs),
+            _hasher: PhantomData,
+        }
     }
 }
 

@@ -1171,6 +1171,149 @@ impl<K: Clone, V: Clone> RawBTree<K, V> {
     }
 }
 
+impl<K: Ord + Clone, V> RawBTree<K, V> {
+    /// Build a tree from a pre-sorted, deduplicated vector of key-value pairs.
+    /// Much faster than N individual inserts — O(n) vs O(n log n).
+    pub fn bulk_load(mut pairs: Vec<(K, V)>) -> Self {
+        NodeLayout::<K, V>::assert_capacities();
+
+        if pairs.is_empty() {
+            return Self::new();
+        }
+
+        let n = pairs.len();
+        let leaf_cap = NodeLayout::<K, V>::LEAF_CAP;
+        let num_leaves = n.div_ceil(leaf_cap);
+
+        // Pre-allocate arena
+        // Rough estimate: leaves + internal nodes (leaves / internal_cap per level)
+        let estimated_nodes = num_leaves + num_leaves / 2 + 4;
+        let mut arena = Arena::with_capacity(estimated_nodes as u32);
+
+        // Phase 1: Build leaf nodes from the sorted pairs
+        let mut leaf_indices: Vec<NodeIdx> = Vec::with_capacity(num_leaves);
+        let mut pair_iter = pairs.drain(..);
+
+        for _ in 0..num_leaves {
+            let leaf_idx = arena.alloc_node();
+            let node = arena.node_ptr(leaf_idx);
+
+            let mut count = 0;
+            for _ in 0..leaf_cap {
+                if let Some((k, v)) = pair_iter.next() {
+                    unsafe {
+                        NodeLayout::<K, V>::leaf_key_ptr(node, count).write(k);
+                        NodeLayout::<K, V>::leaf_val_ptr(node, count).write(v);
+                    }
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+
+            unsafe {
+                let header = NodeLayout::<K, V>::header_mut(node);
+                header.len = count as u16;
+                header.flags = NodeHeader::IS_LEAF;
+                header.parent = NO_NODE;
+            }
+
+            leaf_indices.push(leaf_idx);
+        }
+
+        // Phase 2: Wire leaf chain
+        let first_leaf = leaf_indices[0];
+        let last_leaf = *leaf_indices.last().unwrap();
+
+        for i in 0..leaf_indices.len() {
+            let node = arena.node_ptr(leaf_indices[i]);
+            unsafe {
+                NodeLayout::<K, V>::leaf_prev_ptr(node).write(if i > 0 {
+                    leaf_indices[i - 1]
+                } else {
+                    NO_NODE
+                });
+                NodeLayout::<K, V>::leaf_next_ptr(node).write(if i + 1 < leaf_indices.len() {
+                    leaf_indices[i + 1]
+                } else {
+                    NO_NODE
+                });
+            }
+        }
+
+        // Phase 3: Build internal nodes bottom-up
+        let mut children = leaf_indices;
+        let mut height = 0u32;
+
+        while children.len() > 1 {
+            let internal_cap = NodeLayout::<K, V>::INTERNAL_CAP;
+            let mut parents: Vec<NodeIdx> = Vec::new();
+            let mut i = 0;
+
+            while i < children.len() {
+                let parent_idx = arena.alloc_node();
+                let parent_node = arena.node_ptr(parent_idx);
+
+                // How many children fit in this internal node?
+                let remaining = children.len() - i;
+                let n_children = remaining.min(internal_cap + 1);
+                let n_keys = n_children - 1;
+
+                unsafe {
+                    let header = NodeLayout::<K, V>::header_mut(parent_node);
+                    header.len = n_keys as u16;
+                    header.flags = 0; // internal
+                    header.parent = NO_NODE;
+
+                    // Write first child
+                    NodeLayout::<K, V>::internal_child_ptr(parent_node, 0).write(children[i]);
+
+                    // Write keys and remaining children
+                    for j in 0..n_keys {
+                        // Separator key = first key of child[i + j + 1]
+                        let child_idx = children[i + j + 1];
+                        let child_node = arena.node_ptr(child_idx);
+                        let child_header = NodeLayout::<K, V>::header(child_node);
+
+                        let sep_key = if child_header.is_leaf() {
+                            (*NodeLayout::<K, V>::leaf_key_ptr(child_node, 0)).clone()
+                        } else {
+                            (*NodeLayout::<K, V>::internal_key_ptr(child_node, 0)).clone()
+                        };
+
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, j).write(sep_key);
+                        NodeLayout::<K, V>::internal_child_ptr(parent_node, j + 1).write(child_idx);
+                    }
+
+                    // Set parent pointers on children
+                    for j in 0..n_children {
+                        let child_node = arena.node_ptr(children[i + j]);
+                        NodeLayout::<K, V>::header_mut(child_node).parent = parent_idx;
+                    }
+                }
+
+                parents.push(parent_idx);
+                i += n_children;
+            }
+
+            children = parents;
+            height += 1;
+        }
+
+        let root = children[0];
+
+        RawBTree {
+            arena,
+            root,
+            first_leaf,
+            last_leaf,
+            len: n,
+            height,
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<K, V> Drop for RawBTree<K, V> {
     fn drop(&mut self) {
         self.drop_all_contents();
