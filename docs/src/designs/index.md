@@ -1,6 +1,10 @@
 # Design Overview
 
-OptiMap provides five hash map implementations, all sharing these properties:
+OptiMap provides five hash map implementations and one sorted map (B+ tree).
+
+## Hash Maps
+
+The five hash map implementations share these properties:
 
 - SIMD-accelerated metadata probing (SSE2/NEON/scalar fallback)
 - Quadratic probe sequence over power-of-two group counts
@@ -52,3 +56,11 @@ vs hashbrown's 128 (7-bit h2), giving ~2x fewer false-positive SIMD matches.
 | Lookup hit (medium) | 1.20x | 1.11x | **1.01x** | 1x |
 
 Ratios are vs hashbrown; <1.0 = faster than hashbrown.
+
+## Sorted Map
+
+[**FlatBTree**](flat_btree.md) is a B+ tree with 256-byte nodes (4 cache lines),
+arena-allocated with a doubly-linked leaf chain. It provides sorted iteration,
+range queries, and O(log n) lookup. Not a hash map — uses `K: Ord` instead of
+hashing. Faster than `std::BTreeMap` on most operations (iteration 1.6-2x,
+range queries 1.3-1.5x, remove 1.5-2.3x, clone 2-5x).

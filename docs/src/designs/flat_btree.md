@@ -77,3 +77,48 @@ FlatBTree also implements the `SortedMap` trait, which provides:
 FlatBTree is not a replacement for hash maps. Use it when you need sorted
 iteration or range queries. For unordered key-value storage, the hash map
 designs are faster.
+
+## Benchmark Results vs std::BTreeMap
+
+All benchmarks use `u64` keys and values. Ratios <1.0 = FlatBTree is faster.
+
+### Core Operations
+
+| Operation | 1K | 10K | 100K |
+|-----------|:--:|:---:|:----:|
+| Insert (random) | 1.10x | **0.97x** | **0.92x** |
+| Insert (sorted) | **0.34x** | **0.25x** | **0.31x** |
+| Lookup hit | **0.95x** | **0.76x** | **0.78x** |
+| Lookup miss | 1.04x | **0.80x** | **0.78x** |
+| Remove | **0.44x** | **0.66x** | **0.67x** |
+| Iteration | **0.48x** | **0.62x** | **0.64x** |
+| Clone | **0.22x** | **0.30x** | **0.44x** |
+
+### Sorted Operations
+
+| Operation | Size | FlatBTree | BTreeMap |
+|-----------|-----:|:---------:|:--------:|
+| Range query (10% of keyspace) | 10K | **0.76x** | 1x |
+| Range query (10% of keyspace) | 100K | **0.66x** | 1x |
+| first_key_value | any | **~0.3x** | 1x |
+| last_key_value | any | **~0.3x** | 1x |
+
+### Mixed Workloads
+
+| Workload | Ratio |
+|----------|:-----:|
+| Read-heavy (80/15/5) | **0.83x** |
+| Counting (entry API) | 1.08x |
+
+### Key Advantages
+
+- **Sorted insert 3-4x faster**: append fast-path skips tree search when
+  key > all existing keys. Symmetric prepend fast-path for reverse order.
+- **Iteration 1.6-2x faster**: leaf chain traversal, no tree navigation.
+- **Clone 2-5x faster**: bulk arena copy + in-place value cloning.
+- **Remove 1.5-2.3x faster**: lazy removal (shift within leaf, no rebalancing).
+
+### Known Gaps
+
+- **Counting/entry API ~1.08x slower**: VacantEntry re-searches after insert.
+- **Random insert at 1K ~1.10x slower**: tree overhead for small sizes.

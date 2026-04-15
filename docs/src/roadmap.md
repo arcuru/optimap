@@ -4,42 +4,67 @@ Ordered roughly by expected impact. Items in the "Closed" section have been
 thoroughly investigated and proven unproductive — see
 [Closed Investigations](optimization/closed.md) for details.
 
-## Open
+## Open — Hash Maps
 
 ### API Completeness
-
-These are straightforward to implement and needed for HashMap API parity.
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | `reserve()` / `shrink_to_fit()` | Low | Standard pre-allocation / compaction API |
 | `drain()` iterator | Low-Medium | Remove + yield all elements |
-| `retain(&mut self, f)` | Low | Filter in-place, more efficient than collect + remove |
-| `try_insert()` → `Result<&mut V, OccupiedError>` | Low | Stabilized in std as of Rust 1.82 |
-| `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche but used by compilers |
+| `retain(&mut self, f)` | Low | Filter in-place |
+| `try_insert()` | Low | Stabilized in std as of Rust 1.82 |
+| `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche. |
 
 ### Performance
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| Eliminate Borrow indirection in insert/entry | Medium | Add `find_by_hash_eq(&K)` that compares directly without Borrow trait. Use from `insert()` and `entry()` where we already have `&K`. Keep Borrow path for `get()`/`remove()` where Q may differ. |
-| Large-value insert regression (Splitsies 128B+) | Medium | Splitsies is 1.48-1.65x slower than hashbrown for 128B+ values. Needs investigation. |
+| Eliminate Borrow indirection in insert/entry | Medium | `find_by_hash_eq(&K)` that compares directly. |
+| Large-value insert regression (Splitsies 128B+) | Medium | 1.48-1.65x slower than hashbrown. Needs investigation. |
 
 ### Testing / Quality
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| Miri testing | Low-Medium | Verify no UB in raw pointer / SIMD code. Needs scalar fallback (Miri doesn't support SIMD intrinsics). |
-| Fuzzing harness | Low | Property-based fuzzing: random op sequences, verify against std::HashMap. |
-| Allocator stress testing | Low | Custom allocator for misalignment, high addresses, leak tracking. |
+| Miri testing | Low-Medium | Verify no UB. Needs scalar fallback for SIMD intrinsics. |
+| Fuzzing harness | Low | Random op sequences verified against std::HashMap. |
+| Allocator stress testing | Low | Custom allocator for misalignment and leak tracking. |
 
 ### Structural (Speculative)
 
 | Item | Difficulty | Risk | Notes |
 |------|-----------|------|-------|
-| Interleaved memory layout | High | High | `[group0_meta][group0_buckets][group1_meta]...` — better spatial locality, but large bucket types push groups apart. |
-| Generic group size | High | Unclear | `GROUP_SIZE` as const generic. Smaller groups for small tables, larger for big ones. Touches everything. |
-| Concurrent / lock-free variant | Very High | Research | Read-optimized concurrent map. Overflow bits are suited to lock-free reads (miss = one byte read, no atomics). |
+| Interleaved memory layout | High | High | Better spatial locality, but large bucket types push groups apart. |
+| Generic group size | High | Unclear | `GROUP_SIZE` as const generic. |
+| Concurrent / lock-free variant | Very High | Research | Overflow bits are suited to lock-free reads. |
+
+## Open — FlatBTree
+
+### Performance
+
+| Item | Difficulty | Notes |
+|------|-----------|-------|
+| Remove rebalancing (steal/merge) | Medium | Currently lazy (no rebalancing on remove). Tree stays valid but wastes memory under heavy churn. Low-watermark nodes are never reclaimed. |
+| VacantEntry re-search elimination | Medium | `VacantEntry::insert` currently re-searches after inserting to find the value reference. Should return the position directly from the insert path. Affects entry API / counting workload perf (~1.08x vs BTreeMap). |
+| Child node prefetching | Low | Prefetch next child's cache lines during internal node scan. Already faster than BTreeMap — diminishing returns. |
+
+### API Completeness
+
+| Item | Difficulty | Notes |
+|------|-----------|-------|
+| `pop_first()` / `pop_last()` | Low | Remove + return min/max element. Common sorted map operation. |
+| `range_mut()` | Low-Medium | Mutable range iteration. |
+| `into_keys()` / `into_values()` | Low | Owning key/value iterators. |
+| `shrink_to_fit()` | Medium | Compact the arena. Requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
+| `SortedMap` for `std::BTreeMap` | Low | Implement `SortedMap` trait for std BTreeMap, enabling generic sorted code. |
+
+### Testing / Quality
+
+| Item | Difficulty | Notes |
+|------|-----------|-------|
+| Miri testing | High | FlatBTree has extensive unsafe pointer arithmetic in node.rs and raw.rs. Miri validation is critical. |
+| Fuzz against BTreeMap | Low-Medium | Property-based fuzzing: random op sequences, verify against std::BTreeMap for key presence, iteration order, and range correctness. |
 
 ## Closed
 
