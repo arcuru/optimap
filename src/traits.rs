@@ -117,6 +117,36 @@ pub trait SortedMap<K, V> {
         R: std::ops::RangeBounds<Q> + 'a;
 }
 
+// ── SortedMap impl for std::BTreeMap ────────────────────────────────────────
+
+impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
+    fn first_key_value(&self) -> Option<(&K, &V)> {
+        self.iter().next()
+    }
+
+    fn last_key_value(&self) -> Option<(&K, &V)> {
+        self.iter().next_back()
+    }
+
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter()
+    }
+
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: Borrow<Q> + 'a,
+        V: 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        std::collections::BTreeMap::range(self, range)
+    }
+}
+
 // ── Macro to generate trait impl that delegates to inherent methods ──────────
 
 macro_rules! impl_map_trait {
