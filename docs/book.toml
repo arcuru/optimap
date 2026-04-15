@@ -1,0 +1,11 @@
+[book]
+authors = ["Patrick Jackson"]
+title = "OptiMap Documentation"
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+
+[rust]
+edition = "2024"

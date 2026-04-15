@@ -2,3 +2,4 @@
 Cargo.lock
 .direnv/
 .envrc
+docs/book/
