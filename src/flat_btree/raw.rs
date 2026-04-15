@@ -441,6 +441,38 @@ impl<K: Ord, V> RawBTree<K, V> {
         self.last_leaf = leaf_idx;
         self.len = 1;
     }
+
+    /// Build the path from root to a given node by following parent pointers.
+    fn path_to_node(&self, target: NodeIdx) -> Vec<(NodeIdx, usize)> {
+        let mut path = Vec::new();
+        let mut node_idx = target;
+
+        loop {
+            let node = self.arena.node_ptr(node_idx);
+            let parent = unsafe { NodeLayout::<K, V>::header(node).parent };
+            if parent == NO_NODE {
+                break;
+            }
+
+            let parent_node = self.arena.node_ptr(parent);
+            let parent_len = unsafe { NodeLayout::<K, V>::header(parent_node).len } as usize;
+            let mut child_slot = parent_len;
+            for i in 0..=parent_len {
+                let child =
+                    unsafe { NodeLayout::<K, V>::internal_child_ptr(parent_node, i).read() };
+                if child == node_idx {
+                    child_slot = i;
+                    break;
+                }
+            }
+
+            path.push((parent, child_slot));
+            node_idx = parent;
+        }
+
+        path.reverse();
+        path
+    }
 }
 
 /// Result of an entry search on the B-tree.
@@ -477,6 +509,37 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             return None;
         }
 
+        // Fast path: append to the end (key > all existing keys).
+        // This is common for sorted/sequential inserts.
+        {
+            let last_node = self.arena.node_ptr(self.last_leaf);
+            let last_header = unsafe { NodeLayout::<K, V>::header(last_node) };
+            let last_len = last_header.len as usize;
+            if last_len > 0 {
+                let last_key =
+                    unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(last_node, last_len - 1) };
+                if key > *last_key {
+                    // Key goes at the end of the last leaf
+                    if last_len < NodeLayout::<K, V>::LEAF_CAP {
+                        unsafe {
+                            NodeLayout::<K, V>::leaf_key_ptr(last_node, last_len).write(key);
+                            NodeLayout::<K, V>::leaf_val_ptr(last_node, last_len).write(value);
+                            NodeLayout::<K, V>::header_mut(last_node).len = (last_len + 1) as u16;
+                        }
+                        self.len += 1;
+                        return None;
+                    }
+                    // Last leaf is full: need split. Build path to last leaf.
+                    let path = self.path_to_node(self.last_leaf);
+                    let (promoted_key, new_leaf_idx) =
+                        self.leaf_split_and_insert(self.last_leaf, last_len, key, value);
+                    self.len += 1;
+                    self.propagate_split(path, promoted_key, new_leaf_idx);
+                    return None;
+                }
+            }
+        }
+
         let (leaf_idx, pos, path) = self.search_for_insert(&key);
 
         // Check if key already exists at this position
@@ -497,17 +560,13 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
 
         // Insert into leaf
         if len < NodeLayout::<K, V>::LEAF_CAP {
-            // Room in leaf: shift right and insert
             self.leaf_insert_at(leaf_idx, pos, key, value);
             self.len += 1;
             None
         } else {
-            // Leaf is full: split
             let (promoted_key, new_leaf_idx) =
                 self.leaf_split_and_insert(leaf_idx, pos, key, value);
             self.len += 1;
-
-            // Propagate split upward
             self.propagate_split(path, promoted_key, new_leaf_idx);
             None
         }
