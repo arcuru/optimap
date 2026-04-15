@@ -40,3 +40,7 @@ harness = false
 [[bench]]
 name = "load_factor"
 harness = false
+
+[[bench]]
+name = "btree"
+harness = false
