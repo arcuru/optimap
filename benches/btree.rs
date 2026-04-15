@@ -444,6 +444,121 @@ fn bench_clone(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Large Scale (DRAM-bound) ───────────────────────────────────────────
+
+fn bench_large_scale(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/large_scale");
+    group.sample_size(10);
+
+    for &n in &[1_000_000, 5_000_000, 20_000_000] {
+        let keys = make_random_keys(n, 42);
+        let label = format!("{}M", n / 1_000_000);
+
+        // Build maps once (expensive)
+        let flat = build_flat::<0>(&keys);
+        let std_map = build_std::<0>(&keys);
+
+        // Lookup hit
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_function(BenchmarkId::new("FlatBTree_hit", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in &keys[..n.min(100_000)] {
+                    sum = sum.wrapping_add(*flat.get(&k).unwrap());
+                }
+                black_box(sum);
+            });
+        });
+        group.bench_function(BenchmarkId::new("BTreeMap_hit", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in &keys[..n.min(100_000)] {
+                    sum = sum.wrapping_add(*std_map.get(&k).unwrap());
+                }
+                black_box(sum);
+            });
+        });
+
+        // Lookup miss
+        let miss_keys = make_miss_keys(100_000);
+        group.bench_function(BenchmarkId::new("FlatBTree_miss", &label), |b| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in &miss_keys {
+                    if flat.contains_key(&k) {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+        group.bench_function(BenchmarkId::new("BTreeMap_miss", &label), |b| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in &miss_keys {
+                    if std_map.contains_key(&k) {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+
+        // Iteration (full scan)
+        group.bench_function(BenchmarkId::new("FlatBTree_iter", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for (_, &v) in flat.iter() {
+                    sum = sum.wrapping_add(v);
+                }
+                black_box(sum);
+            });
+        });
+        group.bench_function(BenchmarkId::new("BTreeMap_iter", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for (_, &v) in std_map.iter() {
+                    sum = sum.wrapping_add(v);
+                }
+                black_box(sum);
+            });
+        });
+
+        // Range query (1% of keyspace, 100 queries)
+        let min_key = *keys.iter().min().unwrap();
+        let max_key = *keys.iter().max().unwrap();
+        let range_size = (max_key - min_key) / 100;
+        let mut rng = Sfc64::new(456);
+        let range_starts: Vec<u64> = (0..100)
+            .map(|_| min_key + (rng.next_u64() % (max_key - min_key - range_size)))
+            .collect();
+
+        group.bench_function(BenchmarkId::new("FlatBTree_range", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &start in &range_starts {
+                    for (_, &v) in flat.range(start..start + range_size) {
+                        sum = sum.wrapping_add(v);
+                    }
+                }
+                black_box(sum);
+            });
+        });
+        group.bench_function(BenchmarkId::new("BTreeMap_range", &label), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &start in &range_starts {
+                    for (_, &v) in std_map.range(start..start + range_size) {
+                        sum = sum.wrapping_add(v);
+                    }
+                }
+                black_box(sum);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     btree_benches,
     bench_insert,
@@ -457,5 +572,6 @@ criterion_group!(
     bench_mixed_read_heavy,
     bench_sorted_insert,
     bench_clone,
+    bench_large_scale,
 );
 criterion_main!(btree_benches);
