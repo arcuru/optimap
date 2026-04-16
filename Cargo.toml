@@ -20,6 +20,7 @@ indexmap = "2"
 rustc-hash = "2"
 ahash = "0.8"
 fnv = "1.0"
+proptest = "1"
 
 [[bench]]
 name = "throughput"

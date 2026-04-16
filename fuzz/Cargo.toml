@@ -1,0 +1,57 @@
+[package]
+name = "optimap-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.optimap]
+path = ".."
+
+[[bin]]
+name = "fuzz_hashmap_ufm"
+path = "fuzz_targets/fuzz_hashmap_ufm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hashmap_splitsies"
+path = "fuzz_targets/fuzz_hashmap_splitsies.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hashmap_ipo"
+path = "fuzz_targets/fuzz_hashmap_ipo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hashmap_ipo64"
+path = "fuzz_targets/fuzz_hashmap_ipo64.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hashmap_gaps"
+path = "fuzz_targets/fuzz_hashmap_gaps.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_btree"
+path = "fuzz_targets/fuzz_btree.rs"
+test = false
+doc = false
+bench = false
