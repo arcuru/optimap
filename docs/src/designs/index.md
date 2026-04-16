@@ -64,3 +64,32 @@ arena-allocated with a doubly-linked leaf chain. It provides sorted iteration,
 range queries, and O(log n) lookup. Not a hash map — uses `K: Ord` instead of
 hashing. Faster than `std::BTreeMap` on most operations (iteration 1.6-2x,
 range queries 1.3-1.5x, remove 1.5-2.3x, clone 2-5x).
+
+## Trait Hierarchy
+
+### `Map<K: Hash + Eq, V>` — Core interface (all 6 designs + hashbrown + std)
+
+| Category | Methods |
+|----------|---------|
+| Construction | `new()`, `with_capacity()` |
+| Lookup | `get()`, `get_key_value()`, `get_mut()`, `contains_key()` |
+| Mutation | `insert()`, `remove()`, `remove_entry()` |
+| Capacity | `len()`, `is_empty()`, `capacity()`, `reserve()`, `shrink_to_fit()` |
+| Bulk | `clear()`, `retain()`, `drain()` |
+| Iteration | `iter()`, `iter_mut()`, `keys()`, `values()`, `values_mut()` |
+
+### `SortedMap<K, V>` — Ordered operations (FlatBTree + std::BTreeMap)
+
+| Method | Description |
+|--------|-------------|
+| `first_key_value()` / `last_key_value()` | Peek at min/max |
+| `pop_first()` / `pop_last()` | Remove and return min/max |
+| `iter_sorted()` | Sorted iteration |
+| `range(bounds)` | Range queries |
+
+### Entry API (all 6 designs)
+
+`or_insert()`, `or_insert_with()`, `or_insert_with_key()`, `or_default()`,
+`key()`, `and_modify()` on `Entry`. `get()`, `get_mut()`, `insert()`,
+`into_mut()`, `key()` on `OccupiedEntry`. `insert()`, `key()`, `into_key()`
+on `VacantEntry`.

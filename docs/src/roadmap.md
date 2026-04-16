@@ -4,16 +4,31 @@ Ordered roughly by expected impact. Items in the "Closed" section have been
 thoroughly investigated and proven unproductive — see
 [Closed Investigations](optimization/closed.md) for details.
 
+## Recently Completed
+
+### Hash Map + FlatBTree API (April 2025)
+
+Full `Map` trait expansion matching std::HashMap's interface:
+
+| Item | Scope |
+|------|-------|
+| `get_key_value()` / `remove_entry()` | All maps, `Map` trait |
+| `iter_mut()` / `keys()` / `values()` / `values_mut()` | All maps, `Map` trait (defaults for `keys`/`values`/`values_mut`) |
+| `reserve()` / `shrink_to_fit()` | All hash maps + FlatBTree, `Map` trait |
+| `drain()` iterator | All hash maps + FlatBTree, `Map` trait |
+| `retain(&mut self, f)` | All hash maps + FlatBTree, `Map` trait |
+| Entry: `and_modify()` / `or_insert_with_key()` / `into_key()` | All 6 map types |
+| `pop_first()` / `pop_last()` | FlatBTree, `SortedMap` trait |
+| `SortedMap` for `std::BTreeMap` | `pop_first` / `pop_last` added |
+
 ## Open — Hash Maps
 
 ### API Completeness
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| `reserve()` / `shrink_to_fit()` | Low | Standard pre-allocation / compaction API |
-| `drain()` iterator | Low-Medium | Remove + yield all elements |
-| `retain(&mut self, f)` | Low | Filter in-place |
 | `try_insert()` | Low | Stabilized in std as of Rust 1.82 |
+| `into_keys()` / `into_values()` | Low | Owning iterators. |
 | `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche. |
 
 ### Performance
@@ -53,11 +68,9 @@ thoroughly investigated and proven unproductive — see
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| `pop_first()` / `pop_last()` | Low | Remove + return min/max element. Common sorted map operation. |
 | `range_mut()` | Low-Medium | Mutable range iteration. |
 | `into_keys()` / `into_values()` | Low | Owning key/value iterators. |
-| `shrink_to_fit()` | Medium | Compact the arena. Requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
-| `SortedMap` for `std::BTreeMap` | Low | Implement `SortedMap` trait for std BTreeMap, enabling generic sorted code. |
+| Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compact the arena requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
 
 ### Testing / Quality
 

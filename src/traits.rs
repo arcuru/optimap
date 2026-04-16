@@ -49,6 +49,12 @@ pub trait Map<K: Hash + Eq, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized;
 
+    /// Returns the key-value pair corresponding to the key.
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
     /// Look up a value by key, returning a mutable reference.
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
@@ -57,6 +63,12 @@ pub trait Map<K: Hash + Eq, V> {
 
     /// Remove a key, returning its value if present.
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Removes a key from the map, returning the key and value if it was present.
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized;
@@ -84,11 +96,58 @@ pub trait Map<K: Hash + Eq, V> {
     /// Remove all elements, keeping allocated memory.
     fn clear(&mut self);
 
+    /// Reserves capacity for at least `additional` more elements.
+    fn reserve(&mut self, additional: usize);
+
+    /// Shrinks the capacity as much as possible.
+    fn shrink_to_fit(&mut self);
+
     /// Iterate over key-value pairs in arbitrary order.
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
         V: 'a;
+
+    /// Iterate over key-value pairs with mutable values.
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a;
+
+    /// Iterate over keys.
+    fn keys<'a>(&'a self) -> impl Iterator<Item = &'a K>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over values.
+    fn values<'a>(&'a self) -> impl Iterator<Item = &'a V>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter().map(|(_, v)| v)
+    }
+
+    /// Iterate over mutable values.
+    fn values_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut V>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter_mut().map(|(_, v)| v)
+    }
+
+    /// Retains only the elements specified by the predicate.
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool;
+
+    /// Clears the map, returning all key-value pairs as an iterator.
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)>;
 }
 
 /// Trait for sorted map implementations that support ordered operations.
@@ -101,6 +160,12 @@ pub trait SortedMap<K, V> {
 
     /// Returns the last (maximum) key-value pair.
     fn last_key_value(&self) -> Option<(&K, &V)>;
+
+    /// Removes and returns the first (minimum) key-value pair.
+    fn pop_first(&mut self) -> Option<(K, V)>;
+
+    /// Removes and returns the last (maximum) key-value pair.
+    fn pop_last(&mut self) -> Option<(K, V)>;
 
     /// Iterate over all key-value pairs in sorted order.
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -126,6 +191,14 @@ impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
 
     fn last_key_value(&self) -> Option<(&K, &V)> {
         self.iter().next_back()
+    }
+
+    fn pop_first(&mut self) -> Option<(K, V)> {
+        std::collections::BTreeMap::pop_first(self)
+    }
+
+    fn pop_last(&mut self) -> Option<(K, V)> {
+        std::collections::BTreeMap::pop_last(self)
     }
 
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -172,6 +245,13 @@ macro_rules! impl_map_trait {
             {
                 $type::get(self, key)
             }
+            fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::get_key_value(self, key)
+            }
             fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
             where
                 K: ::std::borrow::Borrow<Q>,
@@ -185,6 +265,13 @@ macro_rules! impl_map_trait {
                 Q: ::std::hash::Hash + Eq + ?Sized,
             {
                 $type::remove(self, key)
+            }
+            fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+            where
+                K: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::remove_entry(self, key)
             }
             fn contains_key<Q>(&self, key: &Q) -> bool
             where
@@ -202,12 +289,34 @@ macro_rules! impl_map_trait {
             fn clear(&mut self) {
                 $type::clear(self)
             }
+            fn reserve(&mut self, additional: usize) {
+                $type::reserve(self, additional)
+            }
+            fn shrink_to_fit(&mut self) {
+                $type::shrink_to_fit(self)
+            }
             fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
             where
                 K: 'a,
                 V: 'a,
             {
                 $type::iter(self)
+            }
+            fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+            where
+                K: 'a,
+                V: 'a,
+            {
+                $type::iter_mut(self)
+            }
+            fn retain<F>(&mut self, f: F)
+            where
+                F: FnMut(&K, &mut V) -> bool,
+            {
+                $type::retain(self, f)
+            }
+            fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+                $type::drain(self)
             }
         }
     };
@@ -238,6 +347,13 @@ where
     {
         hashbrown::HashMap::get(self, key)
     }
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::get_key_value(self, key)
+    }
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -251,6 +367,13 @@ where
         Q: Hash + Eq + ?Sized,
     {
         hashbrown::HashMap::remove(self, key)
+    }
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashMap::remove_entry(self, key)
     }
     fn contains_key<Q>(&self, key: &Q) -> bool
     where
@@ -268,12 +391,34 @@ where
     fn clear(&mut self) {
         hashbrown::HashMap::clear(self)
     }
+    fn reserve(&mut self, additional: usize) {
+        hashbrown::HashMap::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        hashbrown::HashMap::shrink_to_fit(self)
+    }
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
         V: 'a,
     {
         hashbrown::HashMap::iter(self)
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        hashbrown::HashMap::iter_mut(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        hashbrown::HashMap::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        hashbrown::HashMap::drain(self)
     }
 }
 
@@ -300,6 +445,13 @@ where
     {
         std::collections::HashMap::get(self, key)
     }
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::get_key_value(self, key)
+    }
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -313,6 +465,13 @@ where
         Q: Hash + Eq + ?Sized,
     {
         std::collections::HashMap::remove(self, key)
+    }
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashMap::remove_entry(self, key)
     }
     fn contains_key<Q>(&self, key: &Q) -> bool
     where
@@ -330,11 +489,33 @@ where
     fn clear(&mut self) {
         std::collections::HashMap::clear(self)
     }
+    fn reserve(&mut self, additional: usize) {
+        std::collections::HashMap::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        std::collections::HashMap::shrink_to_fit(self)
+    }
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
         V: 'a,
     {
         std::collections::HashMap::iter(self)
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        std::collections::HashMap::iter_mut(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        std::collections::HashMap::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        std::collections::HashMap::drain(self)
     }
 }

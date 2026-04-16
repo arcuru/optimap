@@ -60,6 +60,7 @@ infrastructure.
 
 FlatBTree also implements the `SortedMap` trait, which provides:
 - `first_key_value()` / `last_key_value()` — O(1)
+- `pop_first()` / `pop_last()` — O(log n), remove and return min/max
 - `range(bounds)` — O(log n + k) where k is the number of results
 - `iter_sorted()` — O(n) sorted iteration
 

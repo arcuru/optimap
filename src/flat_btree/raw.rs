@@ -1020,6 +1020,31 @@ impl<K: Ord, V> RawBTree<K, V> {
         None
     }
 
+    /// Get key-value pair by equality only (O(n) leaf scan). Used by Map trait impl.
+    pub fn get_key_value_by_eq<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
+        let mut leaf_idx = self.first_leaf;
+        while leaf_idx != NO_NODE {
+            let node = self.arena.node_ptr(leaf_idx);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            for i in 0..len {
+                let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, i) };
+                if k.borrow() == key {
+                    let v = unsafe { &*NodeLayout::<K, V>::leaf_val_ptr(node, i) };
+                    return Some((k, v));
+                }
+            }
+
+            leaf_idx = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+        }
+        None
+    }
+
     /// Get mutable by equality only (O(n) leaf scan). Used by Map trait impl.
     pub fn get_mut_by_eq<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
@@ -1052,6 +1077,15 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         K: Borrow<Q>,
         Q: Eq + ?Sized,
     {
+        self.remove_entry_by_eq(key).map(|(_, v)| v)
+    }
+
+    /// Remove entry by equality (O(n) leaf scan). Used by Map trait impl.
+    pub fn remove_entry_by_eq<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
         let mut leaf_idx = self.first_leaf;
         while leaf_idx != NO_NODE {
             let node = self.arena.node_ptr(leaf_idx);
@@ -1077,18 +1111,28 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         Q: Ord + ?Sized,
     {
         let (leaf_idx, slot_idx) = self.search(key)?;
+        let (_, v) = self.leaf_remove_at(leaf_idx, slot_idx);
+        Some(v)
+    }
+
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let (leaf_idx, slot_idx) = self.search(key)?;
         Some(self.leaf_remove_at(leaf_idx, slot_idx))
     }
 
     /// Remove the element at position `idx` in a leaf, then rebalance if needed.
-    fn leaf_remove_at(&mut self, leaf_idx: NodeIdx, idx: usize) -> V {
+    pub(crate) fn leaf_remove_at(&mut self, leaf_idx: NodeIdx, idx: usize) -> (K, V) {
         let node = self.arena.node_ptr(leaf_idx);
         let header = unsafe { NodeLayout::<K, V>::header_mut(node) };
         let len = header.len as usize;
         debug_assert!(idx < len);
 
-        let value = unsafe {
-            let _key = NodeLayout::<K, V>::leaf_key_ptr(node, idx).read();
+        let kv = unsafe {
+            let key = NodeLayout::<K, V>::leaf_key_ptr(node, idx).read();
             let value = NodeLayout::<K, V>::leaf_val_ptr(node, idx).read();
 
             for i in idx..len - 1 {
@@ -1102,9 +1146,8 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             }
 
             header.len = (len - 1) as u16;
-            drop(_key);
             self.len -= 1;
-            value
+            (key, value)
         };
 
         // Rebalance if underflow (skip for root leaf or single-node tree)
@@ -1114,7 +1157,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             self.rebalance_leaf(leaf_idx);
         }
 
-        value
+        kv
     }
 
     /// Rebalance a leaf that has fewer than LEAF_CAP/2 elements.

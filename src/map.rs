@@ -108,6 +108,19 @@ where
         Some(&bucket.1)
     }
 
+    /// Returns the key-value pair corresponding to the key.
+    #[inline]
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(key);
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+        Some((&bucket.0, &bucket.1))
+    }
+
     /// Returns a mutable reference to the value corresponding to the key.
     #[inline]
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
@@ -230,6 +243,19 @@ where
     /// Removes a key from the map, returning the value if it was present.
     #[inline]
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(key);
+        self.table
+            .remove_by_hash(h, |k| k.borrow() == key)
+            .map(|(_, v)| v)
+    }
+
+    /// Removes a key from the map, returning the key and value if it was present.
+    #[inline]
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -369,6 +395,91 @@ where
             inner: self.iter_mut(),
         }
     }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// The predicate receives a reference to the key and a mutable reference
+    /// to the value. Elements for which the predicate returns `false` are removed.
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        use crate::raw::group::{Group, EMPTY, overflow_bit};
+
+        if !self.table.is_allocated() {
+            return;
+        }
+
+        for gi in 0..=self.table.mask {
+            let meta = unsafe { self.table.meta_ptr(gi) };
+            let occupied = unsafe { Group::match_non_empty(meta) };
+            for si in occupied {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                if !f(&bucket.0, &mut bucket.1) {
+                    // Hash the key to do proper anti-drift before dropping
+                    let h = self.hash_key(&bucket.0);
+                    unsafe {
+                        std::ptr::drop_in_place(bucket);
+                        Group::set_meta(meta, si, EMPTY);
+                    }
+                    self.table.len -= 1;
+
+                    // Anti-drift
+                    let initial_gi = self.table.group_index(h);
+                    let initial_meta = unsafe { self.table.meta_ptr(initial_gi) };
+                    let ofw_bit = overflow_bit(h);
+                    if unsafe { Group::has_overflow_bit(initial_meta, ofw_bit) } {
+                        self.table.max_load = self.table.max_load.saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reserves capacity for at least `additional` more elements.
+    pub fn reserve(&mut self, additional: usize) {
+        let needed = self.table.len.checked_add(additional).expect("capacity overflow");
+        if !self.table.is_allocated() {
+            if additional > 0 {
+                self.table.allocate(RawTable::<K, V>::groups_for_capacity(needed));
+            }
+            return;
+        }
+        if needed > self.table.max_load {
+            let new_groups = RawTable::<K, V>::groups_for_capacity(needed);
+            if new_groups > self.table.num_groups() {
+                self.table.rehash_with(new_groups, &self.hash_builder);
+            }
+        }
+    }
+
+    /// Shrinks the capacity as much as possible.
+    pub fn shrink_to_fit(&mut self) {
+        if self.table.len == 0 {
+            let mut empty = RawTable::new();
+            std::mem::swap(&mut self.table, &mut empty);
+            return;
+        }
+        let min_groups = RawTable::<K, V>::groups_for_capacity(self.table.len);
+        if min_groups < self.table.num_groups() {
+            self.table.rehash_with(min_groups, &self.hash_builder);
+        }
+    }
+
+    /// Clears the map, returning all key-value pairs as an iterator.
+    pub fn drain(&mut self) -> IntoIter<K, V> {
+        let table = std::mem::replace(&mut self.table, RawTable::new());
+        let mask = if table.metadata.is_null() {
+            crate::raw::bitmask::BitMask(0)
+        } else {
+            unsafe { crate::raw::group::Group::match_non_empty(table.metadata) }
+        };
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
+    }
 }
 
 // ── Entry API ───────────────────────────────────────────────────────────────
@@ -419,11 +530,35 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
         self.or_insert_with(V::default)
     }
 
+    /// Ensures a value is in the entry by inserting the result of the
+    /// function (which receives the key) if empty.
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.value,
+            Entry::Vacant(e) => {
+                let value = default(&e.key);
+                e.insert(value)
+            }
+        }
+    }
+
     /// Returns a reference to this entry's key.
     pub fn key(&self) -> &K {
         match self {
             Entry::Occupied(e) => &e.key,
             Entry::Vacant(e) => &e.key,
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry before any
+    /// potential inserts.
+    pub fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self {
+        match self {
+            Entry::Occupied(mut e) => {
+                f(e.get_mut());
+                Entry::Occupied(e)
+            }
+            Entry::Vacant(e) => Entry::Vacant(e),
         }
     }
 }
@@ -478,6 +613,11 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
     /// Gets a reference to the key.
     pub fn key(&self) -> &K {
         &self.key
+    }
+
+    /// Takes ownership of the key.
+    pub fn into_key(self) -> K {
+        self.key
     }
 }
 

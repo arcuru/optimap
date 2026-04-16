@@ -91,6 +91,44 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
         self.tree.remove(key)
     }
 
+    /// Removes a key from the map, returning the key and value if it was present.
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.tree.remove_entry(key)
+    }
+
+    /// Removes and returns the first (minimum) key-value pair.
+    pub fn pop_first(&mut self) -> Option<(K, V)> {
+        if self.tree.first_leaf == NO_NODE {
+            return None;
+        }
+        let node = self.tree.arena.node_ptr(self.tree.first_leaf);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        if header.len == 0 {
+            return None;
+        }
+        let leaf_idx = self.tree.first_leaf;
+        Some(self.tree.leaf_remove_at(leaf_idx, 0))
+    }
+
+    /// Removes and returns the last (maximum) key-value pair.
+    pub fn pop_last(&mut self) -> Option<(K, V)> {
+        if self.tree.last_leaf == NO_NODE {
+            return None;
+        }
+        let node = self.tree.arena.node_ptr(self.tree.last_leaf);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        if header.len == 0 {
+            return None;
+        }
+        let last_idx = header.len as usize - 1;
+        let leaf_idx = self.tree.last_leaf;
+        Some(self.tree.leaf_remove_at(leaf_idx, last_idx))
+    }
+
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         use super::raw::EntrySearch;
@@ -157,6 +195,18 @@ impl<'a, K: Ord + Clone, V> Entry<'a, K, V> {
         match self {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(default()),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the
+    /// function (which receives the key) if empty.
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let value = default(&e.key);
+                e.insert(value)
+            }
         }
     }
 
@@ -236,6 +286,11 @@ impl<'a, K: Ord + Clone, V> VacantEntry<'a, K, V> {
     pub fn key(&self) -> &K {
         &self.key
     }
+
+    /// Takes ownership of the key.
+    pub fn into_key(self) -> K {
+        self.key
+    }
 }
 
 impl<K: Ord, V, S> FlatBTree<K, V, S> {
@@ -246,6 +301,22 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
         Q: Ord + ?Sized,
     {
         self.tree.get(key)
+    }
+
+    /// Returns the key-value pair corresponding to the key.
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let (leaf_idx, slot_idx) = self.tree.search(key)?;
+        let node = self.tree.arena.node_ptr(leaf_idx);
+        Some(unsafe {
+            (
+                &*NodeLayout::<K, V>::leaf_key_ptr(node, slot_idx),
+                &*NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx),
+            )
+        })
     }
 
     /// Look up a value by key, returning a mutable reference.
@@ -468,6 +539,15 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
 }
 
 impl<K, V, S> FlatBTree<K, V, S> {
+    /// Shrinks the capacity as much as possible.
+    ///
+    /// For FlatBTree this is a no-op since the arena allocator does not
+    /// support shrinking individual node blocks.
+    pub fn shrink_to_fit(&mut self) {
+        // Arena-based allocation doesn't support shrinking in-place.
+        // A full rebuild would be possible but is left as future work.
+    }
+
     /// Retains only the elements specified by the predicate.
     /// Elements are visited in sorted key order.
     pub fn retain<F>(&mut self, mut f: F)
@@ -618,12 +698,28 @@ where
         self.tree.get_mut_by_eq(key)
     }
 
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.tree.get_key_value_by_eq(key)
+    }
+
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         self.tree.remove_by_eq(key)
+    }
+
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.tree.remove_entry_by_eq(key)
     }
 
     fn len(&self) -> usize {
@@ -638,12 +734,39 @@ where
         self.tree.clear();
     }
 
+    fn reserve(&mut self, additional: usize) {
+        FlatBTree::reserve(self, additional)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        FlatBTree::shrink_to_fit(self)
+    }
+
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
         V: 'a,
     {
         FlatBTree::iter(self)
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        FlatBTree::iter_mut(self)
+    }
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        FlatBTree::retain(self, f)
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        FlatBTree::drain(self)
     }
 }
 
@@ -974,13 +1097,21 @@ impl<K, V> std::iter::FusedIterator for RangeIter<'_, K, V> {}
 
 // ── SortedMap trait impl ────────────────────────────────────────────────
 
-impl<K: Ord, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
+impl<K: Ord + Clone, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
     fn first_key_value(&self) -> Option<(&K, &V)> {
         FlatBTree::first_key_value(self)
     }
 
     fn last_key_value(&self) -> Option<(&K, &V)> {
         FlatBTree::last_key_value(self)
+    }
+
+    fn pop_first(&mut self) -> Option<(K, V)> {
+        FlatBTree::pop_first(self)
+    }
+
+    fn pop_last(&mut self) -> Option<(K, V)> {
+        FlatBTree::pop_last(self)
     }
 
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>

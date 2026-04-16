@@ -107,7 +107,7 @@ impl<K, V> RawTable<K, V> {
         !self.metadata.is_null()
     }
 
-    fn groups_for_capacity(capacity: usize) -> usize {
+    pub(crate) fn groups_for_capacity(capacity: usize) -> usize {
         let min_slots =
             (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
         let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
@@ -281,7 +281,7 @@ impl<K, V> RawTable<K, V> {
         }
     }
 
-    pub(crate) fn remove_by_hash<F>(&mut self, h: u64, eq: F) -> Option<V>
+    pub(crate) fn remove_by_hash<F>(&mut self, h: u64, eq: F) -> Option<(K, V)>
     where
         F: Fn(&K) -> bool,
     {
@@ -302,8 +302,7 @@ impl<K, V> RawTable<K, V> {
                 self.max_load = self.max_load.saturating_sub(1);
             }
 
-            let (_k, v) = bucket;
-            Some(v)
+            Some(bucket)
         }
     }
 

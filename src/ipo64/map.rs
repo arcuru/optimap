@@ -92,6 +92,18 @@ where
     }
 
     #[inline]
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(key);
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+        Some((&bucket.0, &bucket.1))
+    }
+
+    #[inline]
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -201,6 +213,18 @@ where
 
     #[inline]
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(key);
+        self.table
+            .remove_by_hash(h, |k| k.borrow() == key)
+            .map(|(_, v)| v)
+    }
+
+    #[inline]
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -326,6 +350,81 @@ where
             inner: self.iter_mut(),
         }
     }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        use super::raw::group::{Group, TOMBSTONE};
+        if !self.table.is_allocated() {
+            return;
+        }
+        for gi in 0..=self.table.mask {
+            let meta = unsafe { self.table.meta_ptr(gi) };
+            let occupied = unsafe { Group::match_occupied(meta) };
+            for si in occupied {
+                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                if !f(&bucket.0, &mut bucket.1) {
+                    unsafe {
+                        std::ptr::drop_in_place(bucket);
+                        Group::set_meta(meta, si, TOMBSTONE);
+                    }
+                    self.table.len -= 1;
+                }
+            }
+        }
+    }
+
+    pub fn reserve(&mut self, additional: usize) {
+        use super::raw::RawTable;
+        let needed = self
+            .table
+            .len
+            .checked_add(additional)
+            .expect("capacity overflow");
+        if !self.table.is_allocated() {
+            if additional > 0 {
+                self.table
+                    .allocate(RawTable::<K, V>::groups_for_capacity(needed));
+            }
+            return;
+        }
+        if additional > self.table.growth_left {
+            let new_groups = RawTable::<K, V>::groups_for_capacity(needed);
+            if new_groups > self.table.num_groups() {
+                self.table.rehash_with(new_groups, &self.hash_builder);
+            }
+        }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        use super::raw::RawTable;
+        if self.table.len == 0 {
+            let mut empty = RawTable::new();
+            std::mem::swap(&mut self.table, &mut empty);
+            return;
+        }
+        let min_groups = RawTable::<K, V>::groups_for_capacity(self.table.len);
+        if min_groups < self.table.num_groups() {
+            self.table.rehash_with(min_groups, &self.hash_builder);
+        }
+    }
+
+    pub fn drain(&mut self) -> IntoIter<K, V> {
+        use super::raw::group::{BitMask64, Group};
+        use super::raw::RawTable;
+        let table = std::mem::replace(&mut self.table, RawTable::new());
+        let mask = if table.metadata.is_null() {
+            BitMask64(0)
+        } else {
+            unsafe { Group::match_occupied(table.metadata) }
+        };
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
+    }
 }
 
 // ── Entry API ───────────────────────────────────────────────────────────────
@@ -363,6 +462,18 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
         }
     }
 
+    /// Ensures a value is in the entry by inserting the result of the
+    /// function (which receives the key) if empty.
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.value,
+            Entry::Vacant(e) => {
+                let value = default(&e.key);
+                e.insert(value)
+            }
+        }
+    }
+
     pub fn or_default(self) -> &'a mut V
     where
         V: Default,
@@ -374,6 +485,18 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
         match self {
             Entry::Occupied(e) => &e.key,
             Entry::Vacant(e) => &e.key,
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry before any
+    /// potential inserts.
+    pub fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self {
+        match self {
+            Entry::Occupied(mut e) => {
+                f(e.get_mut());
+                Entry::Occupied(e)
+            }
+            Entry::Vacant(e) => Entry::Vacant(e),
         }
     }
 }
@@ -394,6 +517,11 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 }
 
 impl<'a, K: Hash + Eq, V, S: BuildHasher> VacantEntry<'a, K, V, S> {
+    /// Takes ownership of the key.
+    pub fn into_key(self) -> K {
+        self.key
+    }
+
     pub fn insert(self, value: V) -> &'a mut V {
         if let Some((gi, si, full_mask)) = self.slot {
             self.table
