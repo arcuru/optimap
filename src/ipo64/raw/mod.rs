@@ -244,25 +244,27 @@ impl<K, V> RawTable<K, V> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-        loop {
-            let meta = self.meta_ptr(gi);
-            let (matches, empties) = Group::match_byte_and_empty_avx512(meta, reduced);
-            for si in matches {
-                let bucket = &*self.bucket_ptr(gi, si);
-                if eq(&bucket.0) {
-                    return Some((gi, si));
+        unsafe {
+            let reduced = reduced_hash(h);
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
+            loop {
+                let meta = self.meta_ptr(gi);
+                let (matches, empties) = Group::match_byte_and_empty_avx512(meta, reduced);
+                for si in matches {
+                    let bucket = &*self.bucket_ptr(gi, si);
+                    if eq(&bucket.0) {
+                        return Some((gi, si));
+                    }
                 }
+                if empties.any_set() {
+                    return None;
+                }
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
-            if empties.any_set() {
-                return None;
-            }
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
-            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
         }
     }
 
@@ -273,25 +275,27 @@ impl<K, V> RawTable<K, V> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-        loop {
-            let meta = self.meta_ptr(gi);
-            let (matches, empties) = Group::match_byte_and_empty_avx2(meta, reduced);
-            for si in matches {
-                let bucket = &*self.bucket_ptr(gi, si);
-                if eq(&bucket.0) {
-                    return Some((gi, si));
+        unsafe {
+            let reduced = reduced_hash(h);
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
+            loop {
+                let meta = self.meta_ptr(gi);
+                let (matches, empties) = Group::match_byte_and_empty_avx2(meta, reduced);
+                for si in matches {
+                    let bucket = &*self.bucket_ptr(gi, si);
+                    if eq(&bucket.0) {
+                        return Some((gi, si));
+                    }
                 }
+                if empties.any_set() {
+                    return None;
+                }
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
-            if empties.any_set() {
-                return None;
-            }
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
-            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
         }
     }
 
@@ -300,25 +304,27 @@ impl<K, V> RawTable<K, V> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-        loop {
-            let meta = self.meta_ptr(gi);
-            let (matches, empties) = Group::match_byte_and_empty(meta, reduced);
-            for si in matches {
-                let bucket = &*self.bucket_ptr(gi, si);
-                if eq(&bucket.0) {
-                    return Some((gi, si));
+        unsafe {
+            let reduced = reduced_hash(h);
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
+            loop {
+                let meta = self.meta_ptr(gi);
+                let (matches, empties) = Group::match_byte_and_empty(meta, reduced);
+                for si in matches {
+                    let bucket = &*self.bucket_ptr(gi, si);
+                    if eq(&bucket.0) {
+                        return Some((gi, si));
+                    }
                 }
+                if empties.any_set() {
+                    return None;
+                }
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
-            if empties.any_set() {
-                return None;
-            }
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
-            Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-            Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
         }
     }
 

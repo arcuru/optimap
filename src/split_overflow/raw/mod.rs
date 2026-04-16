@@ -381,6 +381,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Slow path for find_or_locate when home group overflows.
+    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     fn find_or_locate_overflow<F>(
         &self,

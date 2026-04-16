@@ -101,31 +101,37 @@ impl<K, V> NodeLayout<K, V> {
     /// Pointer to the i-th key in a leaf node.
     #[inline(always)]
     pub unsafe fn leaf_key_ptr(node: *mut u8, idx: usize) -> *mut K {
-        debug_assert!(idx < Self::LEAF_CAP);
-        node.add(HEADER_SIZE + idx * std::mem::size_of::<K>())
-            .cast::<K>()
+        unsafe {
+            debug_assert!(idx < Self::LEAF_CAP);
+            node.add(HEADER_SIZE + idx * std::mem::size_of::<K>())
+                .cast::<K>()
+        }
     }
 
     /// Pointer to the i-th value in a leaf node.
     #[inline(always)]
     pub unsafe fn leaf_val_ptr(node: *mut u8, idx: usize) -> *mut V {
-        debug_assert!(idx < Self::LEAF_CAP);
-        let vals_offset = HEADER_SIZE + Self::LEAF_CAP * std::mem::size_of::<K>();
-        node.add(vals_offset + idx * std::mem::size_of::<V>())
-            .cast::<V>()
+        unsafe {
+            debug_assert!(idx < Self::LEAF_CAP);
+            let vals_offset = HEADER_SIZE + Self::LEAF_CAP * std::mem::size_of::<K>();
+            node.add(vals_offset + idx * std::mem::size_of::<V>())
+                .cast::<V>()
+        }
     }
 
     /// Pointer to the `prev` leaf link.
     #[inline(always)]
     pub unsafe fn leaf_prev_ptr(node: *mut u8) -> *mut NodeIdx {
-        node.add(NODE_SIZE - LEAF_LINK_SIZE).cast::<NodeIdx>()
+        unsafe { node.add(NODE_SIZE - LEAF_LINK_SIZE).cast::<NodeIdx>() }
     }
 
     /// Pointer to the `next` leaf link.
     #[inline(always)]
     pub unsafe fn leaf_next_ptr(node: *mut u8) -> *mut NodeIdx {
-        node.add(NODE_SIZE - std::mem::size_of::<NodeIdx>())
-            .cast::<NodeIdx>()
+        unsafe {
+            node.add(NODE_SIZE - std::mem::size_of::<NodeIdx>())
+                .cast::<NodeIdx>()
+        }
     }
 
     // ── Internal pointer arithmetic ─────────────────────────────────
@@ -133,19 +139,23 @@ impl<K, V> NodeLayout<K, V> {
     /// Pointer to the i-th key in an internal node.
     #[inline(always)]
     pub unsafe fn internal_key_ptr(node: *mut u8, idx: usize) -> *mut K {
-        debug_assert!(idx < Self::INTERNAL_CAP);
-        node.add(HEADER_SIZE + idx * std::mem::size_of::<K>())
-            .cast::<K>()
+        unsafe {
+            debug_assert!(idx < Self::INTERNAL_CAP);
+            node.add(HEADER_SIZE + idx * std::mem::size_of::<K>())
+                .cast::<K>()
+        }
     }
 
     /// Pointer to the i-th child in an internal node.
     /// Internal nodes have INTERNAL_CAP + 1 children (one more than keys).
     #[inline(always)]
     pub unsafe fn internal_child_ptr(node: *mut u8, idx: usize) -> *mut NodeIdx {
-        debug_assert!(idx <= Self::INTERNAL_CAP);
-        let children_offset = HEADER_SIZE + Self::INTERNAL_CAP * std::mem::size_of::<K>();
-        node.add(children_offset + idx * std::mem::size_of::<NodeIdx>())
-            .cast::<NodeIdx>()
+        unsafe {
+            debug_assert!(idx <= Self::INTERNAL_CAP);
+            let children_offset = HEADER_SIZE + Self::INTERNAL_CAP * std::mem::size_of::<K>();
+            node.add(children_offset + idx * std::mem::size_of::<NodeIdx>())
+                .cast::<NodeIdx>()
+        }
     }
 
     // ── Header access ───────────────────────────────────────────────
@@ -153,13 +163,13 @@ impl<K, V> NodeLayout<K, V> {
     /// Read the header from a node.
     #[inline(always)]
     pub unsafe fn header(node: *const u8) -> &'static NodeHeader {
-        &*node.cast::<NodeHeader>()
+        unsafe { &*node.cast::<NodeHeader>() }
     }
 
     /// Mutable header access.
     #[inline(always)]
     pub unsafe fn header_mut(node: *mut u8) -> &'static mut NodeHeader {
-        &mut *node.cast::<NodeHeader>()
+        unsafe { &mut *node.cast::<NodeHeader>() }
     }
 }
 
