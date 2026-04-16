@@ -43,7 +43,7 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Miri testing | Low-Medium | Verify no UB. Needs scalar fallback for SIMD intrinsics. |
-| Fuzzing harness | Low | Random op sequences verified against std::HashMap. |
+| ~~Fuzzing harness~~ | ~~Low~~ | ✅ Done — proptest differential tests + cargo-fuzz targets for all 6 designs. See [Testing & Fuzzing](testing.md). |
 | Allocator stress testing | Low | Custom allocator for misalignment and leak tracking. |
 
 ### Structural (Speculative)
@@ -77,7 +77,7 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Miri testing | High | FlatBTree has extensive unsafe pointer arithmetic in node.rs and raw.rs. Miri validation is critical. |
-| Fuzz against BTreeMap | Low-Medium | Property-based fuzzing: random op sequences, verify against std::BTreeMap for key presence, iteration order, and range correctness. |
+| ~~Fuzz against BTreeMap~~ | ~~Low-Medium~~ | ✅ Done — proptest + cargo-fuzz differential tests vs std::BTreeMap. See [Testing & Fuzzing](testing.md). |
 
 ## Closed
 

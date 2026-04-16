@@ -25,6 +25,10 @@
 - [IPO64](optimization/ipo64.md)
 - [Closed Investigations](optimization/closed.md)
 
+# Testing
+
+- [Testing & Fuzzing](testing.md)
+
 # Roadmap
 
 - [Future Work](roadmap.md)
