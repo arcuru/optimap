@@ -116,6 +116,151 @@ impl<K, V> Iterator for IntoIter<K, V> {
 }
 impl<K, V> FusedIterator for IntoIter<K, V> {}
 
+// ── Enum entry types (zero-cost dispatch, no Box<dyn>) ──────────────────────
+
+type S = DefaultHashBuilder;
+
+/// Dispatches a method on a 5-variant enum, returning the result directly.
+macro_rules! entry_match {
+    ($self:expr, $method:ident $(, $arg:expr)*) => {
+        match $self {
+            Self::Ufm(e) => e.$method($($arg),*),
+            Self::Splitsies(e) => e.$method($($arg),*),
+            Self::Ipo(e) => e.$method($($arg),*),
+            Self::Gaps(e) => e.$method($($arg),*),
+            Self::Ipo64(e) => e.$method($($arg),*),
+        }
+    };
+}
+
+/// A view into a single entry in an [`OptiMap`], which may either be vacant
+/// or occupied.
+pub enum Entry<'a, K, V> {
+    Occupied(OccupiedEntry<'a, K, V>),
+    Vacant(VacantEntry<'a, K, V>),
+}
+
+/// A view into an occupied entry in an [`OptiMap`].
+pub enum OccupiedEntry<'a, K, V> {
+    Ufm(crate::map::OccupiedEntry<'a, K, V>),
+    Splitsies(crate::split_overflow::map::OccupiedEntry<'a, K, V>),
+    Ipo(crate::in_place_overflow::map::OccupiedEntry<'a, K, V>),
+    Gaps(crate::gaps::map::OccupiedEntry<'a, K, V>),
+    Ipo64(crate::ipo64::map::OccupiedEntry<'a, K, V>),
+}
+
+/// A view into a vacant entry in an [`OptiMap`].
+pub enum VacantEntry<'a, K, V> {
+    Ufm(crate::map::VacantEntry<'a, K, V, S>),
+    Splitsies(crate::split_overflow::map::VacantEntry<'a, K, V, S>),
+    Ipo(crate::in_place_overflow::map::VacantEntry<'a, K, V, S>),
+    Gaps(crate::gaps::map::VacantEntry<'a, K, V, S>),
+    Ipo64(crate::ipo64::map::VacantEntry<'a, K, V, S>),
+}
+
+impl<'a, K: Hash + Eq, V> Entry<'a, K, V> {
+    /// Ensures a value is in the entry by inserting the default if empty.
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the
+    /// function if empty.
+    pub fn or_insert_with<F: FnOnce() -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(default()),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the default value if empty.
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the
+    /// function (which receives the key) if empty.
+    pub fn or_insert_with_key<F: FnOnce(&K) -> V>(self, default: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let value = default(e.key());
+                e.insert(value)
+            }
+        }
+    }
+
+    /// Returns a reference to this entry's key.
+    pub fn key(&self) -> &K {
+        match self {
+            Entry::Occupied(e) => e.key(),
+            Entry::Vacant(e) => e.key(),
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry before any
+    /// potential inserts.
+    pub fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self {
+        match self {
+            Entry::Occupied(mut e) => {
+                f(e.get_mut());
+                Entry::Occupied(e)
+            }
+            Entry::Vacant(e) => Entry::Vacant(e),
+        }
+    }
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    /// Gets a reference to the key.
+    pub fn key(&self) -> &K {
+        entry_match!(self, key)
+    }
+
+    /// Gets a reference to the value.
+    pub fn get(&self) -> &V {
+        entry_match!(self, get)
+    }
+
+    /// Gets a mutable reference to the value.
+    pub fn get_mut(&mut self) -> &mut V {
+        entry_match!(self, get_mut)
+    }
+
+    /// Sets the value and returns the old value.
+    pub fn insert(&mut self, value: V) -> V {
+        entry_match!(self, insert, value)
+    }
+
+    /// Converts to a mutable reference to the value.
+    pub fn into_mut(self) -> &'a mut V {
+        entry_match!(self, into_mut)
+    }
+}
+
+impl<'a, K: Hash + Eq, V> VacantEntry<'a, K, V> {
+    /// Insert a value and return a mutable reference.
+    pub fn insert(self, value: V) -> &'a mut V {
+        entry_match!(self, insert, value)
+    }
+
+    /// Gets a reference to the key.
+    pub fn key(&self) -> &K {
+        entry_match!(self, key)
+    }
+
+    /// Takes ownership of the key.
+    pub fn into_key(self) -> K {
+        entry_match!(self, into_key)
+    }
+}
+
 // ── Public types ───────────────────────────────────────────────────────────
 
 /// Which concrete hash map backend to use.
@@ -493,6 +638,43 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     /// Tries to insert a key-value pair, failing if the key already exists.
     pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
         dispatch_mut!(self, try_insert, key, value)
+    }
+
+    /// Gets the given key's corresponding entry in the map for in-place
+    /// manipulation.
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+        match &mut self.inner {
+            Inner::Ufm(m) => {
+                match m.entry(key) {
+                    crate::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ufm(e)),
+                    crate::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ufm(e)),
+                }
+            }
+            Inner::Splitsies(m) => {
+                match m.entry(key) {
+                    crate::split_overflow::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Splitsies(e)),
+                    crate::split_overflow::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Splitsies(e)),
+                }
+            }
+            Inner::Ipo(m) => {
+                match m.entry(key) {
+                    crate::in_place_overflow::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo(e)),
+                    crate::in_place_overflow::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo(e)),
+                }
+            }
+            Inner::Gaps(m) => {
+                match m.entry(key) {
+                    crate::gaps::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Gaps(e)),
+                    crate::gaps::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Gaps(e)),
+                }
+            }
+            Inner::Ipo64(m) => {
+                match m.entry(key) {
+                    crate::ipo64::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo64(e)),
+                    crate::ipo64::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo64(e)),
+                }
+            }
+        }
     }
 
     /// Creates a consuming iterator over the keys.
@@ -1053,6 +1235,123 @@ mod tests {
         let mut values: Vec<u64> = map.into_values().collect();
         values.sort();
         assert_eq!(values, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn entry_or_insert() {
+        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+            let mut map = OptiMap::<u64, u64>::with_type(mt);
+            map.entry(1).or_insert(10);
+            assert_eq!(map.get(&1), Some(&10));
+            map.entry(1).or_insert(20);
+            assert_eq!(map.get(&1), Some(&10)); // not overwritten
+        }
+    }
+
+    #[test]
+    fn entry_or_insert_with() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.entry(1).or_insert_with(|| 42);
+        assert_eq!(map.get(&1), Some(&42));
+    }
+
+    #[test]
+    fn entry_or_default() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.entry(1).or_default();
+        assert_eq!(map.get(&1), Some(&0));
+    }
+
+    #[test]
+    fn entry_or_insert_with_key() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.entry(5).or_insert_with_key(|&k| k * 10);
+        assert_eq!(map.get(&5), Some(&50));
+    }
+
+    #[test]
+    fn entry_and_modify() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.insert(1, 10);
+        map.entry(1).and_modify(|v| *v += 5).or_insert(0);
+        assert_eq!(map.get(&1), Some(&15));
+        map.entry(2).and_modify(|v| *v += 5).or_insert(0);
+        assert_eq!(map.get(&2), Some(&0));
+    }
+
+    #[test]
+    fn entry_key() {
+        let mut map = OptiMap::<String, u64>::new();
+        let e = map.entry("hello".to_string());
+        assert_eq!(e.key(), "hello");
+    }
+
+    #[test]
+    fn entry_occupied_get_insert() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.insert(1, 10);
+        match map.entry(1) {
+            Entry::Occupied(mut e) => {
+                assert_eq!(*e.get(), 10);
+                assert_eq!(e.key(), &1);
+                let old = e.insert(20);
+                assert_eq!(old, 10);
+            }
+            Entry::Vacant(_) => panic!("expected occupied"),
+        }
+        assert_eq!(map.get(&1), Some(&20));
+    }
+
+    #[test]
+    fn entry_vacant_insert() {
+        let mut map = OptiMap::<u64, u64>::new();
+        match map.entry(1) {
+            Entry::Occupied(_) => panic!("expected vacant"),
+            Entry::Vacant(e) => {
+                assert_eq!(e.key(), &1);
+                e.insert(42);
+            }
+        }
+        assert_eq!(map.get(&1), Some(&42));
+    }
+
+    #[test]
+    fn entry_vacant_into_key() {
+        let mut map = OptiMap::<String, u64>::new();
+        match map.entry("hello".to_string()) {
+            Entry::Vacant(e) => {
+                let k = e.into_key();
+                assert_eq!(k, "hello");
+            }
+            Entry::Occupied(_) => panic!("expected vacant"),
+        }
+    }
+
+    #[test]
+    fn entry_occupied_into_mut() {
+        let mut map = OptiMap::<u64, u64>::new();
+        map.insert(1, 10);
+        match map.entry(1) {
+            Entry::Occupied(e) => {
+                let v = e.into_mut();
+                *v = 99;
+            }
+            Entry::Vacant(_) => panic!("expected occupied"),
+        }
+        assert_eq!(map.get(&1), Some(&99));
+    }
+
+    #[test]
+    fn entry_counting_all_backends() {
+        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+            let mut map = OptiMap::<u64, u64>::with_type(mt);
+            for &key in &[1, 2, 3, 1, 2, 1] {
+                map.entry(key).and_modify(|c| *c += 1).or_insert(1);
+            }
+            assert_eq!(map.get(&1), Some(&3), "failed for {mt:?}");
+            assert_eq!(map.get(&2), Some(&2), "failed for {mt:?}");
+            assert_eq!(map.get(&3), Some(&1), "failed for {mt:?}");
+        }
     }
 
     #[test]

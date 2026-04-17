@@ -520,6 +520,9 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
 }
 
 impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    pub fn key(&self) -> &K {
+        &self.key
+    }
     pub fn get(&self) -> &V {
         self.value
     }

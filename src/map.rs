@@ -583,6 +583,11 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher> Entry<'a, K, V, S> {
 }
 
 impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    /// Gets a reference to the key.
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+
     /// Gets a reference to the value.
     pub fn get(&self) -> &V {
         self.value
