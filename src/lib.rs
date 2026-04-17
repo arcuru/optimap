@@ -43,7 +43,7 @@
 //!
 //! ## Sets
 //!
-//! Each map design has a corresponding set type via [`Set`]:
+//! Each map design has a corresponding set type, and all implement the [`Set`] trait:
 //!
 //! ```
 //! use optimap::SplitsiesSet;
@@ -53,6 +53,17 @@
 //! set.insert("world");
 //! assert!(set.contains("hello"));
 //! assert_eq!(set.len(), 2);
+//! ```
+//!
+//! Generic code over sets works just like maps:
+//!
+//! ```
+//! use optimap::Set;
+//!
+//! fn has_duplicates<S: Set<i32>>(items: &[i32]) -> bool {
+//!     let mut seen = S::new();
+//!     items.iter().any(|&x| !seen.insert(x))
+//! }
 //! ```
 //!
 //! ## Choosing a design
