@@ -1,6 +1,6 @@
 //! Generic set wrapper over any `Map<T, ()>` implementation.
 //!
-//! Provides `Set<T, M>` where `M` is any OptiMap map type (or hashbrown).
+//! Provides `GenericSet<T, M>` where `M` is any OptiMap map type (or hashbrown).
 //! The set operations delegate to the underlying map with `()` values.
 
 use std::borrow::Borrow;
@@ -11,7 +11,7 @@ use crate::Map;
 
 /// A hash set backed by any [`Map`] implementation.
 ///
-/// `Set<T, M>` wraps `M` where `M: Map<T, ()>`. The map's key is the
+/// `GenericSet<T, M>` wraps `M` where `M: Map<T, ()>`. The map's key is the
 /// set element; the value is zero-sized `()`.
 ///
 /// # Type aliases
@@ -22,15 +22,15 @@ use crate::Map;
 /// - `IpoSet<T>` — backed by `InPlaceOverflow`
 /// - `GapsSet<T>` — backed by `Gaps`
 /// - `Ipo64Set<T>` — backed by `IPO64`
-pub struct Set<T: Hash + Eq, M: Map<T, ()> = crate::UnorderedFlatMap<T, ()>> {
+pub struct GenericSet<T: Hash + Eq, M: Map<T, ()> = crate::UnorderedFlatMap<T, ()>> {
     map: M,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
+impl<T: Hash + Eq, M: Map<T, ()>> GenericSet<T, M> {
     /// Create an empty set.
     pub fn new() -> Self {
-        Set {
+        GenericSet {
             map: M::new(),
             _marker: std::marker::PhantomData,
         }
@@ -38,7 +38,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
 
     /// Create a set with at least the specified capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        Set {
+        GenericSet {
             map: M::with_capacity(capacity),
             _marker: std::marker::PhantomData,
         }
@@ -59,6 +59,15 @@ impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
         self.map.get(value).is_some()
     }
 
+    /// Returns a reference to the value in the set matching the given value.
+    pub fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map.get_key_value(value).map(|(k, _)| k)
+    }
+
     /// Removes a value from the set. Returns `true` if it was present.
     pub fn remove<Q>(&mut self, value: &Q) -> bool
     where
@@ -66,6 +75,15 @@ impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
         Q: Hash + Eq + ?Sized,
     {
         self.map.remove(value).is_some()
+    }
+
+    /// Removes and returns the value in the set matching the given value.
+    pub fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.map.remove_entry(value).map(|(k, _)| k)
     }
 
     /// Number of elements in the set.
@@ -88,17 +106,40 @@ impl<T: Hash + Eq, M: Map<T, ()>> Set<T, M> {
         self.map.clear();
     }
 
+    /// Reserves capacity for at least `additional` more elements.
+    pub fn reserve(&mut self, additional: usize) {
+        self.map.reserve(additional);
+    }
+
+    /// Shrinks the capacity as much as possible.
+    pub fn shrink_to_fit(&mut self) {
+        self.map.shrink_to_fit();
+    }
+
     /// Iterate over elements in arbitrary order.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.map.iter().map(|(k, _)| k)
+    }
+
+    /// Retains only the elements specified by the predicate.
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        self.map.retain(|k, _| f(k));
+    }
+
+    /// Clears the set, returning all elements as an iterator.
+    pub fn drain(&mut self) -> impl Iterator<Item = T> {
+        self.map.drain().map(|(k, _)| k)
     }
 }
 
 // ── Set algebra operations ──────────────────────────────────────────────────
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     /// Returns `true` if `self` has no elements in common with `other`.
-    pub fn is_disjoint<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
+    pub fn is_disjoint<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         if self.len() <= other.len() {
             self.iter().all(|v| !other.contains(v))
         } else {
@@ -107,7 +148,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     }
 
     /// Returns `true` if every element in `self` is also in `other`.
-    pub fn is_subset<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
+    pub fn is_subset<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         if self.len() > other.len() {
             return false;
         }
@@ -115,7 +156,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     }
 
     /// Returns `true` if every element in `other` is also in `self`.
-    pub fn is_superset<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> bool {
+    pub fn is_superset<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         other.is_subset(self)
     }
 
@@ -132,10 +173,10 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     }
 
     /// Returns the intersection of `self` and `other` as a new set.
-    pub fn intersection<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> Self {
+    pub fn intersection<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
         let mut result = Self::new();
         let (smaller, check) = if self.len() <= other.len() {
-            (self as &Self, other as &Set<T, M2>)
+            (self as &Self, other as &GenericSet<T, M2>)
         } else {
             // Can't easily swap types, iterate self and check other
             return {
@@ -157,7 +198,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
     }
 
     /// Returns elements in `self` but not in `other`.
-    pub fn difference<M2: Map<T, ()>>(&self, other: &Set<T, M2>) -> Self {
+    pub fn difference<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
         let mut result = Self::new();
         for item in self.iter() {
             if !other.contains(item) {
@@ -186,13 +227,13 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> Set<T, M> {
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
-impl<T: Hash + Eq, M: Map<T, ()>> Default for Set<T, M> {
+impl<T: Hash + Eq, M: Map<T, ()>> Default for GenericSet<T, M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> FromIterator<T> for Set<T, M> {
+impl<T: Hash + Eq, M: Map<T, ()>> FromIterator<T> for GenericSet<T, M> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
@@ -204,7 +245,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> FromIterator<T> for Set<T, M> {
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for Set<T, M> {
+impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for GenericSet<T, M> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
             self.insert(item);
@@ -212,7 +253,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for Set<T, M> {
     }
 }
 
-impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for Set<T, M> {
+impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for GenericSet<T, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }
@@ -221,22 +262,22 @@ impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for Set<T, M> {
 // ── Type aliases for each design ────────────────────────────────────────────
 
 /// Set backed by `UnorderedFlatMap` (15-slot Boost-style groups).
-pub type UfmSet<T> = Set<T, crate::UnorderedFlatMap<T, ()>>;
+pub type UfmSet<T> = GenericSet<T, crate::UnorderedFlatMap<T, ()>>;
 
 /// Set backed by `Splitsies` (16-slot groups with separate overflow).
-pub type SplitsiesSet<T> = Set<T, crate::Splitsies<T, ()>>;
+pub type SplitsiesSet<T> = GenericSet<T, crate::Splitsies<T, ()>>;
 
 /// Set backed by `InPlaceOverflow` (tombstone-based, 254 hash values).
-pub type IpoSet<T> = Set<T, crate::InPlaceOverflow<T, ()>>;
+pub type IpoSet<T> = GenericSet<T, crate::InPlaceOverflow<T, ()>>;
 
 /// Set backed by `Gaps` (15-slot groups with power-of-2 bucket stride).
-pub type GapsSet<T> = Set<T, crate::Gaps<T, ()>>;
+pub type GapsSet<T> = GenericSet<T, crate::Gaps<T, ()>>;
 
 /// Set backed by `IPO64` (64-slot cache-line groups with AVX-512).
-pub type Ipo64Set<T> = Set<T, crate::IPO64<T, ()>>;
+pub type Ipo64Set<T> = GenericSet<T, crate::IPO64<T, ()>>;
 
 /// Set backed by `FlatBTree` (cache-line-optimized B+ tree, sorted iteration).
-pub type FlatBTreeSet<T> = Set<T, crate::FlatBTree<T, ()>>;
+pub type FlatBTreeSet<T> = GenericSet<T, crate::FlatBTree<T, ()>>;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -290,6 +331,45 @@ mod tests {
         assert_eq!(set.len(), 1);
         assert!(!set.contains(&1));
         assert!(set.contains(&2));
+    }
+
+    #[test]
+    fn get_and_take() {
+        let mut set = SplitsiesSet::new();
+        set.insert(42);
+        assert_eq!(set.get(&42), Some(&42));
+        assert_eq!(set.get(&99), None);
+        assert_eq!(set.take(&42), Some(42));
+        assert_eq!(set.len(), 0);
+        assert_eq!(set.take(&42), None);
+    }
+
+    #[test]
+    fn retain_and_drain() {
+        let mut set: IpoSet<i32> = (0..10).collect();
+        set.retain(|&x| x % 2 == 0);
+        assert_eq!(set.len(), 5);
+        for &x in set.iter() {
+            assert!(x % 2 == 0);
+        }
+
+        let mut drained: Vec<i32> = set.drain().collect();
+        drained.sort();
+        assert_eq!(drained, vec![0, 2, 4, 6, 8]);
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn reserve_and_shrink() {
+        let mut set = GapsSet::<i32>::new();
+        set.reserve(100);
+        assert!(set.capacity() >= 100);
+        for i in 0..10 {
+            set.insert(i);
+        }
+        set.shrink_to_fit();
+        assert!(set.capacity() < 100);
+        assert_eq!(set.len(), 10);
     }
 
     #[test]
@@ -362,7 +442,7 @@ mod tests {
     #[test]
     fn iter_ipo() {
         let set: IpoSet<i32> = (0..50).collect();
-        let sum: i32 = set.iter().sum();
+        let sum: i32 = set.iter().copied().sum();
         assert_eq!(sum, (0..50).sum());
     }
 
