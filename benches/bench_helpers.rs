@@ -51,6 +51,8 @@ impl<K: Hash + Eq, V> Map<K, V> for OptiMapBench<K, V> {
     where K: 'a, V: 'a { self.0.iter_mut() }
     fn retain<F>(&mut self, f: F) where F: FnMut(&K, &mut V) -> bool { self.0.retain(f) }
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> { self.0.drain() }
+    fn into_keys(self) -> impl Iterator<Item = K> { self.0.into_keys() }
+    fn into_values(self) -> impl Iterator<Item = V> { self.0.into_values() }
 }
 
 impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMapBench<K, V> {

@@ -159,6 +159,7 @@ pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, Split
 
 pub use raw::hash::IsAvalanching;
 pub use traits::Map;
+pub use traits::OccupiedError;
 pub use traits::Set;
 pub use traits::SortedMap;
 pub use traits::SortedSet;

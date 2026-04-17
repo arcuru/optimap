@@ -609,6 +609,28 @@ impl<K, V, S> FlatBTree<K, V, S> {
     }
 }
 
+impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
+    /// Tries to insert a key-value pair, failing if the key already exists.
+    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        match self.entry(key) {
+            Entry::Occupied(e) => Err(crate::traits::OccupiedError { key: e.key, value }),
+            Entry::Vacant(e) => { e.insert(value); Ok(()) }
+        }
+    }
+}
+
+impl<K: Ord, V, S> FlatBTree<K, V, S> {
+    /// Creates a consuming iterator over the keys.
+    pub fn into_keys(self) -> impl Iterator<Item = K> {
+        self.into_iter().map(|(k, _)| k)
+    }
+
+    /// Creates a consuming iterator over the values.
+    pub fn into_values(self) -> impl Iterator<Item = V> {
+        self.into_iter().map(|(_, v)| v)
+    }
+}
+
 /// A draining iterator over `(K, V)` pairs in sorted order.
 pub struct Drain<'a, K, V> {
     tree: &'a mut RawBTree<K, V>,
@@ -767,6 +789,22 @@ where
 
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         FlatBTree::drain(self)
+    }
+
+    fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        FlatBTree::try_insert(self, key, value)
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        FlatBTree::into_keys(self)
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        FlatBTree::into_values(self)
     }
 }
 

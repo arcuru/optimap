@@ -1,5 +1,5 @@
 use optimap::{
-    Gaps, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap, IPO64,
+    Gaps, InPlaceOverflow, Map, OccupiedError, Splitsies, UnorderedFlatMap, IPO64,
 };
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -20,6 +20,9 @@ enum Op {
     Retain(u16),
     Drain,
     IterCollect,
+    TryInsert(u16, u16),
+    IntoKeys,
+    IntoValues,
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -32,12 +35,15 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (any::<u16>(), any::<u16>()).prop_map(|(k, v)| Op::GetMut(k, v)),
         2 => any::<u16>().prop_map(Op::RemoveEntry),
         2 => any::<u16>().prop_map(Op::ContainsKey),
+        2 => (any::<u16>(), any::<u16>()).prop_map(|(k, v)| Op::TryInsert(k, v)),
         1 => Just(Op::Clear),
         1 => any::<u8>().prop_map(Op::Reserve),
         1 => Just(Op::ShrinkToFit),
         1 => any::<u16>().prop_map(Op::Retain),
         1 => Just(Op::Drain),
         1 => Just(Op::IterCollect),
+        1 => Just(Op::IntoKeys),
+        1 => Just(Op::IntoValues),
     ]
 }
 
@@ -122,6 +128,36 @@ fn run_differential<M: Map<u16, u16>>(ops: &[Op]) {
                 t.sort();
                 r.sort();
                 assert_eq!(t, r, "op {i}: iter contents differ");
+            }
+            Op::TryInsert(k, v) => {
+                let t = test.try_insert(*k, *v);
+                let existed = reference.contains_key(k);
+                if existed {
+                    assert_eq!(
+                        t,
+                        Err(OccupiedError { key: *k, value: *v }),
+                        "op {i}: try_insert({k}, {v}) should fail"
+                    );
+                } else {
+                    assert_eq!(t, Ok(()), "op {i}: try_insert({k}, {v}) should succeed");
+                    reference.insert(*k, *v);
+                }
+            }
+            Op::IntoKeys => {
+                let mut t: Vec<_> = test.keys().copied().collect();
+                let mut r: Vec<_> = reference.keys().copied().collect();
+                t.sort();
+                r.sort();
+                assert_eq!(t, r, "op {i}: into_keys contents differ");
+                // Don't actually consume — just verify keys() matches
+                // (into_keys would consume the map, ending the test)
+            }
+            Op::IntoValues => {
+                let mut t: Vec<_> = test.values().copied().collect();
+                let mut r: Vec<_> = reference.values().copied().collect();
+                t.sort();
+                r.sort();
+                assert_eq!(t, r, "op {i}: into_values contents differ");
             }
         }
 

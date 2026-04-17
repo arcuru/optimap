@@ -27,8 +27,8 @@ Full `Map` trait expansion matching std::HashMap's interface:
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| `try_insert()` | Low | Stabilized in std as of Rust 1.82 |
-| `into_keys()` / `into_values()` | Low | Owning iterators. |
+| ~~`try_insert()`~~ | ~~Low~~ | ✅ Done — all 6 designs, OptiMap, OptiSortedMap, Map trait (with default impl). Returns `Result<(), OccupiedError<K, V>>`. |
+| ~~`into_keys()` / `into_values()`~~ | ~~Low~~ | ✅ Done — all 6 designs, OptiMap, OptiSortedMap, Map trait. |
 | `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche. |
 
 ### Performance
@@ -69,7 +69,7 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | `range_mut()` | Low-Medium | Mutable range iteration. |
-| `into_keys()` / `into_values()` | Low | Owning key/value iterators. |
+| ~~`into_keys()` / `into_values()`~~ | ~~Low~~ | ✅ Done — inherent methods + Map trait. |
 | Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compact the arena requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
 
 ### Testing / Quality

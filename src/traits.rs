@@ -9,7 +9,31 @@
 //! The trait is only needed for generic code over multiple implementations.
 
 use std::borrow::Borrow;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
+
+/// Error returned by [`Map::try_insert`] when the key already exists.
+///
+/// Contains the key and value that were not inserted.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OccupiedError<K, V> {
+    /// The key that was not inserted.
+    pub key: K,
+    /// The value that was not inserted.
+    pub value: V,
+}
+
+impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for OccupiedError<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to insert {:?}, key {:?} already exists",
+            self.value, self.key
+        )
+    }
+}
+
+impl<K: fmt::Debug, V: fmt::Debug> std::error::Error for OccupiedError<K, V> {}
 
 /// Core hash map interface. Maps keys to values.
 ///
@@ -148,6 +172,34 @@ pub trait Map<K: Hash + Eq, V> {
 
     /// Clears the map, returning all key-value pairs as an iterator.
     fn drain(&mut self) -> impl Iterator<Item = (K, V)>;
+
+    /// Tries to insert a key-value pair into the map, failing if the key
+    /// already exists.
+    ///
+    /// Returns `Ok(())` if the pair was inserted, or `Err(OccupiedError)`
+    /// containing the key and value that were not inserted.
+    fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), OccupiedError<K, V>> {
+        if self.contains_key(&key) {
+            Err(OccupiedError { key, value })
+        } else {
+            self.insert(key, value);
+            Ok(())
+        }
+    }
+
+    /// Creates a consuming iterator over the keys of the map.
+    fn into_keys(self) -> impl Iterator<Item = K>
+    where
+        Self: Sized;
+
+    /// Creates a consuming iterator over the values of the map.
+    fn into_values(self) -> impl Iterator<Item = V>
+    where
+        Self: Sized;
 }
 
 /// Trait for sorted map implementations that support ordered operations.
@@ -318,6 +370,19 @@ macro_rules! impl_map_trait {
             fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
                 $type::drain(self)
             }
+            fn try_insert(
+                &mut self,
+                key: K,
+                value: V,
+            ) -> Result<(), $crate::traits::OccupiedError<K, V>> {
+                $type::try_insert(self, key, value)
+            }
+            fn into_keys(self) -> impl Iterator<Item = K> {
+                $type::into_keys(self)
+            }
+            fn into_values(self) -> impl Iterator<Item = V> {
+                $type::into_values(self)
+            }
         }
     };
 }
@@ -420,6 +485,12 @@ where
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         hashbrown::HashMap::drain(self)
     }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        hashbrown::HashMap::into_keys(self)
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        hashbrown::HashMap::into_values(self)
+    }
 }
 
 // ── std::HashMap implementation ─────────────────────────────────────────────
@@ -517,6 +588,12 @@ where
     }
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         std::collections::HashMap::drain(self)
+    }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        std::collections::HashMap::into_keys(self)
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        std::collections::HashMap::into_values(self)
     }
 }
 

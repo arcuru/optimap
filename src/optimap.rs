@@ -490,6 +490,21 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
         dispatch_mut!(self, retain, f)
     }
 
+    /// Tries to insert a key-value pair, failing if the key already exists.
+    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        dispatch_mut!(self, try_insert, key, value)
+    }
+
+    /// Creates a consuming iterator over the keys.
+    pub fn into_keys(self) -> impl Iterator<Item = K> {
+        self.into_iter().map(|(k, _)| k)
+    }
+
+    /// Creates a consuming iterator over the values.
+    pub fn into_values(self) -> impl Iterator<Item = V> {
+        self.into_iter().map(|(_, v)| v)
+    }
+
     /// Clears the map, returning all key-value pairs as an iterator.
     pub fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         let items: Vec<(K, V)> = match &mut self.inner {
@@ -743,6 +758,22 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         OptiMap::drain(self)
     }
+
+    fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        OptiMap::try_insert(self, key, value)
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        OptiMap::into_keys(self)
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        OptiMap::into_values(self)
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -992,5 +1023,47 @@ mod tests {
     fn index_missing_panics() {
         let map = OptiMap::<u64, u64>::new();
         let _ = map[&42];
+    }
+
+    #[test]
+    fn try_insert_success() {
+        let mut map = OptiMap::new();
+        assert_eq!(map.try_insert(1u64, 10u64), Ok(()));
+        assert_eq!(map.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn try_insert_occupied() {
+        let mut map = OptiMap::new();
+        map.insert(1u64, 10u64);
+        let err = map.try_insert(1, 20).unwrap_err();
+        assert_eq!(err.key, 1);
+        assert_eq!(err.value, 20);
+        // Original value unchanged
+        assert_eq!(map.get(&1), Some(&10));
+    }
+
+    #[test]
+    fn into_keys_values() {
+        let map: OptiMap<u64, u64> = vec![(1, 10), (2, 20), (3, 30)].into_iter().collect();
+        let mut keys: Vec<u64> = map.clone().into_keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec![1, 2, 3]);
+
+        let mut values: Vec<u64> = map.into_values().collect();
+        values.sort();
+        assert_eq!(values, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn try_insert_all_backends() {
+        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+            let mut map = OptiMap::<u64, u64>::with_type(mt);
+            assert_eq!(map.try_insert(1, 10), Ok(()));
+            assert_eq!(map.try_insert(2, 20), Ok(()));
+            assert!(map.try_insert(1, 30).is_err());
+            assert_eq!(map.get(&1), Some(&10)); // unchanged
+            assert_eq!(map.len(), 2);
+        }
     }
 }

@@ -195,6 +195,21 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
         self.inner.drain()
     }
 
+    /// Tries to insert a key-value pair, failing if the key already exists.
+    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        self.inner.try_insert(key, value)
+    }
+
+    /// Creates a consuming iterator over the keys.
+    pub fn into_keys(self) -> impl Iterator<Item = K> {
+        self.inner.into_keys()
+    }
+
+    /// Creates a consuming iterator over the values.
+    pub fn into_values(self) -> impl Iterator<Item = V> {
+        self.inner.into_values()
+    }
+
     // ── Sorted operations ──────────────────────────────────────────────────
 
     /// Returns a reference to the first (minimum) key-value pair.
@@ -376,6 +391,22 @@ impl<K: Hash + Eq + Ord + Clone, V, S: BuildHasher + Default> crate::Map<K, V>
 
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         self.inner.drain()
+    }
+
+    fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        OptiSortedMap::try_insert(self, key, value)
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        OptiSortedMap::into_keys(self)
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        OptiSortedMap::into_values(self)
     }
 }
 

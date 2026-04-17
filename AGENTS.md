@@ -53,7 +53,7 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
 - IPO/IPO64 use **tombstones** like hashbrown but with 254 hash values (vs hashbrown's 128)
 - 70% default load factor across all designs
 - Generic `Map` trait allows benchmarking all implementations + hashbrown uniformly
-- `Map` trait covers full std::HashMap interface: get/insert/remove/entry + get_key_value, remove_entry, retain, drain, reserve, shrink_to_fit, iter_mut, keys, values, values_mut
+- `Map` trait covers full std::HashMap interface: get/insert/remove/entry + get_key_value, remove_entry, retain, drain, reserve, shrink_to_fit, iter_mut, keys, values, values_mut, try_insert, into_keys, into_values
 - `Set` trait mirrors Map for sets: insert/contains/get/remove/take/retain/drain/reserve/shrink_to_fit/iter
 - `SortedMap` trait covers ordered ops: first/last_key_value, pop_first/pop_last, range, iter_sorted
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range

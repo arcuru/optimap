@@ -426,6 +426,24 @@ where
             current_mask: mask,
         }
     }
+
+    /// Tries to insert a key-value pair, failing if the key already exists.
+    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        match self.entry(key) {
+            Entry::Occupied(e) => Err(crate::traits::OccupiedError { key: e.key, value }),
+            Entry::Vacant(e) => { e.insert(value); Ok(()) }
+        }
+    }
+
+    /// Creates a consuming iterator over the keys.
+    pub fn into_keys(self) -> impl Iterator<Item = K> {
+        self.into_iter().map(|(k, _)| k)
+    }
+
+    /// Creates a consuming iterator over the values.
+    pub fn into_values(self) -> impl Iterator<Item = V> {
+        self.into_iter().map(|(_, v)| v)
+    }
 }
 
 // ── Entry API ───────────────────────────────────────────────────────────────
