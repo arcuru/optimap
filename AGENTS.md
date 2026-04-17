@@ -58,6 +58,10 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
 - Entry API matches std: or_insert, or_insert_with, or_insert_with_key, or_default, and_modify, into_key
 - `OptiMap<K, V>` wraps all backends behind an enum with policy-driven backend selection (by capacity, KV size, workload hint) and optional auto-transition on resize
 
+## Known Gaps / TODO
+
+- **OptiMap Entry API**: All concrete map types have `entry()` returning their own `Entry`/`OccupiedEntry`/`VacantEntry` types, but `OptiMap` does not expose an entry API yet. This is non-trivial because each backend's Entry type borrows the map with different concrete types — would need an enum entry type or boxed approach with careful lifetime management.
+
 ## Optimization Status
 
 All designs have been through extensive optimization passes. See `docs/` (mdbook) for
