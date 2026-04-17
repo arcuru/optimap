@@ -6,12 +6,12 @@ thoroughly investigated and proven unproductive — see
 
 ## Recently Completed
 
-### Hash Map + FlatBTree API (April 2025)
-
-Full `Map` trait expansion matching std::HashMap's interface:
+### API Completeness (April 2025)
 
 | Item | Scope |
 |------|-------|
+| `try_insert()` | All 6 designs, OptiMap, OptiSortedMap, `Map` trait (default impl). Returns `Result<(), OccupiedError<K, V>>`. |
+| `into_keys()` / `into_values()` | All 6 designs, OptiMap, OptiSortedMap, FlatBTree, `Map` trait |
 | `get_key_value()` / `remove_entry()` | All maps, `Map` trait |
 | `iter_mut()` / `keys()` / `values()` / `values_mut()` | All maps, `Map` trait (defaults for `keys`/`values`/`values_mut`) |
 | `reserve()` / `shrink_to_fit()` | All hash maps + FlatBTree, `Map` trait |
@@ -20,6 +20,9 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Entry: `and_modify()` / `or_insert_with_key()` / `into_key()` | All 6 map types |
 | `pop_first()` / `pop_last()` | FlatBTree, `SortedMap` trait |
 | `SortedMap` for `std::BTreeMap` | `pop_first` / `pop_last` added |
+| Enum iterators for OptiMap | Replaced `Box<dyn Iterator>` — zero-cost dispatch for `Iter`, `IterMut`, `IntoIter` |
+| OptiSet / OptiSortedMap / OptiSortedSet | Smart wrappers with dynamic backend selection and sorted ops |
+| Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
 
 ## Open — Hash Maps
 
@@ -27,8 +30,6 @@ Full `Map` trait expansion matching std::HashMap's interface:
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| ~~`try_insert()`~~ | ~~Low~~ | ✅ Done — all 6 designs, OptiMap, OptiSortedMap, Map trait (with default impl). Returns `Result<(), OccupiedError<K, V>>`. |
-| ~~`into_keys()` / `into_values()`~~ | ~~Low~~ | ✅ Done — all 6 designs, OptiMap, OptiSortedMap, Map trait. |
 | `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche. |
 
 ### Performance
@@ -43,7 +44,6 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Miri testing | Low-Medium | Verify no UB. Needs scalar fallback for SIMD intrinsics. |
-| ~~Fuzzing harness~~ | ~~Low~~ | ✅ Done — proptest differential tests + cargo-fuzz targets for all 6 designs. See [Testing & Fuzzing](testing.md). |
 | Allocator stress testing | Low | Custom allocator for misalignment and leak tracking. |
 
 ### Structural (Speculative)
@@ -69,15 +69,13 @@ Full `Map` trait expansion matching std::HashMap's interface:
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | `range_mut()` | Low-Medium | Mutable range iteration. |
-| ~~`into_keys()` / `into_values()`~~ | ~~Low~~ | ✅ Done — inherent methods + Map trait. |
-| Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compact the arena requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
+| Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compaction requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
 
 ### Testing / Quality
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Miri testing | High | FlatBTree has extensive unsafe pointer arithmetic in node.rs and raw.rs. Miri validation is critical. |
-| ~~Fuzz against BTreeMap~~ | ~~Low-Medium~~ | ✅ Done — proptest + cargo-fuzz differential tests vs std::BTreeMap. See [Testing & Fuzzing](testing.md). |
 
 ## Closed
 
