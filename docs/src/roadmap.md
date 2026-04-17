@@ -25,6 +25,7 @@ thoroughly investigated and proven unproductive — see
 | Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
 | OptiMap Entry API | Enum `Entry`/`OccupiedEntry`/`VacantEntry` wrapping all 5 backends with `entry_match!` macro dispatch. Also added `OccupiedEntry::key()` to all backends. |
 | FlatBTree VacantEntry direct return | `insert_at_vacant()` returns `(leaf_idx, slot_idx)` directly — no re-search needed. Entry counting workload now within ~2% of BTreeMap. |
+| Miri testing (all designs) | Scalar SIMD fallbacks gated on `cfg(miri)`. All 291 unit tests pass under Miri. Fixed UB in group test helpers (mismatched deallocation alignment). Zero UB in production code. |
 
 ## Open — Hash Maps
 
@@ -45,7 +46,6 @@ thoroughly investigated and proven unproductive — see
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| Miri testing | Low-Medium | Verify no UB. Needs scalar fallback for SIMD intrinsics. |
 | Allocator stress testing | Low | Custom allocator for misalignment and leak tracking. |
 
 ### Structural (Speculative)
@@ -71,12 +71,6 @@ thoroughly investigated and proven unproductive — see
 |------|-----------|-------|
 | `range_mut()` | Low-Medium | Mutable range iteration. |
 | Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compaction requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
-
-### Testing / Quality
-
-| Item | Difficulty | Notes |
-|------|-----------|-------|
-| Miri testing | High | FlatBTree has extensive unsafe pointer arithmetic in node.rs and raw.rs. Miri validation is critical. |
 
 ## Closed
 
