@@ -48,7 +48,6 @@ Buckets:  [slot0 slot1 ... slot15] × num_groups
 - **Lookup hit**: 1.11-1.23x (structural per-probe overhead)
 - **Entry API**: 1.66x (hit overhead + enum construction)
 - **Counting/aggregation**: 1.28-1.35x
-- **Large value insert (128B+)**: 1.48-1.65x
 
 ## Design Note: Overflow Array
 

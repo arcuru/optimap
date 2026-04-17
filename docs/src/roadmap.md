@@ -40,7 +40,6 @@ thoroughly investigated and proven unproductive — see
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Eliminate Borrow indirection in insert/entry | Medium | `find_by_hash_eq(&K)` that compares directly. |
-| Large-value insert regression (Splitsies 128B+) | Medium | 1.48-1.65x slower than hashbrown. Needs investigation. |
 
 ### Testing / Quality
 

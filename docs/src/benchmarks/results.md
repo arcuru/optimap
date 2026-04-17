@@ -52,12 +52,14 @@ Ratios: <1.0 = faster than hashbrown, >1.0 = hashbrown is faster.
 
 | Value Size | Op | Splitsies | hashbrown | Split vs hb |
 |-----------|-----|----------:|----------:|:-----------:|
-| 64B | insert | **42.7 µs** | 43.2 µs | **0.99x** |
-| 64B | hit | **21.8 µs** | 20.2 µs | 1.08x |
-| 128B | insert | 93.2 µs | 62.8 µs | 1.48x |
-| 256B | insert | 165 µs | 100 µs | 1.65x |
+| 64B | insert | **51.4 µs** | 60.9 µs | **0.84x** |
+| 64B | hit | 24.9 µs | 19.9 µs | 1.25x |
+| 128B | insert | **72.7 µs** | 78.3 µs | **0.93x** |
+| 128B | hit | 29.3 µs | 25.5 µs | 1.15x |
+| 256B | insert | **98.8 µs** | 113.9 µs | **0.87x** |
+| 256B | hit | 29.1 µs | 25.9 µs | 1.12x |
 
-Large-value insert regression for Splitsies at 128B+ is a known issue.
+Splitsies beats hashbrown on insert across all tested value sizes.
 
 ## Mixed Workloads
 
@@ -113,7 +115,6 @@ hashbrown degrades 4.4x over the same range (130-570µs).
 ### hashbrown wins
 - **Lookup hit**: 1.11-1.23x (structural)
 - **Entry API**: 1.66x
-- **Large value insert (128B+)**: 1.48-1.65x
 - **Counting/aggregation**: 1.28-1.35x
 
 ### Splitsies improvements over UFM
