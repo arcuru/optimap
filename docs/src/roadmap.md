@@ -23,6 +23,7 @@ thoroughly investigated and proven unproductive — see
 | Enum iterators for OptiMap | Replaced `Box<dyn Iterator>` — zero-cost dispatch for `Iter`, `IterMut`, `IntoIter` |
 | OptiSet / OptiSortedMap / OptiSortedSet | Smart wrappers with dynamic backend selection and sorted ops |
 | Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
+| OptiMap Entry API | Enum `Entry`/`OccupiedEntry`/`VacantEntry` wrapping all 5 backends with `entry_match!` macro dispatch. Also added `OccupiedEntry::key()` to all backends. |
 
 ## Open — Hash Maps
 
