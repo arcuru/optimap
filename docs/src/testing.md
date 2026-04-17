@@ -13,16 +13,20 @@ cargo test --test stress                # Just the original stress tests
 cargo fuzz list                         # List all fuzz targets
 cargo fuzz run fuzz_btree               # Open-ended fuzz run (Ctrl-C to stop)
 cargo fuzz run fuzz_btree -- -max_total_time=3600  # Time-bounded (1 hour)
+
+# Miri (undefined behavior detection)
+RUSTFLAGS="" MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
 ```
 
 ## Unit & Integration Tests
 
-Standard Rust tests in `src/` (208 unit tests) and `tests/stress.rs` (12
-integration tests). These are deterministic, fast, and run on every
-`cargo test`.
+Standard Rust tests in `src/` (291 unit tests) and `tests/` (12 stress +
+66 set trait + proptest integration tests). These are deterministic, fast,
+and run on every `cargo test`.
 
 `tests/stress.rs` compares `UnorderedFlatMap` against `std::HashMap` over
-10,000 random operations with a fixed seed.
+10,000 random operations with a fixed seed. `tests/set_trait.rs` validates
+all 8 set types through the `Set` trait interface.
 
 ## Property-Based Differential Tests (proptest)
 
@@ -177,18 +181,83 @@ fuzz/
     └── fuzz_btree.rs
 ```
 
+## Miri (Undefined Behavior Detection)
+
+[Miri](https://github.com/rust-lang/miri) is an interpreter for Rust's
+MIR that detects undefined behavior: out-of-bounds access, use-after-free,
+misaligned pointers, violation of aliasing rules, incorrect deallocation,
+and more. It is the gold standard for validating `unsafe` code.
+
+OptiMap has **841 `unsafe` blocks** across 19 files — SIMD group operations,
+raw pointer arithmetic in FlatBTree nodes, manual memory layout, and aligned
+allocation. Miri validates all of it.
+
+### How It Works
+
+All SIMD intrinsics (`_mm_*`, `_mm256_*`, `_mm512_*`) are gated on
+`#[cfg(all(target_arch = "x86_64", not(miri)))]`. Under Miri, scalar
+fallback implementations activate via
+`#[cfg(any(not(target_arch = "x86_64"), miri))]`. These scalar fallbacks
+are functionally identical — they produce the same bitmasks via byte loops
+instead of SSE2/AVX2/AVX-512 instructions.
+
+This means Miri tests the same algorithms and memory access patterns as
+production, just with scalar group matching instead of SIMD.
+
+### Coverage
+
+All tests pass under Miri with **zero UB in production code**:
+
+| Test suite | Tests | Miri time |
+|-----------|-------|-----------|
+| Unit tests (`src/`) | 291 | ~31 min |
+| Stress tests (`tests/stress.rs`) | 12 | ~46 min |
+| Set trait tests (`tests/set_trait.rs`) | 66 | ~24 min |
+| Proptest (`tests/proptest_btree.rs`) | 1 (500 cases) | ~hours |
+
+**Designs covered:** all 5 hash maps (UFM, Splitsies, IPO, IPO64, Gaps),
+FlatBTree, all smart wrappers (OptiMap, OptiSet, OptiSortedMap,
+OptiSortedSet), GenericSet, and the `Map`/`Set`/`SortedMap`/`SortedSet`
+trait implementations.
+
+### Bugs Found
+
+One UB was found and fixed: group test helpers allocated memory with
+alignment 16 via `std::alloc::alloc_zeroed`, then wrapped it in
+`Vec::from_raw_parts` (alignment 1 for `u8`). On drop, the Vec
+deallocated with the wrong alignment — undefined behavior per the
+allocator contract. Fixed by replacing with a `#[repr(C, align(16))]`
+stack-allocated wrapper.
+
+### Running
+
+```bash
+# Must clear RUSTFLAGS (target-cpu=native conflicts with Miri interpreter)
+# Must disable isolation (proptest needs getcwd)
+RUSTFLAGS="" MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
+
+# Run a specific test suite under Miri
+RUSTFLAGS="" cargo miri test --lib              # Unit tests only (~31 min)
+RUSTFLAGS="" cargo miri test --test stress      # Stress tests only (~46 min)
+```
+
+Note: `RUSTFLAGS=""` is needed because the flake sets `-C target-cpu=native`,
+which Miri (as an interpreter) cannot use.
+
 ## Strategy
 
-The three testing layers complement each other:
+The four testing layers complement each other:
 
 | Layer | Finds | Speed | Reproducer |
 |-------|-------|-------|------------|
 | Unit/stress tests | Regressions, known edge cases | Milliseconds | Hardcoded |
 | Proptest | Logic bugs, with minimal repro | Seconds | Auto-shrunk, persisted |
 | cargo-fuzz | Deep bugs in rare code paths | Hours-days | Raw bytes, needs manual tmin |
+| Miri | Undefined behavior in `unsafe` code | ~30-60 min | Stack trace to exact UB |
 
 **Recommended workflow:**
 - `cargo test` on every change (includes proptest)
+- `cargo miri test --lib` after touching any `unsafe` code
 - Periodic long fuzz runs (overnight/weekend) on a beefy machine
 - When adding a new operation to the `Map` or `SortedMap` trait, add it to
   all three: the Op enums in proptest, the Op enums in fuzz harnesses, and

@@ -25,7 +25,7 @@ thoroughly investigated and proven unproductive — see
 | Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
 | OptiMap Entry API | Enum `Entry`/`OccupiedEntry`/`VacantEntry` wrapping all 5 backends with `entry_match!` macro dispatch. Also added `OccupiedEntry::key()` to all backends. |
 | FlatBTree VacantEntry direct return | `insert_at_vacant()` returns `(leaf_idx, slot_idx)` directly — no re-search needed. Entry counting workload now within ~2% of BTreeMap. |
-| Miri testing (all designs) | Scalar SIMD fallbacks gated on `cfg(miri)`. All 291 unit tests pass under Miri. Fixed UB in group test helpers (mismatched deallocation alignment). Zero UB in production code. |
+| Miri testing (all designs) | Scalar SIMD fallbacks gated on `cfg(miri)`. 291 unit + 12 stress + 66 set_trait tests pass under Miri. Fixed 1 UB: group test helpers deallocating with wrong alignment. Zero UB in production code (841 unsafe blocks across 19 files). |
 
 ## Open — Hash Maps
 
