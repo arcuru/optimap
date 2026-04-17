@@ -66,26 +66,46 @@
 //! }
 //! ```
 //!
-//! ## Smart wrapper
+//! ## Smart wrappers
 //!
-//! [`OptiMap`] dynamically selects a backend based on capacity, key/value
-//! size, and optional workload [`Hint`]s. It implements [`Map`] and can
-//! transition backends at resize boundaries:
+//! [`OptiMap`] dynamically selects a hash map backend based on capacity,
+//! key/value size, and optional workload [`Hint`]s. [`OptiSet`] does the
+//! same for sets. Both can transition backends at resize boundaries:
 //!
 //! ```
-//! use optimap::{OptiMap, Hint};
+//! use optimap::{OptiMap, OptiSet, Hint};
 //!
 //! // Let the policy engine choose:
 //! let mut map = OptiMap::<String, i32>::new();
 //! map.insert("hello".into(), 42);
 //!
+//! let mut set = OptiSet::<u64>::new();
+//! set.insert(42);
+//!
 //! // Or hint at your workload:
 //! let mut map = OptiMap::<u64, u64>::with_hint(Hint::Churn);
 //! ```
 //!
+//! For sorted containers, [`OptiSortedMap`] and [`OptiSortedSet`] wrap
+//! [`FlatBTree`] with sorted iteration, range queries, and first/last access:
+//!
+//! ```
+//! use optimap::{OptiSortedMap, OptiSortedSet};
+//!
+//! let mut map = OptiSortedMap::new();
+//! map.insert(3, "three");
+//! map.insert(1, "one");
+//! let keys: Vec<_> = map.iter_sorted().map(|(k, _)| *k).collect();
+//! assert_eq!(keys, vec![1, 3]);
+//!
+//! let mut set: OptiSortedSet<i32> = [3, 1, 2].into_iter().collect();
+//! assert_eq!(set.first(), Some(&1));
+//! ```
+//!
 //! ## Choosing a design
 //!
-//! - **Let OptiMap decide**: [`OptiMap`] — auto-selects backend, good default
+//! - **Let OptiMap decide**: [`OptiMap`] / [`OptiSet`] — auto-selects backend, good default
+//! - **Sorted**: [`OptiSortedMap`] / [`OptiSortedSet`] — sorted iteration, range queries
 //! - **General purpose**: [`InPlaceOverflow`] — closest to hashbrown, best
 //!   lookup hit, fastest insert
 //! - **Delete-heavy / churn**: [`Splitsies`] — tombstone-free deletion,
@@ -101,10 +121,12 @@ mod generic_set;
 pub mod in_place_overflow;
 pub mod ipo64;
 mod map;
+mod opti_set;
+mod opti_sorted;
+pub mod optimap;
 mod raw;
 mod set;
 pub mod split_overflow;
-pub mod optimap;
 mod traits;
 
 // ── Map types ───────────────────────────────────────────────────────────────
@@ -121,6 +143,9 @@ pub use split_overflow::Splitsies;
 pub use optimap::OptiMap;
 pub use optimap::Hint;
 pub use optimap::MapType;
+pub use opti_set::OptiSet;
+pub use opti_sorted::OptiSortedMap;
+pub use opti_sorted::OptiSortedSet;
 
 // ── Set types ───────────────────────────────────────────────────────────────
 
