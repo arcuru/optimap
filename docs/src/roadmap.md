@@ -24,6 +24,7 @@ thoroughly investigated and proven unproductive — see
 | OptiSet / OptiSortedMap / OptiSortedSet | Smart wrappers with dynamic backend selection and sorted ops |
 | Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
 | OptiMap Entry API | Enum `Entry`/`OccupiedEntry`/`VacantEntry` wrapping all 5 backends with `entry_match!` macro dispatch. Also added `OccupiedEntry::key()` to all backends. |
+| FlatBTree VacantEntry direct return | `insert_at_vacant()` returns `(leaf_idx, slot_idx)` directly — no re-search needed. Entry counting workload now within ~2% of BTreeMap. |
 
 ## Open — Hash Maps
 
@@ -62,7 +63,6 @@ thoroughly investigated and proven unproductive — see
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Remove rebalancing (steal/merge) | Medium | Currently lazy (no rebalancing on remove). Tree stays valid but wastes memory under heavy churn. Low-watermark nodes are never reclaimed. |
-| VacantEntry re-search elimination | Medium | `VacantEntry::insert` currently re-searches after inserting to find the value reference. Should return the position directly from the insert path. Affects entry API / counting workload perf (~1.08x vs BTreeMap). |
 | Child node prefetching | Low | Prefetch next child's cache lines during internal node scan. Already faster than BTreeMap — diminishing returns. |
 
 ### API Completeness
