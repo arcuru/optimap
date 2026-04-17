@@ -4,7 +4,7 @@
 //! Each group's metadata occupies one 64-byte cache line, so a single
 //! cache fetch gives all metadata for 64 slots.
 
-mod map;
+pub(crate) mod map;
 pub(crate) mod raw;
 
 pub use map::IPO64;

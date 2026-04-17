@@ -6,10 +6,115 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::Hash;
+use std::iter::FusedIterator;
 use std::mem;
 
 use crate::map::DefaultHashBuilder;
 use crate::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
+
+// ── Enum iterators (zero-cost dispatch, no Box<dyn>) ──────────────────────
+
+/// Iterator over `(&K, &V)` pairs in an [`OptiMap`].
+pub enum Iter<'a, K, V> {
+    Ufm(crate::map::Iter<'a, K, V>),
+    Splitsies(crate::split_overflow::map::Iter<'a, K, V>),
+    Ipo(crate::in_place_overflow::map::Iter<'a, K, V>),
+    Gaps(crate::gaps::map::Iter<'a, K, V>),
+    Ipo64(crate::ipo64::map::Iter<'a, K, V>),
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Iter::Ufm(i) => i.next(),
+            Iter::Splitsies(i) => i.next(),
+            Iter::Ipo(i) => i.next(),
+            Iter::Gaps(i) => i.next(),
+            Iter::Ipo64(i) => i.next(),
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Iter::Ufm(i) => i.size_hint(),
+            Iter::Splitsies(i) => i.size_hint(),
+            Iter::Ipo(i) => i.size_hint(),
+            Iter::Gaps(i) => i.size_hint(),
+            Iter::Ipo64(i) => i.size_hint(),
+        }
+    }
+}
+impl<K, V> FusedIterator for Iter<'_, K, V> {}
+
+/// Mutable iterator over `(&K, &mut V)` pairs in an [`OptiMap`].
+pub enum IterMut<'a, K, V> {
+    Ufm(crate::map::IterMut<'a, K, V>),
+    Splitsies(crate::split_overflow::map::IterMut<'a, K, V>),
+    Ipo(crate::in_place_overflow::map::IterMut<'a, K, V>),
+    Gaps(crate::gaps::map::IterMut<'a, K, V>),
+    Ipo64(crate::ipo64::map::IterMut<'a, K, V>),
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            IterMut::Ufm(i) => i.next(),
+            IterMut::Splitsies(i) => i.next(),
+            IterMut::Ipo(i) => i.next(),
+            IterMut::Gaps(i) => i.next(),
+            IterMut::Ipo64(i) => i.next(),
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            IterMut::Ufm(i) => i.size_hint(),
+            IterMut::Splitsies(i) => i.size_hint(),
+            IterMut::Ipo(i) => i.size_hint(),
+            IterMut::Gaps(i) => i.size_hint(),
+            IterMut::Ipo64(i) => i.size_hint(),
+        }
+    }
+}
+impl<K, V> FusedIterator for IterMut<'_, K, V> {}
+
+/// Owning iterator over `(K, V)` pairs from an [`OptiMap`].
+pub enum IntoIter<K, V> {
+    Ufm(crate::map::IntoIter<K, V>),
+    Splitsies(crate::split_overflow::map::IntoIter<K, V>),
+    Ipo(crate::in_place_overflow::map::IntoIter<K, V>),
+    Gaps(crate::gaps::map::IntoIter<K, V>),
+    Ipo64(crate::ipo64::map::IntoIter<K, V>),
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            IntoIter::Ufm(i) => i.next(),
+            IntoIter::Splitsies(i) => i.next(),
+            IntoIter::Ipo(i) => i.next(),
+            IntoIter::Gaps(i) => i.next(),
+            IntoIter::Ipo64(i) => i.next(),
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            IntoIter::Ufm(i) => i.size_hint(),
+            IntoIter::Splitsies(i) => i.size_hint(),
+            IntoIter::Ipo(i) => i.size_hint(),
+            IntoIter::Gaps(i) => i.size_hint(),
+            IntoIter::Ipo64(i) => i.size_hint(),
+        }
+    }
+}
+impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -341,24 +446,24 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Iterate over key-value pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+    pub fn iter(&self) -> Iter<'_, K, V> {
         match &self.inner {
-            Inner::Ufm(m) => Box::new(m.iter()) as Box<dyn Iterator<Item = _>>,
-            Inner::Splitsies(m) => Box::new(m.iter()),
-            Inner::Ipo(m) => Box::new(m.iter()),
-            Inner::Gaps(m) => Box::new(m.iter()),
-            Inner::Ipo64(m) => Box::new(m.iter()),
+            Inner::Ufm(m) => Iter::Ufm(m.iter()),
+            Inner::Splitsies(m) => Iter::Splitsies(m.iter()),
+            Inner::Ipo(m) => Iter::Ipo(m.iter()),
+            Inner::Gaps(m) => Iter::Gaps(m.iter()),
+            Inner::Ipo64(m) => Iter::Ipo64(m.iter()),
         }
     }
 
     /// Iterate over key-value pairs with mutable values.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut V)> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         match &mut self.inner {
-            Inner::Ufm(m) => Box::new(m.iter_mut()) as Box<dyn Iterator<Item = _>>,
-            Inner::Splitsies(m) => Box::new(m.iter_mut()),
-            Inner::Ipo(m) => Box::new(m.iter_mut()),
-            Inner::Gaps(m) => Box::new(m.iter_mut()),
-            Inner::Ipo64(m) => Box::new(m.iter_mut()),
+            Inner::Ufm(m) => IterMut::Ufm(m.iter_mut()),
+            Inner::Splitsies(m) => IterMut::Splitsies(m.iter_mut()),
+            Inner::Ipo(m) => IterMut::Ipo(m.iter_mut()),
+            Inner::Gaps(m) => IterMut::Gaps(m.iter_mut()),
+            Inner::Ipo64(m) => IterMut::Ipo64(m.iter_mut()),
         }
     }
 
@@ -504,17 +609,16 @@ impl<K: Hash + Eq, V> Extend<(K, V)> for OptiMap<K, V> {
 
 impl<K: Hash + Eq, V> IntoIterator for OptiMap<K, V> {
     type Item = (K, V);
-    type IntoIter = std::vec::IntoIter<(K, V)>;
+    type IntoIter = IntoIter<K, V>;
 
-    fn into_iter(mut self) -> Self::IntoIter {
-        let items: Vec<(K, V)> = match &mut self.inner {
-            Inner::Ufm(m) => m.drain().collect(),
-            Inner::Splitsies(m) => m.drain().collect(),
-            Inner::Ipo(m) => m.drain().collect(),
-            Inner::Gaps(m) => m.drain().collect(),
-            Inner::Ipo64(m) => m.drain().collect(),
-        };
-        items.into_iter()
+    fn into_iter(self) -> Self::IntoIter {
+        match self.inner {
+            Inner::Ufm(m) => IntoIter::Ufm(m.into_iter()),
+            Inner::Splitsies(m) => IntoIter::Splitsies(m.into_iter()),
+            Inner::Ipo(m) => IntoIter::Ipo(m.into_iter()),
+            Inner::Gaps(m) => IntoIter::Gaps(m.into_iter()),
+            Inner::Ipo64(m) => IntoIter::Ipo64(m.into_iter()),
+        }
     }
 }
 

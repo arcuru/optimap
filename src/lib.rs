@@ -120,7 +120,7 @@ pub mod gaps;
 mod generic_set;
 pub mod in_place_overflow;
 pub mod ipo64;
-mod map;
+pub(crate) mod map;
 mod opti_set;
 mod opti_sorted;
 pub mod optimap;

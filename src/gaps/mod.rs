@@ -8,7 +8,7 @@
 //! Trade-off: ~6.25% wasted memory in the bucket array (1/16 slots unused).
 //! Same SIMD operations as UFM (including `& 0x7FFF` mask for 15-slot groups).
 
-mod map;
+pub(crate) mod map;
 pub(crate) mod raw;
 
 pub use map::Gaps;
