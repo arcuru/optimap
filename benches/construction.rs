@@ -19,6 +19,7 @@ macro_rules! all_maps {
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO", $($args),*);
         $helper::<IPO64<u64, u64>>($group, "IPO64", $($args),*);
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
+        $helper::<OptiMapBench<u64, u64>>($group, "OptiMap", $($args),*);
     };
 }
 
@@ -101,6 +102,7 @@ fn bench_from_iter(c: &mut Criterion) {
         bench_from_iter_for!(&mut group, "IPO", InPlaceOverflow<u64, u64>, &pairs, n);
         bench_from_iter_for!(&mut group, "IPO64", IPO64<u64, u64>, &pairs, n);
         bench_from_iter_for!(&mut group, "hashbrown", hashbrown::HashMap<u64, u64>, &pairs, n);
+        bench_from_iter_for!(&mut group, "OptiMap", optimap::OptiMap<u64, u64>, &pairs, n);
     }
     group.finish();
 }

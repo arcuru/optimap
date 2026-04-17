@@ -168,6 +168,15 @@ fn bench_lookup_hit_by_load(c: &mut Criterion) {
             ops,
             42,
         );
+        bench_lf_hit_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
     }
     group.finish();
 }
@@ -218,6 +227,15 @@ fn bench_lookup_miss_by_load(c: &mut Criterion) {
         bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(
             &mut group,
             "hashbrown",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
             &label,
             capacity,
             num_entries,
@@ -299,6 +317,15 @@ fn bench_mixed_by_load(c: &mut Criterion) {
             &op_keys,
             42,
         );
+        bench_lf_mixed_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
+            &label,
+            capacity,
+            num_entries,
+            &op_keys,
+            42,
+        );
     }
     group.finish();
 }
@@ -357,6 +384,15 @@ fn bench_load_factor_1m(c: &mut Criterion) {
             ops,
             42,
         );
+        bench_lf_hit_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap_hit",
+            &label,
+            capacity,
+            num_entries,
+            ops,
+            42,
+        );
 
         // Miss
         bench_lf_miss_for::<UnorderedFlatMap<u64, u64>>(
@@ -389,6 +425,15 @@ fn bench_load_factor_1m(c: &mut Criterion) {
         bench_lf_miss_for::<hashbrown::HashMap<u64, u64>>(
             &mut group,
             "hashbrown_miss",
+            &label,
+            capacity,
+            num_entries,
+            &miss_keys,
+            42,
+        );
+        bench_lf_miss_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap_miss",
             &label,
             capacity,
             num_entries,

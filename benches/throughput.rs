@@ -60,6 +60,7 @@ macro_rules! all_maps {
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO", $($args),*);
         $helper::<IPO64<u64, u64>>($group, "IPO64", $($args),*);
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
+        $helper::<OptiMapBench<u64, u64>>($group, "OptiMap", $($args),*);
     };
 }
 
@@ -163,8 +164,9 @@ fn bench_size_scaling(c: &mut Criterion) {
             &keys,
             n,
         );
+        bench_lookup_hit_for::<OptiMapBench<u64, u64>>(&mut group, "OptiMap_hit", &label, &keys, n);
 
-        // Miss — IPO variants + hashbrown
+        // Miss — IPO variants + hashbrown + OptiMap
         bench_lookup_miss_for::<InPlaceOverflow<u64, u64>>(
             &mut group, "IPO_miss", &label, &keys, &miss_keys, n,
         );
@@ -179,6 +181,14 @@ fn bench_size_scaling(c: &mut Criterion) {
         bench_lookup_miss_for::<hashbrown::HashMap<u64, u64>>(
             &mut group,
             "hashbrown_miss",
+            &label,
+            &keys,
+            &miss_keys,
+            n,
+        );
+        bench_lookup_miss_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap_miss",
             &label,
             &keys,
             &miss_keys,

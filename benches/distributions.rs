@@ -170,6 +170,13 @@ fn bench_lookup_hit_by_distribution(c: &mut Criterion) {
             keys,
             LARGE_CAPACITY,
         );
+        bench_lookup_hit_dist_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -235,6 +242,14 @@ fn bench_lookup_miss_by_distribution(c: &mut Criterion) {
             miss_keys,
             LARGE_CAPACITY,
         );
+        bench_lookup_miss_dist_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
+            dist_name,
+            insert_keys,
+            miss_keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -277,6 +292,13 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
         bench_insert_dist_for::<hashbrown::HashMap<u64, u64>>(
             &mut group,
             "hashbrown",
+            dist_name,
+            keys,
+            LARGE_CAPACITY,
+        );
+        bench_insert_dist_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            "OptiMap",
             dist_name,
             keys,
             LARGE_CAPACITY,

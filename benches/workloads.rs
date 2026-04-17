@@ -19,6 +19,7 @@ macro_rules! main_maps {
         $helper::<Splitsies<u64, u64>>($group, "Splitsies", $($args),*);
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO", $($args),*);
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
+        $helper::<OptiMapBench<u64, u64>>($group, "OptiMap", $($args),*);
     };
 }
 
@@ -238,6 +239,13 @@ fn bench_miss_ratio_sweep(c: &mut Criterion) {
             &lookup_keys,
             LARGE_CAPACITY,
         );
+        bench_miss_ratio_for::<OptiMapBench<u64, u64>>(
+            &mut group,
+            &format!("OptiMap_{label}"),
+            &hit_keys,
+            &lookup_keys,
+            LARGE_CAPACITY,
+        );
     }
     group.finish();
 }
@@ -315,6 +323,13 @@ fn bench_high_load_stress(c: &mut Criterion) {
         capacity,
         ops,
     );
+    bench_high_load_hit_for::<OptiMapBench<u64, u64>>(
+        &mut group,
+        "OptiMap_hit85",
+        &keys,
+        capacity,
+        ops,
+    );
 
     // Miss at 85% load
     bench_high_load_miss_for::<UnorderedFlatMap<u64, u64>>(
@@ -336,6 +351,14 @@ fn bench_high_load_stress(c: &mut Criterion) {
     bench_high_load_miss_for::<hashbrown::HashMap<u64, u64>>(
         &mut group,
         "hashbrown_miss85",
+        num_entries,
+        &miss_keys,
+        &keys,
+        capacity,
+    );
+    bench_high_load_miss_for::<OptiMapBench<u64, u64>>(
+        &mut group,
+        "OptiMap_miss85",
         num_entries,
         &miss_keys,
         &keys,

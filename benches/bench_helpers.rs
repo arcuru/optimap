@@ -5,8 +5,57 @@
 
 #![allow(dead_code)]
 
+use std::borrow::Borrow;
+use std::hash::Hash;
+
 use criterion::{BenchmarkGroup, BenchmarkId, black_box, measurement::WallTime};
 use optimap::Map;
+use optimap::optimap::MapType;
+
+// ── OptiMap wrapper pinned to IPO for benchmarking ─────────────────────────
+
+/// Thin wrapper around `OptiMap` pinned to the IPO backend.
+/// This lets us slot OptiMap into the generic `M: Map<K, V>` benchmark helpers
+/// while measuring a fixed backend (so we see enum dispatch overhead, not
+/// policy variance).
+pub struct OptiMapBench<K: Hash + Eq, V>(optimap::OptiMap<K, V>);
+
+impl<K: Hash + Eq, V> Map<K, V> for OptiMapBench<K, V> {
+    fn new() -> Self {
+        OptiMapBench(optimap::OptiMap::with_type(MapType::Ipo))
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiMapBench(optimap::OptiMap::with_type_and_capacity(MapType::Ipo, capacity))
+    }
+    fn insert(&mut self, key: K, value: V) -> Option<V> { self.0.insert(key, value) }
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get(key) }
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get_key_value(key) }
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get_mut(key) }
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove(key) }
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove_entry(key) }
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.contains_key(key) }
+    fn len(&self) -> usize { self.0.len() }
+    fn capacity(&self) -> usize { self.0.capacity() }
+    fn clear(&mut self) { self.0.clear() }
+    fn reserve(&mut self, additional: usize) { self.0.reserve(additional) }
+    fn shrink_to_fit(&mut self) { self.0.shrink_to_fit() }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where K: 'a, V: 'a { self.0.iter() }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where K: 'a, V: 'a { self.0.iter_mut() }
+    fn retain<F>(&mut self, f: F) where F: FnMut(&K, &mut V) -> bool { self.0.retain(f) }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> { self.0.drain() }
+}
+
+impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMapBench<K, V> {
+    fn clone(&self) -> Self { OptiMapBench(self.0.clone()) }
+}
 
 // ── Fast deterministic RNG (shared across all benchmark files) ──────────────
 
