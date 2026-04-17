@@ -66,8 +66,26 @@
 //! }
 //! ```
 //!
+//! ## Smart wrapper
+//!
+//! [`OptiMap`] dynamically selects a backend based on capacity, key/value
+//! size, and optional workload [`Hint`]s. It implements [`Map`] and can
+//! transition backends at resize boundaries:
+//!
+//! ```
+//! use optimap::{OptiMap, Hint};
+//!
+//! // Let the policy engine choose:
+//! let mut map = OptiMap::<String, i32>::new();
+//! map.insert("hello".into(), 42);
+//!
+//! // Or hint at your workload:
+//! let mut map = OptiMap::<u64, u64>::with_hint(Hint::Churn);
+//! ```
+//!
 //! ## Choosing a design
 //!
+//! - **Let OptiMap decide**: [`OptiMap`] — auto-selects backend, good default
 //! - **General purpose**: [`InPlaceOverflow`] — closest to hashbrown, best
 //!   lookup hit, fastest insert
 //! - **Delete-heavy / churn**: [`Splitsies`] — tombstone-free deletion,
@@ -101,6 +119,8 @@ pub use split_overflow::Splitsies;
 // ── Smart wrapper ──────────────────────────────────────────────────────────
 
 pub use optimap::OptiMap;
+pub use optimap::Hint;
+pub use optimap::MapType;
 
 // ── Set types ───────────────────────────────────────────────────────────────
 

@@ -71,7 +71,7 @@ enum Backend {
 /// map.insert(1, 2);
 ///
 /// // Hint at workload:
-/// use optimap::optimap::Hint;
+/// use optimap::Hint;
 /// let mut map = OptiMap::<u64, u64>::with_hint(Hint::Churn);
 /// ```
 pub struct OptiMap<K, V, S = DefaultHashBuilder> {
@@ -502,6 +502,34 @@ impl<K: Hash + Eq, V> Extend<(K, V)> for OptiMap<K, V> {
     }
 }
 
+impl<K: Hash + Eq, V> IntoIterator for OptiMap<K, V> {
+    type Item = (K, V);
+    type IntoIter = std::vec::IntoIter<(K, V)>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        let items: Vec<(K, V)> = match &mut self.inner {
+            Inner::Ufm(m) => m.drain().collect(),
+            Inner::Splitsies(m) => m.drain().collect(),
+            Inner::Ipo(m) => m.drain().collect(),
+            Inner::Gaps(m) => m.drain().collect(),
+            Inner::Ipo64(m) => m.drain().collect(),
+        };
+        items.into_iter()
+    }
+}
+
+impl<K, Q, V> std::ops::Index<&Q> for OptiMap<K, V>
+where
+    K: Hash + Eq + Borrow<Q>,
+    Q: Hash + Eq + ?Sized,
+{
+    type Output = V;
+
+    fn index(&self, key: &Q) -> &V {
+        self.get(key).expect("no entry found for key")
+    }
+}
+
 // ── Map trait impl ─────────────────────────────────────────────────────────
 
 impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
@@ -824,5 +852,41 @@ mod tests {
         let s = format!("{:?}", map);
         assert!(s.contains("1"));
         assert!(s.contains("2"));
+    }
+
+    #[test]
+    fn into_iterator() {
+        let map: OptiMap<u64, u64> = (0..50).map(|i| (i, i * 3)).collect();
+        let mut pairs: Vec<(u64, u64)> = map.into_iter().collect();
+        pairs.sort();
+        assert_eq!(pairs.len(), 50);
+        assert_eq!(pairs[0], (0, 0));
+        assert_eq!(pairs[49], (49, 147));
+    }
+
+    #[test]
+    fn for_loop() {
+        let map: OptiMap<u64, u64> = vec![(1, 10), (2, 20), (3, 30)].into_iter().collect();
+        let mut sum = 0u64;
+        for (k, v) in map {
+            sum += k + v;
+        }
+        assert_eq!(sum, 1 + 10 + 2 + 20 + 3 + 30);
+    }
+
+    #[test]
+    fn index() {
+        let mut map = OptiMap::new();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        assert_eq!(map[&"a"], 1);
+        assert_eq!(map[&"b"], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "no entry found for key")]
+    fn index_missing_panics() {
+        let map = OptiMap::<u64, u64>::new();
+        let _ = map[&42];
     }
 }
