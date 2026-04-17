@@ -22,9 +22,12 @@ with different performance trade-offs, benchmarked against hashbrown (Rust's std
 # Uses flake.nix devShell (direnv auto-activates)
 cargo test
 cargo bench
+
+# Miri (UB detection) — uses scalar SIMD fallbacks via cfg(miri)
+RUSTFLAGS="" MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
 ```
 
-Requires Rust nightly (for SIMD intrinsics). The flake provides it.
+Requires Rust nightly (for SIMD intrinsics) + miri component. The flake provides both.
 
 ## Project Structure
 
