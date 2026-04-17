@@ -39,6 +39,7 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
   - `flat_btree/` — FlatBTree (B+ tree)
   - `traits.rs` — `Map`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std
   - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any Map via `Map<T, ()>`)
+  - `optimap.rs` — `OptiMap<K, V>` smart wrapper with dynamic backend selection
 - `benches/` — Criterion benchmarks (throughput, construction, distributions, workloads, load_factor, sets)
 - `tests/` — Integration tests
 - `docs/` — mdbook: designs, benchmarks, optimization logs, roadmap
@@ -55,6 +56,7 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
 - `SortedMap` trait covers ordered ops: first/last_key_value, pop_first/pop_last, range, iter_sorted
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range
 - Entry API matches std: or_insert, or_insert_with, or_insert_with_key, or_default, and_modify, into_key
+- `OptiMap<K, V>` wraps all backends behind an enum with policy-driven backend selection (by capacity, KV size, workload hint) and optional auto-transition on resize
 
 ## Optimization Status
 
