@@ -196,6 +196,112 @@ where
             .is_some()
     }
 
+    /// Returns a reference to the value in the set matching the given value.
+    #[inline]
+    pub fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(value);
+        let (gi, si) = self.table.find_by_hash(h, |v| v.borrow() == value)?;
+        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+        Some(&bucket.0)
+    }
+
+    /// Removes and returns the value in the set matching the given value.
+    pub fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let h = self.hash_key(value);
+        self.table
+            .remove_by_hash(h, |v| v.borrow() == value)
+            .map(|(k, _)| k)
+    }
+
+    /// Reserves capacity for at least `additional` more elements.
+    pub fn reserve(&mut self, additional: usize) {
+        let needed = self.table.len.checked_add(additional).expect("capacity overflow");
+        if !self.table.is_allocated() {
+            if additional > 0 {
+                self.table.allocate(RawTable::<T, ()>::groups_for_capacity(needed));
+            }
+            return;
+        }
+        if needed > self.table.max_load {
+            let new_groups = RawTable::<T, ()>::groups_for_capacity(needed);
+            if new_groups > self.table.num_groups() {
+                self.table.rehash_with(new_groups, &self.hash_builder);
+            }
+        }
+    }
+
+    /// Shrinks the capacity as much as possible.
+    pub fn shrink_to_fit(&mut self) {
+        if self.table.len == 0 {
+            let mut empty = RawTable::new();
+            std::mem::swap(&mut self.table, &mut empty);
+            return;
+        }
+        let min_groups = RawTable::<T, ()>::groups_for_capacity(self.table.len);
+        if min_groups < self.table.num_groups() {
+            self.table.rehash_with(min_groups, &self.hash_builder);
+        }
+    }
+
+    /// Retains only the elements specified by the predicate.
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        use crate::raw::group::{Group, EMPTY, overflow_bit};
+
+        if !self.table.is_allocated() {
+            return;
+        }
+
+        for gi in 0..=self.table.mask {
+            let meta = unsafe { self.table.meta_ptr(gi) };
+            let occupied = unsafe { Group::match_non_empty(meta) };
+            for si in occupied {
+                let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+                if !f(&bucket.0) {
+                    let h = self.hash_key(&bucket.0);
+                    unsafe {
+                        let bucket_ptr = self.table.bucket_ptr(gi, si);
+                        std::ptr::drop_in_place(bucket_ptr);
+                        Group::set_meta(meta, si, EMPTY);
+                    }
+                    self.table.len -= 1;
+
+                    let initial_gi = self.table.group_index(h);
+                    let initial_meta = unsafe { self.table.meta_ptr(initial_gi) };
+                    let ofw_bit = overflow_bit(h);
+                    if unsafe { Group::has_overflow_bit(initial_meta, ofw_bit) } {
+                        self.table.max_load = self.table.max_load.saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clears the set, returning all elements as an iterator.
+    pub fn drain(&mut self) -> SetIntoIter<T> {
+        let table = std::mem::replace(&mut self.table, RawTable::new());
+        let mask = if table.metadata.is_null() {
+            crate::raw::bitmask::BitMask(0)
+        } else {
+            unsafe { crate::raw::group::Group::match_non_empty(table.metadata) }
+        };
+        SetIntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
+    }
+
     /// Iterate over values.
     pub fn iter(&self) -> SetIter<'_, T> {
         SetIter {
