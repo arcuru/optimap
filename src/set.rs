@@ -724,3 +724,7 @@ mod tests {
         assert_ne!(a, c);
     }
 }
+
+// ── Set trait impl ─────────────────────────────────────────────────────────
+
+crate::traits::impl_set_trait!(UnorderedFlatSet);

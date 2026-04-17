@@ -519,3 +519,472 @@ where
         std::collections::HashMap::drain(self)
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Set traits
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Core hash set interface.
+///
+/// The hash function is an implementation detail — each concrete type
+/// carries its own hasher internally. Generic code uses `Set<T>`
+/// without knowing or caring about the hasher.
+///
+/// # Usage
+///
+/// For concrete types, use inherent methods directly (no import needed):
+/// ```
+/// let mut set = optimap::UnorderedFlatSet::new();
+/// set.insert("hello");
+/// assert!(set.contains("hello"));
+/// ```
+///
+/// For generic code, import the trait:
+/// ```
+/// use optimap::Set;
+/// fn has_duplicates<S: Set<i32>>(items: &[i32]) -> bool {
+///     let mut seen = S::new();
+///     items.iter().any(|&x| !seen.insert(x))
+/// }
+/// ```
+pub trait Set<T: Hash + Eq> {
+    /// Create an empty set with the default hasher.
+    fn new() -> Self;
+
+    /// Create a set with at least the specified capacity.
+    fn with_capacity(capacity: usize) -> Self;
+
+    /// Adds a value to the set. Returns `true` if newly inserted,
+    /// `false` if already present.
+    fn insert(&mut self, value: T) -> bool;
+
+    /// Returns `true` if the set contains the given value.
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Returns a reference to the value in the set matching the given value.
+    fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Removes a value from the set. Returns `true` if it was present.
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Removes and returns the value in the set matching the given value.
+    fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+
+    /// Number of elements in the set.
+    fn len(&self) -> usize;
+
+    /// Whether the set is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Number of elements the set can hold without rehashing.
+    fn capacity(&self) -> usize;
+
+    /// Remove all elements, keeping allocated memory.
+    fn clear(&mut self);
+
+    /// Reserves capacity for at least `additional` more elements.
+    fn reserve(&mut self, additional: usize);
+
+    /// Shrinks the capacity as much as possible.
+    fn shrink_to_fit(&mut self);
+
+    /// Iterate over elements in arbitrary order.
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a;
+
+    /// Retains only the elements specified by the predicate.
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&T) -> bool;
+
+    /// Clears the set, returning all elements as an iterator.
+    fn drain(&mut self) -> impl Iterator<Item = T>;
+}
+
+/// Trait for sorted set implementations that support ordered operations.
+pub trait SortedSet<T> {
+    /// Returns a reference to the first (minimum) element.
+    fn first(&self) -> Option<&T>;
+
+    /// Returns a reference to the last (maximum) element.
+    fn last(&self) -> Option<&T>;
+
+    /// Removes and returns the first (minimum) element.
+    fn pop_first(&mut self) -> Option<T>;
+
+    /// Removes and returns the last (maximum) element.
+    fn pop_last(&mut self) -> Option<T>;
+
+    /// Iterate over all elements in sorted order.
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a;
+
+    /// Iterate over elements within the given range, in sorted order.
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
+    where
+        T: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a;
+}
+
+// ── Macro to generate Set trait impl ────────────────────────────────────────
+
+macro_rules! impl_set_trait {
+    ($type:ident) => {
+        impl<T, S> $crate::traits::Set<T> for $type<T, S>
+        where
+            T: ::std::hash::Hash + Eq,
+            S: ::std::hash::BuildHasher + Default,
+        {
+            fn new() -> Self {
+                Self::with_hasher(S::default())
+            }
+            fn with_capacity(capacity: usize) -> Self {
+                Self::with_capacity_and_hasher(capacity, S::default())
+            }
+            fn insert(&mut self, value: T) -> bool {
+                $type::insert(self, value)
+            }
+            fn contains<Q>(&self, value: &Q) -> bool
+            where
+                T: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::contains(self, value)
+            }
+            fn get<Q>(&self, value: &Q) -> Option<&T>
+            where
+                T: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::get(self, value)
+            }
+            fn remove<Q>(&mut self, value: &Q) -> bool
+            where
+                T: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::remove(self, value)
+            }
+            fn take<Q>(&mut self, value: &Q) -> Option<T>
+            where
+                T: ::std::borrow::Borrow<Q>,
+                Q: ::std::hash::Hash + Eq + ?Sized,
+            {
+                $type::take(self, value)
+            }
+            fn len(&self) -> usize {
+                $type::len(self)
+            }
+            fn capacity(&self) -> usize {
+                $type::capacity(self)
+            }
+            fn clear(&mut self) {
+                $type::clear(self)
+            }
+            fn reserve(&mut self, additional: usize) {
+                $type::reserve(self, additional)
+            }
+            fn shrink_to_fit(&mut self) {
+                $type::shrink_to_fit(self)
+            }
+            fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+            where
+                T: 'a,
+            {
+                $type::iter(self)
+            }
+            fn retain<F>(&mut self, f: F)
+            where
+                F: FnMut(&T) -> bool,
+            {
+                $type::retain(self, f)
+            }
+            fn drain(&mut self) -> impl Iterator<Item = T> {
+                $type::drain(self)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_set_trait;
+
+// ── Set impl for GenericSet<T, M> ───────────────────────────────────────────
+
+impl<T, M> Set<T> for crate::generic_set::GenericSet<T, M>
+where
+    T: Hash + Eq,
+    M: Map<T, ()>,
+{
+    fn new() -> Self {
+        crate::generic_set::GenericSet::new()
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        crate::generic_set::GenericSet::with_capacity(capacity)
+    }
+    fn insert(&mut self, value: T) -> bool {
+        crate::generic_set::GenericSet::insert(self, value)
+    }
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        crate::generic_set::GenericSet::contains(self, value)
+    }
+    fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        crate::generic_set::GenericSet::get(self, value)
+    }
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        crate::generic_set::GenericSet::remove(self, value)
+    }
+    fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        crate::generic_set::GenericSet::take(self, value)
+    }
+    fn len(&self) -> usize {
+        crate::generic_set::GenericSet::len(self)
+    }
+    fn capacity(&self) -> usize {
+        crate::generic_set::GenericSet::capacity(self)
+    }
+    fn clear(&mut self) {
+        crate::generic_set::GenericSet::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        crate::generic_set::GenericSet::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        crate::generic_set::GenericSet::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
+        crate::generic_set::GenericSet::iter(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        crate::generic_set::GenericSet::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = T> {
+        crate::generic_set::GenericSet::drain(self)
+    }
+}
+
+// ── Set impl for hashbrown::HashSet ─────────────────────────────────────────
+
+impl<T, S> Set<T> for hashbrown::HashSet<T, S>
+where
+    T: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn new() -> Self {
+        Self::with_hasher(S::default())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_hasher(capacity, S::default())
+    }
+    fn insert(&mut self, value: T) -> bool {
+        hashbrown::HashSet::insert(self, value)
+    }
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashSet::contains(self, value)
+    }
+    fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashSet::get(self, value)
+    }
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashSet::remove(self, value)
+    }
+    fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        hashbrown::HashSet::take(self, value)
+    }
+    fn len(&self) -> usize {
+        hashbrown::HashSet::len(self)
+    }
+    fn capacity(&self) -> usize {
+        hashbrown::HashSet::capacity(self)
+    }
+    fn clear(&mut self) {
+        hashbrown::HashSet::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        hashbrown::HashSet::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        hashbrown::HashSet::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
+        hashbrown::HashSet::iter(self)
+    }
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        hashbrown::HashSet::retain(self, |v| f(v))
+    }
+    fn drain(&mut self) -> impl Iterator<Item = T> {
+        hashbrown::HashSet::drain(self)
+    }
+}
+
+// ── Set impl for std::HashSet ───────────────────────────────────────────────
+
+impl<T, S> Set<T> for std::collections::HashSet<T, S>
+where
+    T: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn new() -> Self {
+        Self::with_hasher(S::default())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_hasher(capacity, S::default())
+    }
+    fn insert(&mut self, value: T) -> bool {
+        std::collections::HashSet::insert(self, value)
+    }
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashSet::contains(self, value)
+    }
+    fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashSet::get(self, value)
+    }
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashSet::remove(self, value)
+    }
+    fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        std::collections::HashSet::take(self, value)
+    }
+    fn len(&self) -> usize {
+        std::collections::HashSet::len(self)
+    }
+    fn capacity(&self) -> usize {
+        std::collections::HashSet::capacity(self)
+    }
+    fn clear(&mut self) {
+        std::collections::HashSet::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        std::collections::HashSet::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        std::collections::HashSet::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
+        std::collections::HashSet::iter(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        std::collections::HashSet::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = T> {
+        std::collections::HashSet::drain(self)
+    }
+}
+
+// ── SortedSet impl for std::BTreeSet ────────────────────────────────────────
+
+impl<T: Ord> SortedSet<T> for std::collections::BTreeSet<T> {
+    fn first(&self) -> Option<&T> {
+        self.iter().next()
+    }
+
+    fn last(&self) -> Option<&T> {
+        self.iter().next_back()
+    }
+
+    fn pop_first(&mut self) -> Option<T> {
+        std::collections::BTreeSet::pop_first(self)
+    }
+
+    fn pop_last(&mut self) -> Option<T> {
+        std::collections::BTreeSet::pop_last(self)
+    }
+
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
+        self.iter()
+    }
+
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
+    where
+        T: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        std::collections::BTreeSet::range(self, range)
+    }
+}
