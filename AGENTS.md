@@ -58,13 +58,14 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
 - `SortedMap` trait covers ordered ops: first/last_key_value, pop_first/pop_last, range, iter_sorted
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range
 - Entry API matches std: or_insert, or_insert_with, or_insert_with_key, or_default, and_modify, into_key
+- OptiMap has full entry API via enum `Entry`/`OccupiedEntry`/`VacantEntry` types with `entry_match!` macro dispatch
 - `OptiMap<K, V>` wraps all backends behind an enum with policy-driven backend selection (by capacity, KV size, workload hint) and optional auto-transition on resize
 - `OptiSet<T>` wraps `OptiMap<T, ()>` with set-specific API, inheriting all Hint/MapType/Backend selection
 - `OptiSortedMap<K, V>` and `OptiSortedSet<T>` wrap `FlatBTree` for sorted containers (single backend for now, extensible)
 
 ## Known Gaps / TODO
 
-- **OptiMap Entry API**: All concrete map types have `entry()` returning their own `Entry`/`OccupiedEntry`/`VacantEntry` types, but `OptiMap` does not expose an entry API yet. This is non-trivial because each backend's Entry type borrows the map with different concrete types — would need an enum entry type or boxed approach with careful lifetime management.
+(none currently)
 
 ## Optimization Status
 
