@@ -39,7 +39,7 @@ Requires Rust nightly (for SIMD intrinsics). The flake provides it.
   - `flat_btree/` — FlatBTree (B+ tree)
   - `traits.rs` — `Map`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std
   - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any Map via `Map<T, ()>`)
-- `benches/` — Criterion benchmarks (throughput, construction, distributions, workloads, load_factor)
+- `benches/` — Criterion benchmarks (throughput, construction, distributions, workloads, load_factor, sets)
 - `tests/` — Integration tests
 - `docs/` — mdbook: designs, benchmarks, optimization logs, roadmap
 
