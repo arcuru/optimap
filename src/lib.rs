@@ -86,6 +86,7 @@ mod map;
 mod raw;
 mod set;
 pub mod split_overflow;
+pub mod optimap;
 mod traits;
 
 // ── Map types ───────────────────────────────────────────────────────────────
@@ -96,6 +97,10 @@ pub use in_place_overflow::InPlaceOverflow;
 pub use ipo64::IPO64;
 pub use map::UnorderedFlatMap;
 pub use split_overflow::Splitsies;
+
+// ── Smart wrapper ──────────────────────────────────────────────────────────
+
+pub use optimap::OptiMap;
 
 // ── Set types ───────────────────────────────────────────────────────────────
 
