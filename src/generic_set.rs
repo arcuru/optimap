@@ -135,6 +135,45 @@ impl<T: Hash + Eq, M: Map<T, ()>> GenericSet<T, M> {
     }
 }
 
+// ── Sorted operations (available when backing map is SortedMap) ─────────────
+
+impl<T: Hash + Eq, M: Map<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
+    /// Returns a reference to the first (minimum) element.
+    pub fn first(&self) -> Option<&T> {
+        self.map.first_key_value().map(|(k, _)| k)
+    }
+
+    /// Returns a reference to the last (maximum) element.
+    pub fn last(&self) -> Option<&T> {
+        self.map.last_key_value().map(|(k, _)| k)
+    }
+
+    /// Removes and returns the first (minimum) element.
+    pub fn pop_first(&mut self) -> Option<T> {
+        self.map.pop_first().map(|(k, _)| k)
+    }
+
+    /// Removes and returns the last (maximum) element.
+    pub fn pop_last(&mut self) -> Option<T> {
+        self.map.pop_last().map(|(k, _)| k)
+    }
+
+    /// Iterate over all elements in sorted order.
+    pub fn iter_sorted(&self) -> impl Iterator<Item = &T> {
+        self.map.iter_sorted().map(|(k, _)| k)
+    }
+
+    /// Iterate over elements within the given range, in sorted order.
+    pub fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
+    where
+        T: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        self.map.range(range).map(|(k, _)| k)
+    }
+}
+
 // ── Set algebra operations ──────────────────────────────────────────────────
 
 impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
@@ -256,6 +295,35 @@ impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for GenericSet<T, M> {
 impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for GenericSet<T, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Hash + Eq + Clone, M: Map<T, ()> + Clone> Clone for GenericSet<T, M> {
+    fn clone(&self) -> Self {
+        GenericSet {
+            map: self.map.clone(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: Hash + Eq, M: Map<T, ()>> PartialEq for GenericSet<T, M> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|v| other.contains(v))
+    }
+}
+
+impl<T: Hash + Eq, M: Map<T, ()>> Eq for GenericSet<T, M> {}
+
+impl<T: Hash + Eq, M: Map<T, ()>> IntoIterator for GenericSet<T, M> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        self.map.drain().map(|(k, _)| k).collect::<Vec<_>>().into_iter()
     }
 }
 

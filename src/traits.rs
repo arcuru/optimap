@@ -953,6 +953,46 @@ where
     }
 }
 
+// ── SortedSet impl for GenericSet (when backing map is SortedMap) ───────────
+
+impl<T, M> SortedSet<T> for crate::generic_set::GenericSet<T, M>
+where
+    T: Hash + Eq,
+    M: Map<T, ()> + crate::SortedMap<T, ()>,
+{
+    fn first(&self) -> Option<&T> {
+        crate::generic_set::GenericSet::first(self)
+    }
+
+    fn last(&self) -> Option<&T> {
+        crate::generic_set::GenericSet::last(self)
+    }
+
+    fn pop_first(&mut self) -> Option<T> {
+        crate::generic_set::GenericSet::pop_first(self)
+    }
+
+    fn pop_last(&mut self) -> Option<T> {
+        crate::generic_set::GenericSet::pop_last(self)
+    }
+
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
+        crate::generic_set::GenericSet::iter_sorted(self)
+    }
+
+    fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
+    where
+        T: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        crate::generic_set::GenericSet::range(self, range)
+    }
+}
+
 // ── SortedSet impl for std::BTreeSet ────────────────────────────────────────
 
 impl<T: Ord> SortedSet<T> for std::collections::BTreeSet<T> {

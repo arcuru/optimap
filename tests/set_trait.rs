@@ -191,4 +191,9 @@ mod sorted_set {
     fn btree_set() {
         test_sorted_basics::<std::collections::BTreeSet<i32>>();
     }
+
+    #[test]
+    fn flat_btree_set() {
+        test_sorted_basics::<optimap::FlatBTreeSet<i32>>();
+    }
 }
