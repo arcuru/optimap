@@ -9,7 +9,7 @@
 //!   0x01 = TOMBSTONE (slot was occupied, now deleted)
 //!   0x02-0xFF = reduced hash (slot is occupied)
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
 use crate::raw::bitmask::BitMask;
@@ -41,10 +41,10 @@ pub fn reduced_hash(h: u64) -> u8 {
 
 // ── x86_64 SSE2 implementation ──────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 pub struct Group;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Group {
     /// Return a bitmask of slots matching `value`. All 16 bits are valid.
     #[inline(always)]
@@ -167,10 +167,10 @@ impl Group {
 
 // ── Fallback implementation ─────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 pub struct Group;
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 impl Group {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
@@ -215,6 +215,24 @@ impl Group {
     #[inline(always)]
     pub unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask, BitMask) {
         unsafe { (Self::match_byte(ptr, value), Self::match_empty(ptr)) }
+    }
+
+    /// "Load" group metadata — scalar version just passes the pointer through.
+    #[inline(always)]
+    pub unsafe fn load(ptr: *const u8) -> *const u8 {
+        ptr
+    }
+
+    /// Match byte against pre-loaded group data (scalar: just delegates to match_byte).
+    #[inline(always)]
+    pub unsafe fn loaded_match_byte(data: *const u8, value: u8) -> BitMask {
+        unsafe { Self::match_byte(data, value) }
+    }
+
+    /// Check for empty slots in pre-loaded group data (scalar: just delegates to match_empty).
+    #[inline(always)]
+    pub unsafe fn loaded_match_empty(data: *const u8) -> BitMask {
+        unsafe { Self::match_empty(data) }
     }
 
     #[inline(always)]

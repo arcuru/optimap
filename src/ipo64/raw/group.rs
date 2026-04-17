@@ -8,7 +8,7 @@
 //! - **AVX2**: 2 loads (256-bit), compare+movemask → 6 ops for match+empty
 //! - **SSE2**: 4 loads (128-bit), compare+movemask → 14 ops for match+empty
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
 /// Number of element slots per group (one cache line of metadata).
@@ -68,10 +68,10 @@ impl Iterator for BitMask64 {
 
 // ── x86_64 implementation with runtime dispatch ─────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 pub struct Group;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Group {
     // ── Public dispatch functions ────────────────────────────────────────
     //
@@ -376,10 +376,10 @@ impl Group {
 
 // ── Fallback implementation ─────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 pub struct Group;
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 impl Group {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {

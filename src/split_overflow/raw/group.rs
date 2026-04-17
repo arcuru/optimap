@@ -4,7 +4,7 @@
 //! valid slot metadata. Overflow bytes live in a separate contiguous array.
 //! This eliminates the `& 0x7FFF` mask and gives power-of-2 bucket addressing.
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
 use crate::raw::bitmask::BitMask;
@@ -37,10 +37,10 @@ pub fn overflow_bit(h: u64) -> u8 {
 
 // ── x86_64 SSE2 implementation ──────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 pub struct Group;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Group {
     /// Return a bitmask of slots matching `value`. All 16 bits are valid.
     #[inline(always)]
@@ -135,10 +135,10 @@ impl Group {
 
 // ── Fallback implementation ─────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 pub struct Group;
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 impl Group {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {

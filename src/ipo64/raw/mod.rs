@@ -224,7 +224,7 @@ impl<K, V> RawTable<K, V> {
             return None;
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if is_x86_feature_detected!("avx512bw") {
                 return unsafe { self.find_by_hash_avx512(h, eq) };
@@ -238,7 +238,7 @@ impl<K, V> RawTable<K, V> {
 
     /// AVX-512BW version — entire function compiled with avx512bw enabled.
     /// Group methods inline with AVX-512 instructions, no per-call dispatch.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[target_feature(enable = "avx512bw")]
     unsafe fn find_by_hash_avx512<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
@@ -269,7 +269,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// AVX2 version.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[target_feature(enable = "avx2")]
     unsafe fn find_by_hash_avx2<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where

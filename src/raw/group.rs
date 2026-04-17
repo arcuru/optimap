@@ -1,4 +1,4 @@
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
 use super::bitmask::BitMask;
@@ -35,10 +35,10 @@ pub fn overflow_bit(h: u64) -> u8 {
 /// Layout in memory: `[hi0, hi1, ..., hi14, overflow]`
 ///
 /// All metadata pointers MUST be 16-byte aligned (enforced by allocator).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 pub struct Group;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Group {
     /// Return a bitmask of slots matching `value` using SSE2.
     /// Only the lower 15 bits are meaningful.
@@ -139,10 +139,10 @@ impl Group {
 }
 
 /// Fallback for non-x86_64 platforms.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 pub struct Group;
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(not(target_arch = "x86_64"), miri))]
 impl Group {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
@@ -220,12 +220,23 @@ pub unsafe fn init_empty(ptr: *mut u8) {
 mod tests {
     use super::*;
 
-    fn make_aligned() -> Vec<u8> {
-        // Ensure 16-byte alignment for tests
-        let layout = std::alloc::Layout::from_size_align(META_GROUP_BYTES, 16).unwrap();
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-        // Wrap in a struct that will dealloc, but for tests we leak
-        unsafe { Vec::from_raw_parts(ptr, META_GROUP_BYTES, META_GROUP_BYTES) }
+    #[repr(C, align(16))]
+    struct AlignedGroup([u8; META_GROUP_BYTES]);
+
+    impl std::ops::Deref for AlignedGroup {
+        type Target = [u8; META_GROUP_BYTES];
+        fn deref(&self) -> &Self::Target { &self.0 }
+    }
+    impl std::ops::DerefMut for AlignedGroup {
+        fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    }
+    impl AlignedGroup {
+        fn as_ptr(&self) -> *const u8 { self.0.as_ptr() }
+        fn as_mut_ptr(&mut self) -> *mut u8 { self.0.as_mut_ptr() }
+    }
+
+    fn make_aligned() -> AlignedGroup {
+        AlignedGroup([0u8; META_GROUP_BYTES])
     }
 
     #[test]
