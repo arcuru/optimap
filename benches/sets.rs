@@ -175,7 +175,9 @@ macro_rules! all_sets {
         $helper::<optimap::IpoSet<u64>>($group, "IPO", $($args),*);
         $helper::<optimap::GapsSet<u64>>($group, "Gaps", $($args),*);
         $helper::<optimap::Ipo64Set<u64>>($group, "IPO64", $($args),*);
+        $helper::<optimap::FlatBTreeSet<u64>>($group, "FlatBTree", $($args),*);
         $helper::<hashbrown::HashSet<u64>>($group, "hashbrown", $($args),*);
+        $helper::<OptiSetBench<u64>>($group, "OptiSet", $($args),*);
     };
 }
 

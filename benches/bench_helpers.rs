@@ -57,6 +57,37 @@ impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMapBench<K, V> {
     fn clone(&self) -> Self { OptiMapBench(self.0.clone()) }
 }
 
+// ── OptiSet wrapper pinned to IPO for benchmarking ──────────────────────────
+
+/// Thin wrapper around `OptiSet` pinned to the IPO backend.
+pub struct OptiSetBench<T: Hash + Eq>(optimap::OptiSet<T>);
+
+impl<T: Hash + Eq> optimap::Set<T> for OptiSetBench<T> {
+    fn new() -> Self {
+        OptiSetBench(optimap::OptiSet::with_type(MapType::Ipo))
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiSetBench(optimap::OptiSet::with_type_and_capacity(MapType::Ipo, capacity))
+    }
+    fn insert(&mut self, value: T) -> bool { self.0.insert(value) }
+    fn contains<Q>(&self, value: &Q) -> bool
+    where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.contains(value) }
+    fn get<Q>(&self, value: &Q) -> Option<&T>
+    where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get(value) }
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove(value) }
+    fn take<Q>(&mut self, value: &Q) -> Option<T>
+    where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.take(value) }
+    fn len(&self) -> usize { self.0.len() }
+    fn capacity(&self) -> usize { self.0.capacity() }
+    fn clear(&mut self) { self.0.clear() }
+    fn reserve(&mut self, additional: usize) { self.0.reserve(additional) }
+    fn shrink_to_fit(&mut self) { self.0.shrink_to_fit() }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T> where T: 'a { self.0.iter() }
+    fn retain<F>(&mut self, f: F) where F: FnMut(&T) -> bool { self.0.retain(f) }
+    fn drain(&mut self) -> impl Iterator<Item = T> { self.0.drain() }
+}
+
 // ── Fast deterministic RNG (shared across all benchmark files) ──────────────
 
 pub struct Sfc64 {
