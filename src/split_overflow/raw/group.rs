@@ -23,10 +23,10 @@ pub const EMPTY: u8 = 0x00;
 /// Only 0x00 is reserved (EMPTY).
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
-    // Branchless: map 0 → 8, everything else unchanged.
-    // Preserves h % 8 (since 8 % 8 == 0 % 8).
+    // Branchless: map 0 → 1, everything else unchanged.
+    // overflow_bit() is computed from raw hash, not reduced_hash.
     let low = (h & 0xFF) as u8;
-    low | ((low == 0) as u8 * 8)
+    low | (low == 0) as u8
 }
 
 /// Overflow bit index for a given hash value.
