@@ -115,6 +115,59 @@
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 
+// ── reduced_hash implementation (feature-gated) ───────────────────────────
+
+/// Shared `reduced_hash` implementation for overflow-bit designs (UFM, Gaps, Splitsies).
+/// Maps the low byte of a hash to [1, 255], avoiding 0x00 (EMPTY sentinel).
+///
+/// Three variants selectable via crate features:
+/// - **default**: `low | (low == 0) as u8` — 3 instructions (`test; sete; or`), 255 distinct values
+/// - **`reduced-hash-asm`**: `cmp 0xFF; adc 0` — 2 instructions, 255 values (x86_64 only, falls back to default)
+/// - **`reduced-hash-128`**: `low | 1` — 1 instruction, 128 values (higher false-match rate)
+#[inline(always)]
+pub(crate) fn reduced_hash_impl(h: u64) -> u8 {
+    #[cfg(feature = "reduced-hash-128")]
+    {
+        // 1 instruction, 128 distinct values. Forces bit 0, collapsing even/odd pairs.
+        // False-match rate per slot: 1/128 (0.78%) vs 1/255 (0.39%) for 255-value variants.
+        (h as u8) | 1
+    }
+    #[cfg(all(
+        feature = "reduced-hash-asm",
+        not(feature = "reduced-hash-128"),
+        target_arch = "x86_64",
+        not(miri),
+    ))]
+    {
+        // 2 instructions (`cmp; adc`), 255 distinct values, no cmov.
+        // Saturating add: 0→1, 1→2, ..., 254→255, 255→255.
+        // LLVM won't emit this from safe Rust (generates 4-instruction cmov sequence instead).
+        let result: u8;
+        unsafe {
+            core::arch::asm!(
+                "cmp {h}, 0xFF",
+                "adc {h}, 0",
+                h = inout(reg_byte) (h as u8) => result,
+            );
+        }
+        result
+    }
+    #[cfg(not(any(
+        feature = "reduced-hash-128",
+        all(
+            feature = "reduced-hash-asm",
+            target_arch = "x86_64",
+            not(miri),
+        ),
+    )))]
+    {
+        // 3 instructions (`test; sete; or`), 255 distinct values, no cmov.
+        // Maps 0→1, everything else unchanged. Collision pair: {0,1}→1.
+        let low = (h & 0xFF) as u8;
+        low | (low == 0) as u8
+    }
+}
+
 pub mod flat_btree;
 pub mod gaps;
 mod generic_set;

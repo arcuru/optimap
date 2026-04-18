@@ -19,14 +19,10 @@ pub const META_GROUP_BYTES: usize = 16;
 pub const EMPTY: u8 = 0x00;
 
 /// Compute the reduced hash value from the low byte of a hash.
-/// Maps to range [1, 255] while preserving `result % 8 == h % 8`.
-/// Only 0x00 is reserved (EMPTY).
+/// Maps to range [1, 255], avoiding 0x00 (EMPTY). Only 0x00 is reserved.
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
-    // Branchless: map 0 → 1, everything else unchanged.
-    // overflow_bit() is computed from raw hash, not reduced_hash.
-    let low = (h & 0xFF) as u8;
-    low | (low == 0) as u8
+    crate::reduced_hash_impl(h)
 }
 
 /// Overflow bit index for a given hash value.
