@@ -52,6 +52,32 @@ The miss gap at small N (1.3-1.4x) is due to hashbrown's tighter miss hot path:
 `Tag::full()` = pure shift+mask vs `reduced_hash()` = mask + conditional cmov.
 At higher load (50k+), overflow-bit designs recover and sometimes win.
 
+### Tag extraction: why we can't match hashbrown's 2-instruction path
+
+hashbrown's `Tag::full(hash)` = `(hash >> 57) & 0x7F` — 2 instructions (shift + and).
+This works because hashbrown reserves the MSB: full tags are 0x00-0x7F (128 values),
+EMPTY=0xFF and DELETED=0x80 both have bit 7 set.
+
+Our IPO/IPO64 `reduced_hash(h)` reserves 0x00 (EMPTY) and 0x01 (TOMBSTONE), giving
+254 usable values (2-255). Avoiding those two values costs 5 instructions
+(`mov; or; cmp; movzbl; cmov`). Alternatives considered:
+
+| Approach | Instructions | Distinct values | Problem |
+|----------|:-----------:|:---------------:|---------|
+| `(h >> 57) & 0x7F` (hashbrown) | 2 | 128 | Halves our hash discrimination |
+| `(h & 0xFF) \| 2` | 2 | 128 | Sets bit 1, collapsing half the inputs — same 128 values as hashbrown |
+| `(h & 0xFF).saturating_add(2)` | 4 | 254 | Still needs a cmov (clamp to 255) |
+| `if low < 2 { low + 2 }` (current) | 5 | 254 | cmov, but preserves all 254 values |
+
+The 254 vs 128 value tradeoff matters: more distinct hash values = fewer false-positive
+SIMD matches = fewer wasted key comparisons. At 254 values the false-match probability
+per slot is 1/254 (~0.39%); at 128 it's 1/128 (~0.78%) — double the collision rate.
+This is why our insert is faster than hashbrown despite the slower tag extraction.
+
+The overflow-bit designs (UFM, Gaps, Splitsies) only reserve 0x00 (EMPTY), giving 255
+values. Their `reduced_hash` uses `low | ((low == 0) as u8 * 8)` — 3 instructions,
+no cmov, branchless arithmetic.
+
 ### Why further attempts are unlikely to help
 
 The hit gap is fundamentally about **per-probe instruction count**. hashbrown's probe
