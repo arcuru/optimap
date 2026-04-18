@@ -9,6 +9,12 @@ use crate::raw::bitmask;
 use crate::raw::hash;
 use group::{EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, overflow_bit, reduced_hash};
 
+/// 16-byte all-zeros sentinel so unallocated tables can run SIMD lookups
+/// without branching. Aligned to 16 for SIMD loads.
+#[repr(align(16))]
+struct EmptySentinel([u8; 16]);
+static EMPTY_SENTINEL: EmptySentinel = EmptySentinel([0; 16]);
+
 /// Result of a fused find-or-locate probe.
 pub(crate) enum ProbeResult {
     /// Key was found at (group_index, slot_index).
@@ -57,7 +63,7 @@ impl<K, V> RawTable<K, V> {
     pub fn new() -> Self {
         RawTable {
             mask: 0,
-            metadata: ptr::null_mut(),
+            metadata: EMPTY_SENTINEL.0.as_ptr() as *mut u8,
             buckets: ptr::null_mut(),
             len: 0,
             max_load: 0,
@@ -101,10 +107,10 @@ impl<K, V> RawTable<K, V> {
         self.mask + 1
     }
 
-    /// Whether the table has any allocation.
+    /// Whether the table has a real allocation (not the empty sentinel).
     #[inline(always)]
     pub(crate) fn is_allocated(&self) -> bool {
-        !self.metadata.is_null()
+        self.max_load > 0
     }
 
     pub(crate) fn groups_for_capacity(capacity: usize) -> usize {
@@ -165,15 +171,16 @@ impl<K, V> RawTable<K, V> {
     }
 
     unsafe fn deallocate(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
         let layout = Self::combined_layout(self.num_groups());
         unsafe {
             alloc::dealloc(self.metadata, layout);
         }
-        self.metadata = ptr::null_mut();
+        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.buckets = ptr::null_mut();
+        self.max_load = 0;
     }
 
     /// Map hash to group index.
@@ -210,9 +217,6 @@ impl<K, V> RawTable<K, V> {
     where
         K: Hash + Eq,
     {
-        if !self.is_allocated() {
-            return None;
-        }
         let h = Self::hash_key(key, hash_builder);
         self.find_by_hash(h, |k| k == key)
     }
@@ -225,15 +229,12 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Core lookup: SIMD match (aligned) + overflow-bit probe termination + prefetch.
+    /// Safe to call on empty tables — the sentinel metadata produces all-empty matches.
     #[inline(always)]
     pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
         F: Fn(&K) -> bool,
     {
-        if !self.is_allocated() {
-            return None;
-        }
-
         let reduced = reduced_hash(h);
         let mut gi = self.group_index(h);
         let ofw_bit = overflow_bit(h);
@@ -257,6 +258,42 @@ impl<K, V> RawTable<K, V> {
             gi = (gi.wrapping_add(probe)) & self.mask;
 
             // Prefetch only on overflow — doesn't fire on miss fast path
+            unsafe {
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+            }
+        }
+    }
+
+    /// Like find_by_hash but returns a pointer to the bucket directly,
+    /// avoiding a second bucket_ptr computation by the caller.
+    #[inline(always)]
+    pub(crate) fn find_bucket<F>(&self, h: u64, eq: F) -> Option<*mut (K, V)>
+    where
+        F: Fn(&K) -> bool,
+    {
+        let reduced = reduced_hash(h);
+        let mut gi = self.group_index(h);
+        let ofw_bit = overflow_bit(h);
+        let mut probe = 0usize;
+
+        loop {
+            let meta = unsafe { self.meta_ptr(gi) };
+
+            for si in unsafe { Group::match_byte(meta, reduced) } {
+                let bucket = unsafe { self.bucket_ptr(gi, si) };
+                if eq(unsafe { &(*bucket).0 }) {
+                    return Some(bucket);
+                }
+            }
+
+            if !unsafe { Group::has_overflow_bit(meta, ofw_bit) } {
+                return None;
+            }
+
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.mask;
+
             unsafe {
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
@@ -473,7 +510,8 @@ impl<K, V> RawTable<K, V> {
         let old_num_groups = self.num_groups();
         let old_metadata = self.metadata;
         let old_buckets = self.buckets;
-        let old_layout = if old_metadata.is_null() {
+        let was_allocated = self.is_allocated();
+        let old_layout = if !was_allocated {
             None
         } else {
             Some(Self::combined_layout(old_num_groups))
@@ -481,13 +519,13 @@ impl<K, V> RawTable<K, V> {
 
         let bucket_size = std::mem::size_of::<(K, V)>();
 
-        self.metadata = ptr::null_mut();
+        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.buckets = ptr::null_mut();
         self.mask = 0;
         self.len = 0;
         self.allocate(new_num_groups);
 
-        if old_metadata.is_null() {
+        if !was_allocated {
             return;
         }
 
@@ -591,7 +629,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     pub fn clear(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
 
@@ -618,7 +656,7 @@ impl<K, V> RawTable<K, V> {
         SlotIter {
             table: self,
             group: 0,
-            current_mask: if self.metadata.is_null() {
+            current_mask: if !self.is_allocated() {
                 bitmask::BitMask(0)
             } else {
                 unsafe { Group::match_non_empty(self.metadata) }
@@ -629,7 +667,7 @@ impl<K, V> RawTable<K, V> {
 
 impl<K, V> Drop for RawTable<K, V> {
     fn drop(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
         if std::mem::needs_drop::<(K, V)>() {
@@ -653,7 +691,7 @@ unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
 
 impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
     fn clone(&self) -> Self {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return Self::new();
         }
 

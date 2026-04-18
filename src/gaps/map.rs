@@ -103,9 +103,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
-        Some(&bucket.1)
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        Some(unsafe { &(*bucket).1 })
     }
 
     /// Returns the key-value pair corresponding to the supplied key.
@@ -116,9 +115,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
-        Some((&bucket.0, &bucket.1))
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        Some(unsafe { (&(*bucket).0, &(*bucket).1) })
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
@@ -129,9 +127,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-        Some(&mut bucket.1)
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        Some(unsafe { &mut (*bucket).1 })
     }
 
     /// Returns true if the map contains the given key.
@@ -471,7 +468,7 @@ where
     pub fn drain(&mut self) -> IntoIter<K, V> {
         use super::raw::RawTable;
         let table = std::mem::replace(&mut self.table, RawTable::new());
-        let mask = if table.metadata.is_null() {
+        let mask = if !table.is_allocated() {
             crate::raw::bitmask::BitMask(0)
         } else {
             unsafe { super::raw::group::Group::match_non_empty(table.metadata) }
@@ -806,7 +803,7 @@ impl<K, V, S> IntoIterator for Gaps<K, V, S> {
     fn into_iter(self) -> IntoIter<K, V> {
         let table = unsafe { std::ptr::read(&self.table) };
         std::mem::forget(self);
-        let mask = if table.metadata.is_null() {
+        let mask = if !table.is_allocated() {
             crate::raw::bitmask::BitMask(0)
         } else {
             unsafe { super::raw::group::Group::match_non_empty(table.metadata) }
