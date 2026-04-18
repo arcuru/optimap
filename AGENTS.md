@@ -23,6 +23,9 @@ with different performance trade-offs, benchmarked against hashbrown (Rust's std
 cargo test
 cargo bench
 
+# Sweep benchmarks (continuous N-curve, CSV + PNG plots)
+./scripts/sweep-bench.sh
+
 # Miri (UB detection) — uses scalar SIMD fallbacks via cfg(miri)
 RUSTFLAGS="" MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
 ```

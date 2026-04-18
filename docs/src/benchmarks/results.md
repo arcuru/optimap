@@ -101,6 +101,43 @@ hashbrown degrades 4.4x over the same range (130-570µs).
 | **Splitsies** | **1.12 ms** | **0.79x** |
 | hashbrown | 1.43 ms | — |
 
+## Sweep Benchmarks (continuous N, all designs)
+
+Continuous N-sweep from 100 to 10M elements (362 log-spaced points, median of 5
+trials per point). Captures natural load factor cycling, rehash spikes, and cache
+boundary transitions. Run with `./scripts/sweep-bench.sh`.
+
+### Lookup hit vs hashbrown (ratio, lower = better)
+
+| N range | UFM | Gaps | Splitsies | IPO | IPO64 |
+|---------|:---:|:----:|:---------:|:---:|:-----:|
+| <1k | 1.15 | 1.08 | 1.12 | **1.03** | 1.31 |
+| 1k-10k | 1.12 | 1.10 | 1.11 | **1.03** | 1.34 |
+| 10k-100k | 1.15 | 1.19 | 1.22 | **1.10** | 1.34 |
+| 100k-1M | 1.24 | 1.24 | 1.24 | **1.12** | 1.44 |
+
+IPO is closest to hashbrown on hits across all scales. The gap is structural
+(per-probe instruction count) and has been extensively investigated — see
+[Closed Investigations](../optimization/closed.md).
+
+### Lookup miss vs hashbrown (ratio, lower = better)
+
+| N range | UFM | Gaps | Splitsies | IPO | IPO64 |
+|---------|:---:|:----:|:---------:|:---:|:-----:|
+| <1k | 1.55 | 1.59 | 1.56 | 1.40 | 2.59 |
+| 1k-10k | 1.35 | 1.41 | 1.34 | 1.35 | 2.45 |
+| 50k-100k (high load) | **0.68** | **0.70** | **0.58** | 1.12 | 1.06 |
+| 500k-1M | 1.17 | 1.20 | 1.15 | 1.06 | 1.97 |
+
+At low load (small N or right after rehash), hashbrown wins on misses — its
+tag extraction is tighter (pure shift+mask vs conditional cmov). At high load
+(50k-100k), overflow-bit designs dominate: Splitsies is **0.58x** (1.7x faster).
+
+### Insert vs hashbrown
+
+All optimap designs beat hashbrown on insert at medium-large N (0.46-0.85x).
+IPO is consistently fastest (0.46-0.79x at 50k+).
+
 ## Summary: Splitsies vs hashbrown
 
 ### Splitsies wins

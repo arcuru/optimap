@@ -33,6 +33,24 @@ from per-probe overhead that is inherent to the overflow-bit group design:
 | **S3: Inline + cold continuation** | Splitsies | +12-26% hit regression | Same register pressure as UFM #18. 16-slot design doesn't change CPU register allocation. |
 | **S6: Lazy overflow_bit** | Splitsies | +1-3% hit, +2% miss | Deferring computation to after SIMD match moved it onto the serial critical path for misses. |
 | **#25: Bucket prefetch re-test** | UFM | -5-8% hit, +6-11% miss | Load-factor-controlled re-test confirmed: helps hits at low-medium load, hurts misses. No universal win. |
+| **Static empty sentinel** | All 5 | ~0% change | Replaced `is_allocated()` null-pointer branch with static sentinel metadata. The branch was already perfectly predicted — removing it didn't help. |
+| **find_bucket (direct pointer return)** | All 5 | ~0% change | Added `find_bucket()` returning `*mut (K,V)` directly, eliminating double `bucket_ptr` recomputation in `get()`. LLVM was already doing CSE on the inlined code — no measurable improvement. |
+
+### Sweep benchmark analysis (April 2025)
+
+A continuous N-sweep benchmark (100 to 10M, 362 points, 5 trials/point, median)
+confirmed the gap structure with high resolution:
+
+| N range | IPO vs hashbrown (hit) | IPO vs hashbrown (miss) |
+|---------|:----------------------:|:-----------------------:|
+| <10k | 1.03-1.05x | 1.29-1.39x |
+| 10k-100k | 1.03-1.12x | 0.95-1.08x (load-dependent) |
+| 100k-1M | 1.11-1.13x | 0.97-1.05x |
+| >1M | 1.11x | ~1.05x |
+
+The miss gap at small N (1.3-1.4x) is due to hashbrown's tighter miss hot path:
+`Tag::full()` = pure shift+mask vs `reduced_hash()` = mask + conditional cmov.
+At higher load (50k+), overflow-bit designs recover and sometimes win.
 
 ### Why further attempts are unlikely to help
 
@@ -45,14 +63,15 @@ Every attempt to reduce this count has either:
 - **Moved work off the hot path** → it ended up on the miss path (serial dependency)
 - **Added speculative work** (prefetch) → cache pollution on misses
 - **Split the function** (inline + cold) → register pressure at the boundary
+- **Removed branches** (sentinel, find_bucket) → branches were already predicted, LLVM already optimizing
 
 The only way to close this gap is to eliminate the overflow byte entirely (which
 loses O(1) miss termination) or switch to 16-slot groups (which Splitsies does,
 getting the gap down to 1.11x — the remaining overhead is the separate overflow
 array access).
 
-**InPlaceOverflow (IPO) achieves ~1.01x** on hits by dropping the overflow design
-entirely and using tombstones like hashbrown, but with 254 hash values vs 128.
+**InPlaceOverflow (IPO) achieves ~1.03x** on hits at small N by dropping the overflow
+design entirely and using tombstones like hashbrown, but with 254 hash values vs 128.
 
 ---
 

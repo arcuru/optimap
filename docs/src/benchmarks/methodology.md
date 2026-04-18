@@ -32,7 +32,22 @@ benches/
   distributions.rs   — Key distribution and value size sensitivity
   workloads.rs       — Realistic mixed-operation scenarios
   load_factor.rs     — Load factor sensitivity sweeps
+  sweep.rs           — Continuous N-sweep (100–10M), CSV output, not criterion
 ```
+
+### sweep.rs (ankerl-style)
+
+Standalone binary (not criterion). Sweeps all 7 designs across 362 log-spaced
+N-points from 100 to 10M. Each point runs 5 trials with calibrated minimum
+measurement time; reports median ns/op. Outputs CSV to stdout.
+
+Operations: insert, lookup_hit, lookup_miss, remove, iterate.
+
+Pipeline: `./scripts/sweep-bench.sh` runs the benchmark, saves timestamped CSV
+to `bench-results/`, and generates per-operation PNG graphs via gnuplot.
+
+This captures what criterion benchmarks miss: rehash sawtooth, cache boundary
+transitions, and natural load factor cycling across the full N range.
 
 ### throughput.rs
 
