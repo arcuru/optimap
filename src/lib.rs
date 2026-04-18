@@ -115,21 +115,38 @@
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 
-// ── reduced_hash implementation (feature-gated) ───────────────────────────
+// ── Hash tag extraction (feature-gated) ───────────────────────────────────
 
-/// Shared `reduced_hash` implementation for overflow-bit designs (UFM, Gaps, Splitsies).
-/// Maps the low byte of a hash to [1, 255], avoiding 0x00 (EMPTY sentinel).
+/// Extract a non-zero tag byte from a hash value.
 ///
-/// Three variants selectable via crate features:
-/// - **default**: `low | (low == 0) as u8` — 3 instructions (`test; sete; or`), 255 distinct values
-/// - **`reduced-hash-asm`**: `cmp 0xFF; adc 0` — 2 instructions, 255 values (x86_64 only, falls back to default)
-/// - **`reduced-hash-128`**: `low | 1` — 1 instruction, 128 values (higher false-match rate)
+/// Hash tables that use 0x00 as an EMPTY sentinel need tag values in [1, 255].
+/// This function extracts the low byte of a hash and maps it into that range.
+///
+/// Three implementations are available via crate features, trading off between
+/// instruction count and hash discrimination (distinct output values):
+///
+/// | Feature | Instructions | Distinct values | Notes |
+/// |---------|:-----------:|:---------------:|-------|
+/// | **`reduced-hash-asm`** (default) | 2 | 255 | Inline asm, x86_64 only |
+/// | `reduced-hash-128` | 1 | 128 | Fastest, but doubles false-match rate |
+/// | *(neither)* | 3 | 255 | Pure Rust fallback |
+///
+/// More distinct values = fewer false-positive SIMD matches = fewer wasted key
+/// comparisons. At 255 values the false-match rate is 1/255 (0.39% per slot);
+/// at 128 values it's 1/128 (0.78%).
+///
+/// The `reduced-hash-asm` variant also acts as an LLVM optimization barrier that
+/// improves instruction scheduling in some probe loops (notably UFM: -26% hit,
+/// -41% miss).
 #[inline(always)]
-pub(crate) fn reduced_hash_impl(h: u64) -> u8 {
+pub(crate) fn hash_tag(h: u64) -> u8 {
     #[cfg(feature = "reduced-hash-128")]
     {
-        // 1 instruction, 128 distinct values. Forces bit 0, collapsing even/odd pairs.
-        // False-match rate per slot: 1/128 (0.78%) vs 1/255 (0.39%) for 255-value variants.
+        // Force bit 0 high: output is always odd, giving 128 distinct values
+        // (1, 3, 5, ..., 255). Collapses even/odd pairs (e.g. 0x10 and 0x11
+        // both produce 0x11).
+        //
+        // x86 assembly: `or al, 1` — 1 instruction.
         (h as u8) | 1
     }
     #[cfg(all(
@@ -139,9 +156,18 @@ pub(crate) fn reduced_hash_impl(h: u64) -> u8 {
         not(miri),
     ))]
     {
-        // 2 instructions (`cmp; adc`), 255 distinct values, no cmov.
-        // Saturating add: 0→1, 1→2, ..., 254→255, 255→255.
-        // LLVM won't emit this from safe Rust (generates 4-instruction cmov sequence instead).
+        // Saturating increment via carry flag: 0→1, 1→2, ..., 254→255, 255→255.
+        // 255 distinct values; only collision is {254, 255} → 255.
+        //
+        // x86 assembly (2 instructions, no branch, no cmov):
+        //   cmp al, 0xFF   ; sets CF=1 if al < 255 (unsigned comparison)
+        //   adc al, 0      ; al = al + 0 + CF
+        //                  ;   if al < 255: al = al + 1  (CF was 1)
+        //                  ;   if al == 255: al = 255    (CF was 0, no change)
+        //
+        // Why inline asm: LLVM lowers `u8::saturating_add(1)` to a 4-instruction
+        // sequence with cmov (`inc; movzbl; mov $0xFF; cmovne`). It doesn't know
+        // the `cmp; adc` idiom for single-byte saturation.
         let result: u8;
         unsafe {
             core::arch::asm!(
@@ -161,8 +187,15 @@ pub(crate) fn reduced_hash_impl(h: u64) -> u8 {
         ),
     )))]
     {
-        // 3 instructions (`test; sete; or`), 255 distinct values, no cmov.
-        // Maps 0→1, everything else unchanged. Collision pair: {0,1}→1.
+        // Conditional fix-up: 0→1, everything else unchanged.
+        // 255 distinct values; only collision is {0, 1} → 1.
+        //
+        // x86 assembly (3 instructions, no cmov):
+        //   test al, al    ; set ZF if al == 0
+        //   sete cl        ; cl = 1 if al was 0, else 0
+        //   or al, cl      ; al |= cl — sets bit 0 only when al was 0
+        //
+        // This is the pure Rust fallback, used on non-x86_64 and under Miri.
         let low = (h & 0xFF) as u8;
         low | (low == 0) as u8
     }

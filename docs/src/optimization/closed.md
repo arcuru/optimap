@@ -75,8 +75,9 @@ per slot is 1/254 (~0.39%); at 128 it's 1/128 (~0.78%) — double the collision 
 This is why our insert is faster than hashbrown despite the slower tag extraction.
 
 The overflow-bit designs (UFM, Gaps, Splitsies) only reserve 0x00 (EMPTY), giving 255
-values. Their `reduced_hash` uses `low | ((low == 0) as u8 * 8)` — 3 instructions,
-no cmov, branchless arithmetic.
+values. Their `reduced_hash` uses a saturating increment via inline asm (`cmp 0xFF;
+adc 0`) — 2 instructions, no cmov. See [Hash Tag Optimization](#hash-tag-optimization)
+below for the full investigation.
 
 ### Why further attempts are unlikely to help
 
@@ -182,3 +183,76 @@ probe step, with dispatch at the find_by_hash entry point.
 
 For 16-slot groups (UFM, Splitsies, IPO), AVX-512 offers no benefit: a single
 SSE2 128-bit load already covers the full 16-byte metadata group.
+
+---
+
+## Hash Tag Optimization (April 2025)
+
+**Status: RESOLVED — inline asm saturating add is the default**
+
+The overflow-bit designs (UFM, Gaps, Splitsies) reserve only 0x00 as EMPTY,
+needing a function that maps 256 input bytes to 255 usable tag values [1, 255].
+
+### The fundamental constraint
+
+With 2 standard ALU instructions (no cmov/flags), it is impossible to get more
+than 128 distinct values while excluding a sentinel. Any 2-instruction sequence
+is either a bijection (must produce the sentinel for some input) or lossy
+(collapses to ≤128 values via AND/OR/shift). Getting 255 values requires a
+conditional (cmov or sete), which costs extra instructions.
+
+### Implementations benchmarked
+
+Three implementations were created behind crate features:
+
+| Feature | Expression | Instructions | Values | Assembly |
+|---------|-----------|:-----------:|:------:|----------|
+| `reduced-hash-asm` **(default)** | saturating add | 2 | 255 | `cmp 0xFF; adc 0` |
+| `reduced-hash-128` | force bit 0 | 1 | 128 | `or 1` |
+| *(none)* | conditional fix-up | 3 | 255 | `test; sete; or` |
+
+The inline asm is necessary because LLVM generates a 4-instruction cmov sequence
+for `u8::saturating_add(1)` instead of the 2-instruction `cmp; adc` idiom.
+
+### Other approaches considered
+
+| Approach | Result |
+|----------|--------|
+| `(h >> 57) & 0x7F` (hashbrown-style) | 2 instructions, 128 values. Requires EMPTY≠0x00. |
+| `u8::saturating_add(1)` (safe Rust) | LLVM emits `inc; movzbl; mov $0xFF; cmovne` — 4 instructions with cmov. Worse than all three options. |
+| `max(low, 1)` | `cmp; cmov` — 2 instructions but needs constant in register. LLVM emits 3. |
+| `wrapping_add(1).max(1)` | 5 instructions with cmov. |
+| Change EMPTY to 0x80 | Enables `h & 0x7F` (2 insn, 128 values) but requires redesigning all metadata encoding. |
+
+### Benchmark results (April 2025)
+
+Throughput benchmarks, median µs. Three-way comparison across feature variants:
+
+| Operation | Default (3i/255v) | ASM (2i/255v) | 128-val (1i/128v) |
+|-----------|------------------:|-------------:|-----------------:|
+| lookup_hit UFM/med | 32.2 | **23.9** (-26%) | **22.7** (-30%) |
+| lookup_miss UFM/med | 27.0 | **15.8** (-41%) | **15.8** (-42%) |
+| lookup_hit Gaps/med | 23.7 | 23.3 (-2%) | **22.0** (-7%) |
+| lookup_miss Gaps/med | 16.5 | 16.1 (-2%) | **15.7** (-5%) |
+| lookup_hit Split/med | 21.9 | 22.1 (+1%) | **20.0** (-9%) |
+| lookup_miss Split/med | 15.5 | 15.6 (+1%) | **14.5** (-6%) |
+| insert Split/lrg | 498 | **381** (-23%) | **358** (-28%) |
+
+### UFM codegen effect
+
+The UFM improvements from inline asm (-26% hit, -41% miss) are far too large to
+be explained by saving one instruction. The inline asm acts as an optimization
+barrier that changes how LLVM schedules the surrounding probe loop — the `asm!`
+block prevents LLVM from reordering `reduced_hash` computation relative to the
+SIMD comparison, which accidentally produces better instruction scheduling for
+UFM's 15-slot group layout. Gaps and Splitsies (16-slot groups) show only the
+expected small differences (±2%).
+
+### Decision
+
+`reduced-hash-asm` is the default because:
+1. Best overall performance on UFM (large codegen win)
+2. 255 distinct values (no collision-rate penalty vs pure Rust default)
+3. Falls back to pure Rust on non-x86_64 and under Miri
+4. The 128-value variant is slightly faster on lookups but doubles the false-match
+   rate (1/128 vs 1/255), which hurts insert-heavy workloads

@@ -18,11 +18,11 @@ pub const META_GROUP_BYTES: usize = 16;
 /// Metadata byte: slot is empty.
 pub const EMPTY: u8 = 0x00;
 
-/// Compute the reduced hash value from the low byte of a hash.
-/// Maps to range [1, 255], avoiding 0x00 (EMPTY). Only 0x00 is reserved.
+/// Extract a non-zero hash tag from the low byte of a hash.
+/// See [`crate::hash_tag`] for implementation details and feature selection.
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
-    crate::reduced_hash_impl(h)
+    crate::hash_tag(h)
 }
 
 /// Overflow bit index for a given hash value.

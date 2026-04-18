@@ -32,13 +32,10 @@ Bucket array:  2^n  ×  15  slots  (key,value)
 
 ### Metadata Byte Encoding
 
-Each occupied bucket stores a reduced hash in `[2, 255]`, derived from the LSB
-of the full hash. The critical invariant:
-
-> `reduced_hash(h) % 8 == h % 8`
-
-This ensures the overflow bit (indexed by `h % 8`) is consistent regardless
-of whether we look at the full hash or the reduced hash.
+Each occupied bucket stores a reduced hash in `[1, 255]`, derived from the LSB
+of the full hash via a saturating increment (`cmp 0xFF; adc 0` on x86_64).
+Only 0x00 is reserved (EMPTY sentinel). The overflow bit is computed from the
+raw hash (`1 << (h & 7)`), not from the reduced hash — the two are independent.
 
 ### Overflow Byte
 

@@ -11,11 +11,11 @@ ahash = { version = "0.8", optional = true }
 hashbrown = "0.15"
 
 [features]
-default = []
-# reduced_hash implementation selection (mutually exclusive):
-# - default: pure Rust `low | (low == 0) as u8` — 3 instructions, 255 values
-# - reduced-hash-asm: inline asm `cmp 0xFF; adc 0` — 2 instructions, 255 values (x86_64 only)
+default = ["reduced-hash-asm"]
+# reduced_hash implementation selection (mutually exclusive, last wins):
+# - reduced-hash-asm (default): inline asm `cmp 0xFF; adc 0` — 2 instructions, 255 values (x86_64 only, falls back to pure Rust)
 # - reduced-hash-128: `low | 1` — 1 instruction, 128 values (higher collision rate)
+# - neither: pure Rust `low | (low == 0) as u8` — 3 instructions, 255 values
 reduced-hash-asm = []
 reduced-hash-128 = []
 

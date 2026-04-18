@@ -49,6 +49,26 @@ to `bench-results/`, and generates per-operation PNG graphs via gnuplot.
 This captures what criterion benchmarks miss: rehash sawtooth, cache boundary
 transitions, and natural load factor cycling across the full N range.
 
+### Hash tag variant sweep
+
+`./scripts/sweep-hash-tag.sh` runs the sweep benchmark three times — once per
+`hash_tag` feature variant (`reduced-hash-asm`, `reduced-hash-128`, no features) —
+and merges results into a single CSV with suffixed design names (e.g. `UFM/asm`,
+`UFM/128`, `UFM/pure`). Generates per-operation per-design comparison PNGs.
+
+```bash
+./scripts/sweep-hash-tag.sh                     # full comparison
+./scripts/sweep-hash-tag.sh --design UFM        # UFM only
+./scripts/sweep-hash-tag.sh --op lookup_hit     # one operation
+```
+
+For criterion benchmarks, compare variants directly:
+```bash
+cargo bench --bench throughput                              # asm (default)
+cargo bench --bench throughput --no-default-features --features reduced-hash-128
+cargo bench --bench throughput --no-default-features        # pure Rust
+```
+
 ### throughput.rs
 
 Pre-warmed tables. Measures pure operation cost.
