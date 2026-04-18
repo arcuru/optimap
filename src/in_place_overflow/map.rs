@@ -86,9 +86,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
-        Some(&bucket.1)
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        Some(unsafe { &(*bucket).1 })
     }
 
     #[inline]
@@ -98,8 +97,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        let bucket = unsafe { &*bucket };
         Some((&bucket.0, &bucket.1))
     }
 
@@ -110,9 +109,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-        Some(&mut bucket.1)
+        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
+        Some(unsafe { &mut (*bucket).1 })
     }
 
     #[inline]
@@ -415,7 +413,7 @@ where
 
     pub fn drain(&mut self) -> Drain<'_, K, V> {
         use super::raw::group::Group;
-        let mask = if self.table.metadata.is_null() {
+        let mask = if !self.table.is_allocated() {
             crate::raw::bitmask::BitMask(0)
         } else {
             unsafe { Group::match_occupied(self.table.metadata) }
@@ -754,7 +752,7 @@ impl<K, V, S> IntoIterator for InPlaceOverflow<K, V, S> {
         use super::raw::group::Group;
         let table = unsafe { std::ptr::read(&self.table) };
         std::mem::forget(self);
-        let mask = if table.metadata.is_null() {
+        let mask = if !table.is_allocated() {
             crate::raw::bitmask::BitMask(0)
         } else {
             unsafe { Group::match_occupied(table.metadata) }

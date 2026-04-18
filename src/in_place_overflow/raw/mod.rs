@@ -9,6 +9,13 @@ use crate::raw::bitmask;
 use crate::raw::hash;
 use group::{EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE, reduced_hash};
 
+/// Static sentinel for empty tables: 16-byte-aligned zeros.
+/// SIMD loads on this produce all-EMPTY matches, terminating probes immediately.
+/// Avoids a branch on every lookup for unallocated tables.
+#[repr(align(16))]
+struct EmptySentinel([u8; 16]);
+static EMPTY_SENTINEL: EmptySentinel = EmptySentinel([0; 16]);
+
 /// Result of a fused find-or-locate probe.
 pub(crate) enum ProbeResult {
     /// Key was found at (group_index, slot_index).
@@ -44,6 +51,8 @@ pub struct RawTable<K, V> {
     pub(crate) len: usize,
     /// Number of EMPTY slots remaining before we must grow or rehash.
     pub(crate) growth_left: usize,
+    /// Maximum number of entries before growth is required. Zero when unallocated.
+    pub(crate) max_load: usize,
     /// group_index = hash >> shift. For num_groups=1, shift=64.
     pub(crate) shift: u32,
     _marker: PhantomData<(K, V)>,
@@ -53,10 +62,11 @@ impl<K, V> RawTable<K, V> {
     pub fn new() -> Self {
         RawTable {
             mask: 0,
-            metadata: ptr::null_mut(),
+            metadata: EMPTY_SENTINEL.0.as_ptr() as *mut u8,
             buckets: ptr::null_mut(),
             len: 0,
             growth_left: 0,
+            max_load: 0,
             shift: 64,
             _marker: PhantomData,
         }
@@ -97,10 +107,10 @@ impl<K, V> RawTable<K, V> {
         self.mask + 1
     }
 
-    /// Whether the table has any allocation.
+    /// Whether the table has a real allocation (not the empty sentinel).
     #[inline(always)]
     pub(crate) fn is_allocated(&self) -> bool {
-        !self.metadata.is_null()
+        self.max_load > 0
     }
 
     pub(crate) fn groups_for_capacity(capacity: usize) -> usize {
@@ -151,20 +161,22 @@ impl<K, V> RawTable<K, V> {
         }
 
         self.mask = num_groups - 1;
-        self.growth_left = max_load_for_capacity(total_buckets);
+        self.max_load = max_load_for_capacity(total_buckets);
+        self.growth_left = self.max_load;
         self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
 
     unsafe fn deallocate(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
         let layout = Self::combined_layout(self.num_groups());
         unsafe {
             alloc::dealloc(self.metadata, layout);
         }
-        self.metadata = ptr::null_mut();
+        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.buckets = ptr::null_mut();
+        self.max_load = 0;
     }
 
     /// Map hash to group index.
@@ -200,9 +212,6 @@ impl<K, V> RawTable<K, V> {
     where
         K: Hash + Eq,
     {
-        if !self.is_allocated() {
-            return None;
-        }
         let h = Self::hash_key(key, hash_builder);
         self.find_by_hash(h, |k| k == key)
     }
@@ -220,10 +229,6 @@ impl<K, V> RawTable<K, V> {
     where
         F: Fn(&K) -> bool,
     {
-        if !self.is_allocated() {
-            return None;
-        }
-
         let reduced = reduced_hash(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
@@ -239,6 +244,42 @@ impl<K, V> RawTable<K, V> {
                 let bucket = unsafe { &*self.bucket_ptr(gi, si) };
                 if eq(&bucket.0) {
                     return Some((gi, si));
+                }
+            }
+
+            if unsafe { Group::loaded_match_empty(data).any_set() } {
+                return None;
+            }
+
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.mask;
+
+            unsafe {
+                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
+            }
+        }
+    }
+
+    /// Like find_by_hash but returns a pointer to the bucket directly.
+    #[inline(always)]
+    pub(crate) fn find_bucket<F>(&self, h: u64, eq: F) -> Option<*mut (K, V)>
+    where
+        F: Fn(&K) -> bool,
+    {
+        let reduced = reduced_hash(h);
+        let mut gi = self.group_index(h);
+        let mut probe = 0usize;
+
+        loop {
+            let meta = unsafe { self.meta_ptr(gi) };
+
+            let data = unsafe { Group::load(meta) };
+
+            for si in unsafe { Group::loaded_match_byte(data, reduced) } {
+                let bucket = unsafe { self.bucket_ptr(gi, si) };
+                if eq(unsafe { &(*bucket).0 }) {
+                    return Some(bucket);
                 }
             }
 
@@ -447,24 +488,26 @@ impl<K, V> RawTable<K, V> {
     where
         K: Hash,
     {
+        let was_allocated = self.is_allocated();
         let old_num_groups = self.num_groups();
         let old_metadata = self.metadata;
         let old_buckets = self.buckets;
-        let old_layout = if old_metadata.is_null() {
-            None
-        } else {
+        let old_layout = if was_allocated {
             Some(Self::combined_layout(old_num_groups))
+        } else {
+            None
         };
 
         let bucket_size = std::mem::size_of::<(K, V)>();
 
-        self.metadata = ptr::null_mut();
+        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.buckets = ptr::null_mut();
         self.mask = 0;
         self.len = 0;
+        self.max_load = 0;
         self.allocate(new_num_groups);
 
-        if old_metadata.is_null() {
+        if !was_allocated {
             return;
         }
 
@@ -576,7 +619,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     pub fn clear(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
 
@@ -604,7 +647,7 @@ impl<K, V> RawTable<K, V> {
         SlotIter {
             table: self,
             group: 0,
-            current_mask: if self.metadata.is_null() {
+            current_mask: if !self.is_allocated() {
                 bitmask::BitMask(0)
             } else {
                 unsafe { Group::match_occupied(self.metadata) }
@@ -615,7 +658,7 @@ impl<K, V> RawTable<K, V> {
 
 impl<K, V> Drop for RawTable<K, V> {
     fn drop(&mut self) {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return;
         }
         if std::mem::needs_drop::<(K, V)>() {
@@ -639,7 +682,7 @@ unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
 
 impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
     fn clone(&self) -> Self {
-        if self.metadata.is_null() {
+        if !self.is_allocated() {
             return Self::new();
         }
 
