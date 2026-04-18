@@ -5,3 +5,4 @@ Cargo.lock
 docs/book/
 fuzz/corpus/
 fuzz/artifacts/
+bench-results/
