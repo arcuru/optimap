@@ -1,29 +1,36 @@
 //! Sweep benchmark harness — measures operation throughput as a function of N.
 //!
-//! Produces CSV to stdout for plotting. Not criterion — raw `Instant` timing.
+//! Produces CSV to stdout for plotting. Not criterion — raw `Instant` timing
+//! with multiple trials per measurement point (reports median).
 //!
 //! Usage:
 //!   cargo bench --bench sweep                           # full run
 //!   cargo bench --bench sweep -- --op insert            # one operation
 //!   cargo bench --bench sweep -- --design hashbrown     # one design
 //!   cargo bench --bench sweep -- --max-n 100000         # cap N range
+//!   cargo bench --bench sweep -- --trials 3             # fewer trials (faster)
 
 mod bench_helpers;
 
 use bench_helpers::{OptiMapBench, Sfc64};
 use optimap::{Gaps, IPO64, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 use std::hint::black_box;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
 const DEFAULT_MAX_N: usize = 10_000_000;
-const LOOKUP_OPS_CAP: usize = 100_000;
+const DEFAULT_TRIALS: usize = 5;
+
+/// Target minimum wall time per measurement point. If a single pass is shorter
+/// than this, we increase the ops count to compensate.
+const MIN_MEASUREMENT_NS: u64 = 500_000; // 0.5ms
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 struct Config {
     max_n: usize,
+    trials: usize,
     filter_op: Option<String>,
     filter_design: Option<String>,
 }
@@ -32,6 +39,7 @@ fn parse_args() -> Config {
     let args: Vec<String> = std::env::args().collect();
     let mut config = Config {
         max_n: DEFAULT_MAX_N,
+        trials: DEFAULT_TRIALS,
         filter_op: None,
         filter_design: None,
     };
@@ -50,6 +58,10 @@ fn parse_args() -> Config {
                 i += 1;
                 config.max_n = args[i].parse().expect("--max-n must be a number");
             }
+            "--trials" => {
+                i += 1;
+                config.trials = args[i].parse().expect("--trials must be a number");
+            }
             _ => {}
         }
         i += 1;
@@ -59,14 +71,14 @@ fn parse_args() -> Config {
 
 // ── N-point generation ──────────────────────────────────────────────────────
 
-/// Logarithmic spacing (~15% growth per step, minimum step of 64).
-/// ~200 points from 100 to 10M.
+/// Logarithmic spacing (~3% growth per step, minimum step of 16).
+/// ~400 points from 100 to 10M — dense enough for smooth curves.
 fn sweep_points(max_n: usize) -> Vec<usize> {
     let mut points = Vec::new();
     let mut n = 100usize;
     while n <= max_n {
         points.push(n);
-        let step = ((n as f64 * 0.15) as usize).max(64);
+        let step = ((n as f64 * 0.03) as usize).max(16);
         n += step;
     }
     points
@@ -83,66 +95,71 @@ fn make_miss_keys(n: usize) -> Vec<u64> {
     make_random_keys(n, 9999)
 }
 
+// ── Measurement helpers ─────────────────────────────────────────────────────
+
+/// Return the median of a slice of Durations.
+fn median(samples: &mut [Duration]) -> Duration {
+    samples.sort();
+    samples[samples.len() / 2]
+}
+
+/// Compute how many times to repeat `ops` operations to reach MIN_MEASUREMENT_NS.
+/// Calibrates with a single pilot run using the provided closure.
+fn calibrate_repeats(ops: usize, mut f: impl FnMut(usize)) -> usize {
+    let start = Instant::now();
+    f(ops);
+    let pilot_ns = start.elapsed().as_nanos() as u64;
+    if pilot_ns >= MIN_MEASUREMENT_NS {
+        return 1;
+    }
+    ((MIN_MEASUREMENT_NS / pilot_ns.max(1)) as usize).max(1)
+}
+
 // ── Sweep functions ─────────────────────────────────────────────────────────
 
 /// Insert sweep: grow from empty, measure each batch.
-/// Captures rehash spikes naturally.
-fn sweep_insert<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64]) {
-    // Warm-up: full insert cycle (discarded)
-    {
-        let mut m = M::new();
-        for (i, &k) in keys.iter().enumerate() {
-            m.insert(k, i as u64);
+///
+/// Insert is special: it's incremental and each batch changes the table state,
+/// so we can't repeat the same batch. Instead we run the full sweep `trials`
+/// times and take the median per point.
+fn sweep_insert<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+    // Collect all trials
+    let num_points = points.len();
+    let mut all_ns: Vec<Vec<f64>> = vec![Vec::with_capacity(trials); num_points];
+
+    for _trial in 0..trials {
+        let mut map = M::new();
+        let mut prev_n = 0;
+        for (pi, &n) in points.iter().enumerate() {
+            let batch = &keys[prev_n..n];
+            let start = Instant::now();
+            for (i, &k) in batch.iter().enumerate() {
+                black_box(map.insert(k, (prev_n + i) as u64));
+            }
+            let elapsed = start.elapsed();
+            let ns_per_op = elapsed.as_nanos() as f64 / batch.len() as f64;
+            all_ns[pi].push(ns_per_op);
+            prev_n = n;
         }
-        black_box(m.len());
+        // Reset for next trial
+        drop(map);
     }
 
-    let mut map = M::new();
-    let mut prev_n = 0;
-    for &n in points {
-        let batch = &keys[prev_n..n];
-        let start = Instant::now();
-        for (i, &k) in batch.iter().enumerate() {
-            black_box(map.insert(k, (prev_n + i) as u64));
-        }
-        let elapsed = start.elapsed();
-        let ns_per_op = elapsed.as_nanos() as f64 / batch.len() as f64;
-        println!("insert,{design},{n},{ns_per_op:.2}");
-        prev_n = n;
+    // Report median per point
+    for (pi, &n) in points.iter().enumerate() {
+        all_ns[pi].sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let med = all_ns[pi][trials / 2];
+        println!("insert,{design},{n},{med:.2}");
     }
 }
 
 /// Lookup hit sweep: grow table incrementally, measure lookups at each size.
-fn sweep_lookup_hit<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64]) {
-    let mut map = M::new();
-    let mut prev_n = 0;
-
-    for &n in points {
-        // Grow table to size n
-        for i in prev_n..n {
-            map.insert(keys[i], i as u64);
-        }
-        prev_n = n;
-
-        let ops = n.min(LOOKUP_OPS_CAP);
-        let start = Instant::now();
-        let mut sum = 0u64;
-        for i in 0..ops {
-            sum = sum.wrapping_add(*black_box(map.get(&keys[i % n]).unwrap_or(&0)));
-        }
-        black_box(sum);
-        let elapsed = start.elapsed();
-        let ns_per_op = elapsed.as_nanos() as f64 / ops as f64;
-        println!("lookup_hit,{design},{n},{ns_per_op:.2}");
-    }
-}
-
-/// Lookup miss sweep: grow table incrementally, measure misses at each size.
-fn sweep_lookup_miss<M: Map<u64, u64>>(
+/// Multiple trials per point with calibrated op count.
+fn sweep_lookup_hit<M: Map<u64, u64>>(
     design: &str,
     points: &[usize],
     keys: &[u64],
-    miss_keys: &[u64],
+    trials: usize,
 ) {
     let mut map = M::new();
     let mut prev_n = 0;
@@ -153,43 +170,41 @@ fn sweep_lookup_miss<M: Map<u64, u64>>(
         }
         prev_n = n;
 
-        let ops = LOOKUP_OPS_CAP.min(miss_keys.len());
-        let start = Instant::now();
-        let mut count = 0u64;
-        for i in 0..ops {
-            if map.get(&miss_keys[i]).is_some() {
-                count += 1;
+        // Calibrate: how many full passes over `ops` keys to fill MIN_MEASUREMENT_NS?
+        let ops = n.min(50_000);
+        let repeats = calibrate_repeats(ops, |count| {
+            let mut sum = 0u64;
+            for i in 0..count {
+                sum = sum.wrapping_add(*black_box(map.get(&keys[i % n]).unwrap_or(&0)));
             }
+            black_box(sum);
+        });
+
+        let total_ops = ops * repeats;
+        let mut samples = Vec::with_capacity(trials);
+        for _ in 0..trials {
+            let start = Instant::now();
+            let mut sum = 0u64;
+            for i in 0..total_ops {
+                sum = sum.wrapping_add(*black_box(map.get(&keys[i % n]).unwrap_or(&0)));
+            }
+            black_box(sum);
+            samples.push(start.elapsed());
         }
-        black_box(count);
-        let elapsed = start.elapsed();
-        let ns_per_op = elapsed.as_nanos() as f64 / ops as f64;
-        println!("lookup_miss,{design},{n},{ns_per_op:.2}");
+        let med = median(&mut samples);
+        let ns_per_op = med.as_nanos() as f64 / total_ops as f64;
+        println!("lookup_hit,{design},{n},{ns_per_op:.2}");
     }
 }
 
-/// Remove sweep: build table to size N, then remove a batch.
-/// Rebuilds at each point since remove is destructive.
-fn sweep_remove<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64]) {
-    for &n in points {
-        let mut map = M::new();
-        for i in 0..n {
-            map.insert(keys[i], i as u64);
-        }
-
-        let ops = n.min(LOOKUP_OPS_CAP);
-        let start = Instant::now();
-        for i in 0..ops {
-            black_box(map.remove(&keys[i]));
-        }
-        let elapsed = start.elapsed();
-        let ns_per_op = elapsed.as_nanos() as f64 / ops as f64;
-        println!("remove,{design},{n},{ns_per_op:.2}");
-    }
-}
-
-/// Iteration sweep: grow table incrementally, measure full scan at each size.
-fn sweep_iterate<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64]) {
+/// Lookup miss sweep: grow table incrementally, measure misses at each size.
+fn sweep_lookup_miss<M: Map<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    miss_keys: &[u64],
+    trials: usize,
+) {
     let mut map = M::new();
     let mut prev_n = 0;
 
@@ -199,19 +214,106 @@ fn sweep_iterate<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64])
         }
         prev_n = n;
 
-        // Repeat small scans to get above timer noise
-        let repeats = (100_000 / n).max(1);
-        let start = Instant::now();
-        for _ in 0..repeats {
+        let ops = 50_000.min(miss_keys.len());
+        let repeats = calibrate_repeats(ops, |count| {
+            let mut c = 0u64;
+            for i in 0..count {
+                if map.get(&miss_keys[i % miss_keys.len()]).is_some() {
+                    c += 1;
+                }
+            }
+            black_box(c);
+        });
+
+        let total_ops = ops * repeats;
+        let mut samples = Vec::with_capacity(trials);
+        for _ in 0..trials {
+            let start = Instant::now();
+            let mut count = 0u64;
+            for i in 0..total_ops {
+                if map.get(&miss_keys[i % miss_keys.len()]).is_some() {
+                    count += 1;
+                }
+            }
+            black_box(count);
+            samples.push(start.elapsed());
+        }
+        let med = median(&mut samples);
+        let ns_per_op = med.as_nanos() as f64 / total_ops as f64;
+        println!("lookup_miss,{design},{n},{ns_per_op:.2}");
+    }
+}
+
+/// Remove sweep: build table to size N, then remove a batch.
+/// Rebuilds per trial since remove is destructive.
+fn sweep_remove<M: Map<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
+    for &n in points {
+        let ops = n.min(50_000);
+        let mut samples = Vec::with_capacity(trials);
+
+        for _ in 0..trials {
+            let mut map = M::new();
+            for i in 0..n {
+                map.insert(keys[i], i as u64);
+            }
+
+            let start = Instant::now();
+            for i in 0..ops {
+                black_box(map.remove(&keys[i]));
+            }
+            samples.push(start.elapsed());
+        }
+        let med = median(&mut samples);
+        let ns_per_op = med.as_nanos() as f64 / ops as f64;
+        println!("remove,{design},{n},{ns_per_op:.2}");
+    }
+}
+
+/// Iteration sweep: grow table incrementally, measure full scan at each size.
+fn sweep_iterate<M: Map<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
+    let mut map = M::new();
+    let mut prev_n = 0;
+
+    for &n in points {
+        for i in prev_n..n {
+            map.insert(keys[i], i as u64);
+        }
+        prev_n = n;
+
+        // Calibrate repeats so we get enough wall time
+        let repeats = calibrate_repeats(1, |_| {
             let mut sum = 0u64;
             for (_, &v) in map.iter() {
                 sum = sum.wrapping_add(v);
             }
             black_box(sum);
+        });
+
+        let mut samples = Vec::with_capacity(trials);
+        for _ in 0..trials {
+            let start = Instant::now();
+            for _ in 0..repeats {
+                let mut sum = 0u64;
+                for (_, &v) in map.iter() {
+                    sum = sum.wrapping_add(v);
+                }
+                black_box(sum);
+            }
+            samples.push(start.elapsed());
         }
-        let elapsed = start.elapsed();
+        let med = median(&mut samples);
         let total_elements = n * repeats;
-        let ns_per_op = elapsed.as_nanos() as f64 / total_elements as f64;
+        let ns_per_op = med.as_nanos() as f64 / total_elements as f64;
         println!("iterate,{design},{n},{ns_per_op:.2}");
     }
 }
@@ -242,12 +344,13 @@ fn main() {
     let config = parse_args();
     let points = sweep_points(config.max_n);
     let keys = make_random_keys(config.max_n, 42);
-    let miss_keys = make_miss_keys(LOOKUP_OPS_CAP);
+    let miss_keys = make_miss_keys(100_000);
 
     eprintln!(
-        "Sweep benchmark: max_n={}, {} points, {} designs",
+        "Sweep benchmark: max_n={}, {} points, {} trials, {} designs",
         config.max_n,
         points.len(),
+        config.trials,
         if config.filter_design.is_some() {
             "1"
         } else {
@@ -257,14 +360,11 @@ fn main() {
 
     println!("operation,design,n,ns_per_op");
 
-    let ops: &[(&str, fn(&str, &[usize], &[u64]) -> bool)] = &[];
-    let _ = ops; // suppress warning
-
     macro_rules! run_op {
         ($op_name:expr, $sweep_fn:ident, $($extra:expr),*) => {
             if config.filter_op.as_ref().is_none_or(|f| f.eq_ignore_ascii_case($op_name)) {
                 eprintln!("[{}]", $op_name);
-                for_each_design!(config, $sweep_fn, &points, &keys $(, $extra)*);
+                for_each_design!(config, $sweep_fn, &points, &keys $(, $extra)*, config.trials);
             }
         };
     }
