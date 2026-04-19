@@ -50,9 +50,15 @@ pub struct RawTable<K, V, L: GroupLayout> {
 }
 
 impl<K, V, L: GroupLayout> RawTable<K, V, L> {
+    /// Map hash to group index. Uses AND (low bits) or shift (high bits) depending
+    /// on the layout's AND_INDEX const. The branch is eliminated at compile time.
     #[inline(always)]
     pub(crate) fn group_index(&self, h: u64) -> usize {
-        (h.wrapping_shr(self.shift) as usize) & self.mask
+        if L::AND_INDEX {
+            (h as usize) & self.mask
+        } else {
+            (h.wrapping_shr(self.shift) as usize) & self.mask
+        }
     }
 
     #[inline(always)]

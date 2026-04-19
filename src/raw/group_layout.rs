@@ -77,6 +77,14 @@ pub trait GroupLayout: 'static + Copy {
     /// Whether overflow is in a separate array (controls extra prefetch).
     const SEPARATE_OVERFLOW: bool;
 
+    /// Use AND-based group indexing (`h & mask`) instead of shift-based (`h >> shift`).
+    ///
+    /// AND-based is 1 instruction faster (eliminates variable shift) but requires
+    /// tags from the top hash bits (57+) to avoid correlation with the group index.
+    /// Only safe with non-channeled overflow (BitSeparate) — 8-bit overflow channels
+    /// use low bits which would correlate with the AND group index.
+    const AND_INDEX: bool = false;
+
     /// Compute bucket index from (group_index, slot_index).
     #[inline(always)]
     fn bucket_index(gi: usize, si: usize) -> usize {
@@ -101,6 +109,27 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout16<T, O> {
     const GROUP_SIZE: usize = 16;
     const BUCKET_STRIDE: usize = 16;
     const SEPARATE_OVERFLOW: bool = true;
+}
+
+// ── Layout16And: 16-slot layout with AND-based group indexing ──────────────
+
+/// Like Layout16 but uses AND-based group indexing (`h & mask`).
+///
+/// Saves 1 instruction per probe (AND vs variable shift). Requires:
+/// - Tags from top hash bits (57+) to avoid correlation with group index
+/// - Non-channeled overflow (BitSeparate) — 8-bit channels use low bits
+///   which would correlate with the AND group index
+#[derive(Clone, Copy)]
+pub struct Layout16And<T: TagStrategy, O: OverflowStrategy>(PhantomData<(T, O)>);
+
+impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout16And<T, O> {
+    type Grp = Group<0xFFFF>;
+    type Tag = T;
+    type Overflow = O;
+    const GROUP_SIZE: usize = 16;
+    const BUCKET_STRIDE: usize = 16;
+    const SEPARATE_OVERFLOW: bool = true;
+    const AND_INDEX: bool = true;
 }
 
 // ── Named layouts for existing designs ─────────────────────────────────────
@@ -178,7 +207,7 @@ pub type GapsEmbeddedOverflow = UfmEmbeddedOverflow;
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
 use super::overflow_strategy::BitSeparate;
-use super::tag_strategy::{HighByte255, LowByte128};
+use super::tag_strategy::{HighByte255, LowByte128, TopTag128, TopTag255};
 
 /// Hi8_8bit: decorrelated tag (byte 1) + 8-channel byte overflow.
 pub type Hi8_8bit = Layout16<HighByte255, ByteSeparate>;
@@ -194,3 +223,11 @@ pub type Hi8_1bit = Layout16<HighByte255, BitSeparate>;
 
 /// Lo128_1bit: 128-value fast tag + 1-bit binary overflow.
 pub type Lo128_1bit = Layout16<LowByte128, BitSeparate>;
+
+// ── AND-indexed matrix entries ────────────────────────────────────────────
+
+/// Top128_1bitAnd: 128-value top-bit tag + 1-bit overflow + AND group indexing.
+pub type Top128_1bitAnd = Layout16And<TopTag128, BitSeparate>;
+
+/// Top255_1bitAnd: 255-value top-bit tag + 1-bit overflow + AND group indexing.
+pub type Top255_1bitAnd = Layout16And<TopTag255, BitSeparate>;

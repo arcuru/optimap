@@ -85,6 +85,55 @@ impl TagStrategy for LowByte128 {
     }
 }
 
+// ── Top-bit tag strategies (for AND-based group indexing) ─────────────────
+//
+// AND-based group indexing uses low hash bits for the group index.
+// These strategies extract tags from the TOP bits (57+), which are maximally
+// decorrelated from the group index regardless of table size.
+//
+// With shift-based indexing (h >> shift), the top bits ARE the group index
+// so using them for tags would be catastrophic. But with AND-based indexing,
+// top bits are completely free — same trick hashbrown uses for h2.
+
+/// Tag from top 7 bits with high bit forced, 128 values in [128, 255].
+///
+/// Uses `(h >> 57) | 0x80` — the same bits as hashbrown's h2 function.
+/// Safe with AND-based group indexing because group index uses low bits.
+/// NOT safe with shift-based indexing (top bits = group index → correlation).
+#[derive(Clone, Copy)]
+pub struct TopTag128;
+
+impl TagStrategy for TopTag128 {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        ((h >> 57) as u8) | 0x80
+    }
+
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << (h & 7)
+    }
+}
+
+/// Tag from top byte (bits 56-63), 255 values.
+///
+/// Maximum discrimination from the top of the hash. Decorrelated from
+/// AND-based group index (low bits). NOT safe with shift-based indexing.
+#[derive(Clone, Copy)]
+pub struct TopTag255;
+
+impl TagStrategy for TopTag255 {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        crate::hash_tag(h >> 56)
+    }
+
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << (h & 7)
+    }
+}
+
 // ── Tombstone tag strategies ──────────────────────────────────────────────
 
 /// Strategy for extracting a hash tag in tombstone-based designs.
