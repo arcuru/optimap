@@ -1019,148 +1019,114 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raw::tag_strategy::{HighByte128, TopByte128};
     use std::hash::RandomState;
 
-    #[test]
-    fn new_table_is_empty() {
-        let table: RawTable<u64, u64> = RawTable::new();
-        assert!(table.is_empty());
-        assert_eq!(table.len(), 0);
-        assert_eq!(table.capacity(), 0);
-    }
+    // Generic test helpers — parameterized by TombstoneTag
+    fn test_basic<T: TombstoneTag>() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64, T> = RawTable::with_capacity(16);
 
-    #[test]
-    fn insert_and_find() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::with_capacity(16);
-
-        let (_v, inserted) = table.insert_with_rehash(42, 100, &hash_builder);
+        let (_v, inserted) = table.insert_with_rehash(42, 100, &hb);
         assert!(inserted);
         assert_eq!(table.len(), 1);
+        assert_eq!(table.get(&42, &hb), Some(&100));
+        assert_eq!(table.get(&999, &hb), None);
 
-        assert_eq!(table.get(&42, &hash_builder), Some(&100));
-        assert_eq!(table.get(&999, &hash_builder), None);
+        assert_eq!(table.remove(&42, &hb), Some(100));
+        assert!(table.is_empty());
     }
 
-    #[test]
-    fn insert_duplicate() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::with_capacity(16);
-
-        table.insert_with_rehash(1, 10, &hash_builder);
-        let (_v, inserted) = table.insert_with_rehash(1, 20, &hash_builder);
-        assert!(!inserted);
-        assert_eq!(table.len(), 1);
-        assert_eq!(table.get(&1, &hash_builder), Some(&10));
-    }
-
-    #[test]
-    fn remove_existing() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::with_capacity(16);
-
-        table.insert_with_rehash(1, 10, &hash_builder);
-        table.insert_with_rehash(2, 20, &hash_builder);
-
-        assert_eq!(table.remove(&1, &hash_builder), Some(10));
-        assert_eq!(table.len(), 1);
-        assert_eq!(table.get(&1, &hash_builder), None);
-        assert_eq!(table.get(&2, &hash_builder), Some(&20));
-    }
-
-    #[test]
-    fn remove_nonexistent() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::with_capacity(16);
-        assert_eq!(table.remove(&42, &hash_builder), None);
-    }
-
-    #[test]
-    fn grow_and_rehash() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::new();
-
+    fn test_grow<T: TombstoneTag>() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64, T> = RawTable::new();
         for i in 0..200 {
-            table.insert_with_rehash(i, i * 10, &hash_builder);
+            table.insert_with_rehash(i, i * 10, &hb);
         }
         assert_eq!(table.len(), 200);
         for i in 0..200 {
-            assert_eq!(table.get(&i, &hash_builder), Some(&(i * 10)));
+            assert_eq!(table.get(&i, &hb), Some(&(i * 10)));
         }
     }
 
-    #[test]
-    fn clear_table() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::new();
-
+    fn test_clone<T: TombstoneTag>() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64, T> = RawTable::new();
         for i in 0..50 {
-            table.insert_with_rehash(i, i, &hash_builder);
+            table.insert_with_rehash(i, i * 10, &hb);
         }
-
-        table.clear();
-        assert_eq!(table.len(), 0);
-        assert!(table.capacity() > 0);
-
-        table.insert_with_rehash(1, 1, &hash_builder);
-        assert_eq!(table.get(&1, &hash_builder), Some(&1));
-    }
-
-    #[test]
-    fn string_keys() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<String, i32> = RawTable::new();
-
-        table.insert_with_rehash("hello".to_string(), 1, &hash_builder);
-        table.insert_with_rehash("world".to_string(), 2, &hash_builder);
-
-        assert_eq!(table.get(&"hello".to_string(), &hash_builder), Some(&1));
-        assert_eq!(table.get(&"world".to_string(), &hash_builder), Some(&2));
-        assert_eq!(table.get(&"missing".to_string(), &hash_builder), None);
-    }
-
-    #[test]
-    fn clone_table() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::new();
-
-        for i in 0..50 {
-            table.insert_with_rehash(i, i * 10, &hash_builder);
-        }
-
         let cloned = table.clone();
         assert_eq!(cloned.len(), 50);
         for i in 0..50 {
-            assert_eq!(cloned.get(&i, &hash_builder), Some(&(i * 10)));
+            assert_eq!(cloned.get(&i, &hb), Some(&(i * 10)));
         }
     }
 
-    #[test]
-    fn insert_remove_insert_cycle() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::new();
-
+    fn test_remove_cycle<T: TombstoneTag>() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64, T> = RawTable::new();
         for cycle in 0..3 {
             for i in 0..100 {
-                table.insert_with_rehash(i, i + cycle * 1000, &hash_builder);
+                table.insert_with_rehash(i, i + cycle * 1000, &hb);
             }
             for i in 0..100 {
-                table.remove(&i, &hash_builder);
+                table.remove(&i, &hb);
             }
             assert_eq!(table.len(), 0);
         }
     }
 
-    #[test]
-    fn iter_slots_works() {
-        let hash_builder = RandomState::new();
-        let mut table: RawTable<u64, u64> = RawTable::new();
-
+    fn test_iter<T: TombstoneTag>() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64, T> = RawTable::new();
         for i in 0..50 {
-            table.insert_with_rehash(i, i * 10, &hash_builder);
+            table.insert_with_rehash(i, i * 10, &hb);
         }
+        assert_eq!(table.iter_slots().count(), 50);
+    }
 
-        let count = table.iter_slots().count();
-        assert_eq!(count, 50);
+    // LowByte254 (default IPO)
+    #[test] fn lo254_basic() { test_basic::<LowByte254>(); }
+    #[test] fn lo254_grow() { test_grow::<LowByte254>(); }
+    #[test] fn lo254_clone() { test_clone::<LowByte254>(); }
+    #[test] fn lo254_remove_cycle() { test_remove_cycle::<LowByte254>(); }
+    #[test] fn lo254_iter() { test_iter::<LowByte254>(); }
+
+    // HighByte128 (Hi128_Tomb)
+    #[test] fn hi128_basic() { test_basic::<HighByte128>(); }
+    #[test] fn hi128_grow() { test_grow::<HighByte128>(); }
+    #[test] fn hi128_clone() { test_clone::<HighByte128>(); }
+    #[test] fn hi128_remove_cycle() { test_remove_cycle::<HighByte128>(); }
+    #[test] fn hi128_iter() { test_iter::<HighByte128>(); }
+
+    // TopByte128 (Top128_Tomb)
+    #[test] fn top128_basic() { test_basic::<TopByte128>(); }
+    #[test] fn top128_grow() { test_grow::<TopByte128>(); }
+    #[test] fn top128_clone() { test_clone::<TopByte128>(); }
+    #[test] fn top128_remove_cycle() { test_remove_cycle::<TopByte128>(); }
+    #[test] fn top128_iter() { test_iter::<TopByte128>(); }
+
+    // Extra: string keys (verifies Drop + non-Copy types)
+    #[test]
+    fn string_keys() {
+        let hb = RandomState::new();
+        let mut table: RawTable<String, i32> = RawTable::new();
+        table.insert_with_rehash("hello".to_string(), 1, &hb);
+        table.insert_with_rehash("world".to_string(), 2, &hb);
+        assert_eq!(table.get(&"hello".to_string(), &hb), Some(&1));
+        assert_eq!(table.get(&"missing".to_string(), &hb), None);
+    }
+
+    // Extra: clear + reuse
+    #[test]
+    fn clear_table() {
+        let hb = RandomState::new();
+        let mut table: RawTable<u64, u64> = RawTable::new();
+        for i in 0..50 { table.insert_with_rehash(i, i, &hb); }
+        table.clear();
+        assert_eq!(table.len(), 0);
+        assert!(table.capacity() > 0);
+        table.insert_with_rehash(1, 1, &hb);
+        assert_eq!(table.get(&1, &hb), Some(&1));
     }
 }

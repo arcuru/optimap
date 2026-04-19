@@ -984,16 +984,27 @@ mod tests {
     // Matrix entries
     use crate::raw::group_layout::{Hi8_8bit, Hi8_1bit, Lo128_8bit, Lo128_1bit, Lo8_1bit, Top128_1bitAnd, Top255_1bitAnd};
 
+    // Matrix entries — all 4 test functions
     #[test] fn hi8_8bit_basic() { test_basic::<Hi8_8bit>(); }
     #[test] fn hi8_8bit_grow() { test_grow::<Hi8_8bit>(); }
+    #[test] fn hi8_8bit_clone() { test_clone::<Hi8_8bit>(); }
+    #[test] fn hi8_8bit_into_iter() { test_into_iter::<Hi8_8bit>(); }
     #[test] fn hi8_1bit_basic() { test_basic::<Hi8_1bit>(); }
     #[test] fn hi8_1bit_grow() { test_grow::<Hi8_1bit>(); }
+    #[test] fn hi8_1bit_clone() { test_clone::<Hi8_1bit>(); }
+    #[test] fn hi8_1bit_into_iter() { test_into_iter::<Hi8_1bit>(); }
     #[test] fn lo128_8bit_basic() { test_basic::<Lo128_8bit>(); }
     #[test] fn lo128_8bit_grow() { test_grow::<Lo128_8bit>(); }
+    #[test] fn lo128_8bit_clone() { test_clone::<Lo128_8bit>(); }
+    #[test] fn lo128_8bit_into_iter() { test_into_iter::<Lo128_8bit>(); }
     #[test] fn lo128_1bit_basic() { test_basic::<Lo128_1bit>(); }
     #[test] fn lo128_1bit_grow() { test_grow::<Lo128_1bit>(); }
+    #[test] fn lo128_1bit_clone() { test_clone::<Lo128_1bit>(); }
+    #[test] fn lo128_1bit_into_iter() { test_into_iter::<Lo128_1bit>(); }
     #[test] fn lo8_1bit_basic() { test_basic::<Lo8_1bit>(); }
     #[test] fn lo8_1bit_grow() { test_grow::<Lo8_1bit>(); }
+    #[test] fn lo8_1bit_clone() { test_clone::<Lo8_1bit>(); }
+    #[test] fn lo8_1bit_into_iter() { test_into_iter::<Lo8_1bit>(); }
 
     // AND-indexed variants
     #[test] fn top128_1bit_and_basic() { test_basic::<Top128_1bitAnd>(); }
@@ -1002,4 +1013,6 @@ mod tests {
     #[test] fn top128_1bit_and_into_iter() { test_into_iter::<Top128_1bitAnd>(); }
     #[test] fn top255_1bit_and_basic() { test_basic::<Top255_1bitAnd>(); }
     #[test] fn top255_1bit_and_grow() { test_grow::<Top255_1bitAnd>(); }
+    #[test] fn top255_1bit_and_clone() { test_clone::<Top255_1bitAnd>(); }
+    #[test] fn top255_1bit_and_into_iter() { test_into_iter::<Top255_1bitAnd>(); }
 }
