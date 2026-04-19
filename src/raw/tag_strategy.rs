@@ -134,6 +134,53 @@ impl TagStrategy for TopTag255 {
     }
 }
 
+// ── Top-bit tag strategies with shifted channels (AND index + 8-bit overflow)
+
+/// Tag from top 7 bits | 0x80, channel from `1 << ((h >> 57) & 7)`.
+///
+/// Both tag and channel use top hash bits — fully decorrelated from AND-based
+/// group indexing (low bits). This is the first strategy that enables 8-bit
+/// (channeled) overflow with AND indexing. The standard strategies use
+/// `1 << (h & 7)` for channels, which correlates with AND group index.
+///
+/// Channel uses bits 57-59, tag uses bits 57-63 with bit 7 forced. There IS
+/// some overlap (bits 57-59 contribute to both), but the channel only needs
+/// 3 bits of entropy and the tag still has 128 distinct values.
+#[derive(Clone, Copy)]
+pub struct TopTag128Ch;
+
+impl TagStrategy for TopTag128Ch {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        ((h >> 57) as u8) | 0x80
+    }
+
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << ((h >> 45) & 7)
+    }
+}
+
+/// Tag from top byte (bits 56-63, 255 values), channel from bits 45-47.
+///
+/// Maximum tag discrimination + shifted channel. Both decorrelated from
+/// AND group index. Channel uses bits 45-47 to avoid overlap with the
+/// tag bits (56-63).
+#[derive(Clone, Copy)]
+pub struct TopTag255Ch;
+
+impl TagStrategy for TopTag255Ch {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        crate::hash_tag(h >> 56)
+    }
+
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << ((h >> 45) & 7)
+    }
+}
+
 // ── Tombstone tag strategies ──────────────────────────────────────────────
 
 /// Strategy for extracting a hash tag in tombstone-based designs.

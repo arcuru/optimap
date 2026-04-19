@@ -207,7 +207,7 @@ pub type GapsEmbeddedOverflow = UfmEmbeddedOverflow;
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
 use super::overflow_strategy::BitSeparate;
-use super::tag_strategy::{HighByte255, LowByte128, TopTag128, TopTag255};
+use super::tag_strategy::{HighByte255, LowByte128, TopTag128, TopTag128Ch, TopTag255, TopTag255Ch};
 
 /// Hi8_8bit: decorrelated tag (byte 1) + 8-channel byte overflow.
 pub type Hi8_8bit = Layout16<HighByte255, ByteSeparate>;
@@ -231,3 +231,10 @@ pub type Top128_1bitAnd = Layout16And<TopTag128, BitSeparate>;
 
 /// Top255_1bitAnd: 255-value top-bit tag + 1-bit overflow + AND group indexing.
 pub type Top255_1bitAnd = Layout16And<TopTag255, BitSeparate>;
+
+/// Top128_8bitAnd: 128-value top-bit tag + 8-channel byte overflow + AND indexing.
+/// First 8-bit overflow design compatible with AND indexing (shifted channels).
+pub type Top128_8bitAnd = Layout16And<TopTag128Ch, ByteSeparate>;
+
+/// Top255_8bitAnd: 255-value top-bit tag + 8-channel byte overflow + AND indexing.
+pub type Top255_8bitAnd = Layout16And<TopTag255Ch, ByteSeparate>;

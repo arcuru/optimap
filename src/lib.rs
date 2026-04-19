@@ -253,7 +253,7 @@ pub mod matrix_types {
     use crate::generic_map::{DefaultHashBuilder, GenericMap};
     use crate::raw::group_layout::{
         Hi8_1bit, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit,
-        Top128_1bitAnd, Top255_1bitAnd,
+        Top128_1bitAnd, Top128_8bitAnd, Top255_1bitAnd, Top255_8bitAnd,
     };
     use crate::raw::overflow_table::RawTable;
     use crate::raw::tag_strategy::{HighByte128, TopByte128};
@@ -265,11 +265,15 @@ pub mod matrix_types {
     pub type Hi8_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Hi8_1bit>>;
     pub type Lo128_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo128_1bit>>;
 
-    // AND-indexed 1-bit overflow variants
+    // AND-indexed overflow variants
     pub type Top128_1bitAndMap<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd>>;
     pub type Top255_1bitAndMap<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd>>;
+    pub type Top128_8bitAndMap<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd>>;
+    pub type Top255_8bitAndMap<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd>>;
 
     // Tombstone variants — different tag strategies on IPO infrastructure
     pub type Hi128_TombMap<K, V, S = DefaultHashBuilder> =
@@ -284,6 +288,8 @@ pub mod matrix_types {
     crate::traits::impl_map_trait!(Lo128_1bitMap);
     crate::traits::impl_map_trait!(Top128_1bitAndMap);
     crate::traits::impl_map_trait!(Top255_1bitAndMap);
+    crate::traits::impl_map_trait!(Top128_8bitAndMap);
+    crate::traits::impl_map_trait!(Top255_8bitAndMap);
     crate::traits::impl_map_trait!(Hi128_TombMap);
     crate::traits::impl_map_trait!(Top128_TombMap);
 }

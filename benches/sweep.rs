@@ -337,9 +337,9 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Lo8_1bitMap<u64,u64>, "Lo8_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Hi8_1bitMap<u64,u64>, "Hi8_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Lo128_1bitMap<u64,u64>, "Lo128_1bit" $(, $arg)*);
-        // AND-indexed 1-bit overflow
+        // AND-indexed variants
         for_each_design!(@run $config, $callback, Top128_1bitAndMap<u64,u64>, "Top128_1bitAnd" $(, $arg)*);
-        for_each_design!(@run $config, $callback, Top255_1bitAndMap<u64,u64>, "Top255_1bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_8bitAndMap<u64,u64>, "Top128_8bitAnd" $(, $arg)*);
         // Tombstone variant
         for_each_design!(@run $config, $callback, Hi128_TombMap<u64,u64>, "Hi128_Tomb" $(, $arg)*);
         for_each_design!(@run $config, $callback, Top128_TombMap<u64,u64>, "Top128_Tomb" $(, $arg)*);

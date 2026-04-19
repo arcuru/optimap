@@ -982,7 +982,7 @@ mod tests {
     #[test] fn gaps_into_iter() { test_into_iter::<GapsLayout>(); }
 
     // Matrix entries
-    use crate::raw::group_layout::{Hi8_8bit, Hi8_1bit, Lo128_8bit, Lo128_1bit, Lo8_1bit, Top128_1bitAnd, Top255_1bitAnd};
+    use crate::raw::group_layout::{Hi8_8bit, Hi8_1bit, Lo128_8bit, Lo128_1bit, Lo8_1bit, Top128_1bitAnd, Top255_1bitAnd, Top128_8bitAnd, Top255_8bitAnd};
 
     // Matrix entries — all 4 test functions
     #[test] fn hi8_8bit_basic() { test_basic::<Hi8_8bit>(); }
@@ -1015,4 +1015,14 @@ mod tests {
     #[test] fn top255_1bit_and_grow() { test_grow::<Top255_1bitAnd>(); }
     #[test] fn top255_1bit_and_clone() { test_clone::<Top255_1bitAnd>(); }
     #[test] fn top255_1bit_and_into_iter() { test_into_iter::<Top255_1bitAnd>(); }
+
+    // AND-indexed 8-bit overflow (shifted channels)
+    #[test] fn top128_8bit_and_basic() { test_basic::<Top128_8bitAnd>(); }
+    #[test] fn top128_8bit_and_grow() { test_grow::<Top128_8bitAnd>(); }
+    #[test] fn top128_8bit_and_clone() { test_clone::<Top128_8bitAnd>(); }
+    #[test] fn top128_8bit_and_into_iter() { test_into_iter::<Top128_8bitAnd>(); }
+    #[test] fn top255_8bit_and_basic() { test_basic::<Top255_8bitAnd>(); }
+    #[test] fn top255_8bit_and_grow() { test_grow::<Top255_8bitAnd>(); }
+    #[test] fn top255_8bit_and_clone() { test_clone::<Top255_8bitAnd>(); }
+    #[test] fn top255_8bit_and_into_iter() { test_into_iter::<Top255_8bitAnd>(); }
 }

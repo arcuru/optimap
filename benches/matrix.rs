@@ -53,9 +53,11 @@ macro_rules! matrix_maps {
         $helper::<Lo8_1bitMap<u64, u64>>($group, "Lo8_1bit", $($args),*);
         $helper::<Hi8_1bitMap<u64, u64>>($group, "Hi8_1bit", $($args),*);
         $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
-        // AND-indexed 1-bit overflow
+        // AND-indexed variants
         $helper::<Top128_1bitAndMap<u64, u64>>($group, "Top128_1bitAnd", $($args),*);
         $helper::<Top255_1bitAndMap<u64, u64>>($group, "Top255_1bitAnd", $($args),*);
+        $helper::<Top128_8bitAndMap<u64, u64>>($group, "Top128_8bitAnd", $($args),*);
+        $helper::<Top255_8bitAndMap<u64, u64>>($group, "Top255_8bitAnd", $($args),*);
         // Tombstone variants
         $helper::<Hi128_TombMap<u64, u64>>($group, "Hi128_Tomb", $($args),*);
         $helper::<Top128_TombMap<u64, u64>>($group, "Top128_Tomb", $($args),*);
