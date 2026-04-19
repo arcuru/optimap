@@ -118,9 +118,9 @@ impl TombstoneTag for LowByte254 {
 
 /// Tag from bits 8-15 with high bit forced, 128 distinct values (range [128, 255]).
 ///
-/// Matches hashbrown's design philosophy: 128 tag values from bits decorrelated
-/// with the group index (which uses high bits of the hash). All values are
-/// naturally ≥ 128, avoiding both 0x00 (EMPTY) and 0x01 (TOMBSTONE).
+/// Uses bits decorrelated with the group index (which uses high bits of the hash).
+/// The `| 0x80` forces values into [128, 255], avoiding EMPTY (0x00) and
+/// TOMBSTONE (0x01). Only 7 bits of entropy (bits 8-14); bit 15 is discarded.
 #[derive(Clone, Copy)]
 pub struct HighByte128;
 
@@ -128,5 +128,22 @@ impl TombstoneTag for HighByte128 {
     #[inline(always)]
     fn reduced_hash(h: u64) -> u8 {
         ((h >> 8) as u8) | 0x80
+    }
+}
+
+// ── TopByte128 ────────────────────────────────────────────────────────────
+
+/// Tag from top 7 bits, 128 distinct values (range [2, 129]).
+///
+/// Exact hashbrown h2 strategy: `(h >> 57) as u8`, offset by 2 to avoid
+/// our EMPTY (0x00) and TOMBSTONE (0x01) sentinels. hashbrown avoids this
+/// offset because its sentinels are at the top of the byte range (0x80, 0xFF).
+#[derive(Clone, Copy)]
+pub struct TopByte128;
+
+impl TombstoneTag for TopByte128 {
+    #[inline(always)]
+    fn reduced_hash(h: u64) -> u8 {
+        (h >> 57) as u8 + 2
     }
 }

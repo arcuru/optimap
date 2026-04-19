@@ -29,6 +29,7 @@ macro_rules! all_maps {
         $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
         // Tombstone variant
         $helper::<Hi128_TombMap<u64, u64>>($group, "Hi128_Tomb", $($args),*);
+        $helper::<Top128_TombMap<u64, u64>>($group, "Top128_Tomb", $($args),*);
     };
 }
 
