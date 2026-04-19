@@ -40,22 +40,49 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 
 /// The core hash table engine (16-slot groups, tombstone-based deletion).
 ///
-/// Single combined allocation:
-///   - metadata: `num_groups * 16` bytes, 16-byte aligned
-///   - (padding to bucket alignment)
-///   - buckets: `num_groups * 16 * sizeof((K,V))`
+/// # Memory layout: mid-pointer design (inspired by hashbrown)
+///
+/// A single allocation holds buckets and metadata, with `ctrl` pointing
+/// to the boundary between them:
+///
+/// ```text
+///   low addresses ──────────────────────────────────────► high addresses
+///
+///   ┌─────────────────────────────────────┬──────────────────────────────┐
+///   │ Buckets (KV pairs)                  │ Metadata (control bytes)     │
+///   │                                     │                              │
+///   │ [slot N-1] ... [slot 1] [slot 0]    │ [ctrl 0..15] [ctrl 16..31]...│
+///   │ ◄── addressed via negative offset   │ addressed via positive ──►   │
+///   └─────────────────────────────────────┴──────────────────────────────┘
+///   ↑ alloc_ptr (computed for dealloc)     ↑ ctrl (the only stored pointer)
+/// ```
+///
+/// - **Metadata**: `ctrl[gi * 16 + si]` — forward from `ctrl`.
+/// - **Buckets**: `ctrl.cast::<(K,V)>().sub(slot_index + 1)` — backward from `ctrl`.
+///   Slot index is `gi * 16 + si`, so slot 0 is right before `ctrl`.
+///
+/// This eliminates a struct field and an address computation in the hot path:
+/// both metadata and bucket access derive from the single `ctrl` pointer,
+/// just in opposite directions. hashbrown uses the same trick.
+///
+/// ## Why this works for tombstone designs but not overflow-bit designs
+///
+/// Tombstone designs have exactly two memory regions (metadata + buckets),
+/// so one mid-pointer serves both directions. Overflow-bit designs
+/// (Splitsies, UFM, matrix variants) have a third region (overflow bytes)
+/// between metadata and buckets — no single pointer can serve all three
+/// without adding offset computations for the third region.
 pub struct RawTable<K, V, T: TombstoneTag = LowByte254> {
-    /// num_groups - 1. Used directly for probe wraparound and group_index masking.
+    /// num_groups - 1. Used for probe wraparound: `gi & mask`.
     pub(crate) mask: usize,
-    pub(crate) metadata: *mut u8,
-    buckets: *mut u8,
+    /// Points to the boundary between buckets (backward) and metadata (forward).
+    /// For unallocated tables, points to EMPTY_SENTINEL.
+    pub(crate) ctrl: *mut u8,
     pub(crate) len: usize,
     /// Number of EMPTY slots remaining before we must grow or rehash.
     pub(crate) growth_left: usize,
     /// Maximum number of entries before growth is required. Zero when unallocated.
     pub(crate) max_load: usize,
-    /// group_index = hash >> shift. For num_groups=1, shift=64.
-    pub(crate) shift: u32,
     _marker: PhantomData<(K, V, T)>,
 }
 
@@ -63,12 +90,10 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     pub fn new() -> Self {
         RawTable {
             mask: 0,
-            metadata: EMPTY_SENTINEL.0.as_ptr() as *mut u8,
-            buckets: ptr::null_mut(),
+            ctrl: EMPTY_SENTINEL.0.as_ptr() as *mut u8,
             len: 0,
             growth_left: 0,
             max_load: 0,
-            shift: 64,
             _marker: PhantomData,
         }
     }
@@ -121,50 +146,55 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
         min_groups.next_power_of_two()
     }
 
-    /// Compute the bucket offset within the combined allocation.
-    /// Layout: [metadata: num_groups*16] [padding] [buckets]
+    /// Total bytes for the buckets region.
     #[inline(always)]
-    fn bucket_offset(num_groups: usize) -> usize {
-        let meta_size = num_groups * META_GROUP_BYTES;
-        let bucket_align = std::mem::align_of::<(K, V)>().max(1);
-        (meta_size + bucket_align - 1) & !(bucket_align - 1)
+    fn buckets_size(num_groups: usize) -> usize {
+        num_groups * GROUP_SIZE * std::mem::size_of::<(K, V)>()
     }
 
     /// Compute the layout for the single combined allocation.
+    /// Layout: [buckets: total_slots * sizeof(KV)] [metadata: num_groups * 16]
     fn combined_layout(num_groups: usize) -> Layout {
-        let bucket_size = std::mem::size_of::<(K, V)>();
-        let total_buckets = num_groups * GROUP_SIZE;
-        let bucket_offset = Self::bucket_offset(num_groups);
-        let total_size = bucket_offset + total_buckets * bucket_size;
-        // Align to 16 for SIMD metadata loads
-        Layout::from_size_align(total_size.max(16), 16).unwrap()
+        let meta_size = num_groups * META_GROUP_BYTES;
+        let buckets_size = Self::buckets_size(num_groups);
+        let total_size = buckets_size + meta_size;
+        // Align to max(16, align_of(KV)) — 16 for SIMD metadata loads,
+        // align_of(KV) for bucket access at the start of the allocation.
+        let align = 16usize.max(std::mem::align_of::<(K, V)>());
+        Layout::from_size_align(total_size.max(align), align).unwrap()
     }
 
     pub(crate) fn allocate(&mut self, num_groups: usize) {
         debug_assert!(num_groups.is_power_of_two());
 
         let layout = Self::combined_layout(num_groups);
-        let bucket_offset = Self::bucket_offset(num_groups);
+        let buckets_size = Self::buckets_size(num_groups);
         let meta_size = num_groups * META_GROUP_BYTES;
         let total_buckets = num_groups * GROUP_SIZE;
 
         unsafe {
-            let ptr = alloc::alloc(layout);
-            if ptr.is_null() {
+            let alloc_ptr = alloc::alloc(layout);
+            if alloc_ptr.is_null() {
                 alloc::handle_alloc_error(layout);
             }
 
-            self.metadata = ptr;
-            self.buckets = ptr.add(bucket_offset);
+            // ctrl sits at the boundary: past buckets, at metadata start
+            self.ctrl = alloc_ptr.add(buckets_size);
 
-            // Zero metadata only (no overflow array)
-            ptr::write_bytes(self.metadata, 0, meta_size);
+            // Zero metadata only
+            ptr::write_bytes(self.ctrl, 0, meta_size);
         }
 
         self.mask = num_groups - 1;
         self.max_load = max_load_for_capacity(total_buckets);
         self.growth_left = self.max_load;
-        self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
+    }
+
+    /// Recover the allocation base pointer from ctrl.
+    /// alloc_ptr = ctrl - buckets_size.
+    #[inline(always)]
+    unsafe fn alloc_ptr(&self) -> *mut u8 {
+        unsafe { self.ctrl.sub(Self::buckets_size(self.num_groups())) }
     }
 
     unsafe fn deallocate(&mut self) {
@@ -173,34 +203,32 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
         }
         let layout = Self::combined_layout(self.num_groups());
         unsafe {
-            alloc::dealloc(self.metadata, layout);
+            alloc::dealloc(self.alloc_ptr(), layout);
         }
-        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
-        self.buckets = ptr::null_mut();
+        self.ctrl = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.max_load = 0;
     }
 
-    /// Map hash to group index.
-    /// Uses low bits via AND (like hashbrown's h1) instead of high bits via shift.
-    /// This is 1 instruction (AND) vs 2 (SHRX + AND), saving ~1 cycle per lookup.
-    /// Requires that the tag strategy uses decorrelated bits (not low bits).
+    /// Map hash to group index via AND (like hashbrown's h1).
+    /// Single instruction vs shift-based indexing.
+    /// Tag strategies must use bits outside the mask range to avoid correlation.
     #[inline(always)]
     pub(crate) fn group_index(&self, h: u64) -> usize {
         (h as usize) & self.mask
     }
 
-    /// Pointer to group metadata (16-byte aligned).
+    /// Pointer to group metadata (16-byte aligned). Forward from ctrl.
     #[inline(always)]
     pub(crate) unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
-        unsafe { self.metadata.add(gi * META_GROUP_BYTES) }
+        unsafe { self.ctrl.add(gi * META_GROUP_BYTES) }
     }
 
-    /// Pointer to bucket slot. Uses shift+or since GROUP_SIZE=16.
+    /// Pointer to bucket slot. Backward from ctrl via negative offset.
+    /// bucket[idx] = ctrl.cast::<(K,V)>().sub(idx + 1), where idx = gi*16 + si.
     #[inline(always)]
     pub(crate) unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
-        let bucket_size = std::mem::size_of::<(K, V)>();
         let idx = (gi << 4) | si;
-        unsafe { self.buckets.add(idx * bucket_size).cast::<(K, V)>() }
+        unsafe { self.ctrl.cast::<(K, V)>().sub(idx + 1) }
     }
 
     #[inline(always)]
@@ -240,8 +268,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
         loop {
             let meta = unsafe { self.meta_ptr(gi) };
 
-            // Load group data once, reuse for both match and empty check.
-            // On a hit, loaded_match_empty is never called (early return).
             let data = unsafe { Group::load(meta) };
 
             for si in unsafe { Group::loaded_match_byte(data, reduced) } {
@@ -340,7 +366,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
 
             // Check for EMPTY slot — this is our termination condition
             if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
-                // Insert at first tombstone if found, otherwise at this empty slot
                 let (ins_gi, ins_si, decrement) = if let Some((tgi, tsi)) = first_tombstone {
                     (tgi, tsi, false)
                 } else {
@@ -365,9 +390,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     }
 
     /// Fused find-or-locate: probes for the key and tracks the first available slot.
-    /// Returns Found(gi, si) if the key exists, or InsertSlot(gi, si, 0) with the
-    /// first available slot (tombstone or empty) if the key is absent.
-    /// Probe terminates on EMPTY.
     #[inline(always)]
     pub(crate) fn find_or_locate<F>(&self, h: u64, eq: F) -> ProbeResult
     where
@@ -387,18 +409,13 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
             }
         }
 
-        // Check for available slot in home group
         if let Some(si) = empties.lowest_set_bit() {
-            // EMPTY in home group proves absence (no need to probe further)
-            // But check for tombstones before this empty — prefer inserting at tombstone
             if let Some(tsi) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit() {
                 return ProbeResult::InsertSlot(gi, tsi, 0);
             }
             return ProbeResult::InsertSlot(gi, si, 0);
         }
 
-        // Home group full (all occupied + tombstones, no EMPTY) — must continue probing
-        // Check for tombstone in home group to remember
         let first_tombstone = unsafe { Group::match_byte(meta, TOMBSTONE) }
             .lowest_set_bit()
             .map(|tsi| (gi, tsi));
@@ -433,7 +450,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
                 }
             }
 
-            // Track first available slot (tombstone or empty)
             if first_available.is_none() {
                 if let Some(tsi) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit() {
                     first_available = Some((gi, tsi));
@@ -442,7 +458,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
                 }
             }
 
-            // EMPTY terminates the probe
             if empties.any_set() {
                 return match first_available {
                     Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si, 0),
@@ -461,7 +476,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     }
 
     /// Write a key-value pair into a known-available slot.
-    /// If the slot was EMPTY, decrements growth_left.
     #[inline(always)]
     pub(crate) fn insert_at(
         &mut self,
@@ -480,7 +494,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
             Group::set_meta(meta, si, reduced);
             self.bucket_ptr(gi, si).write((key, value));
 
-            // Only decrement growth_left if slot was EMPTY (not TOMBSTONE)
             if old_meta == EMPTY {
                 self.growth_left -= 1;
             }
@@ -494,18 +507,19 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     {
         let was_allocated = self.is_allocated();
         let old_num_groups = self.num_groups();
-        let old_metadata = self.metadata;
-        let old_buckets = self.buckets;
+        let old_ctrl = self.ctrl;
         let old_layout = if was_allocated {
             Some(Self::combined_layout(old_num_groups))
         } else {
             None
         };
+        let old_buckets_size = if was_allocated {
+            Self::buckets_size(old_num_groups)
+        } else {
+            0
+        };
 
-        let bucket_size = std::mem::size_of::<(K, V)>();
-
-        self.metadata = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
-        self.buckets = ptr::null_mut();
+        self.ctrl = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.mask = 0;
         self.len = 0;
         self.max_load = 0;
@@ -517,19 +531,18 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
 
         unsafe {
             for gi in 0..old_num_groups {
-                let group_meta = old_metadata.add(gi * META_GROUP_BYTES);
-                // Use match_occupied to skip both EMPTY and TOMBSTONE
+                let group_meta = old_ctrl.add(gi * META_GROUP_BYTES);
                 for si in Group::match_occupied(group_meta) {
-                    let old_bucket = old_buckets
-                        .add(((gi << 4) | si) * bucket_size)
-                        .cast::<(K, V)>();
+                    let idx = (gi << 4) | si;
+                    let old_bucket = old_ctrl.cast::<(K, V)>().sub(idx + 1);
                     let (key, value) = old_bucket.read();
                     let h = Self::hash_key(&key, hash_builder);
                     self.insert_no_check(h, key, value);
                 }
             }
 
-            alloc::dealloc(old_metadata, old_layout.unwrap());
+            let old_alloc = old_ctrl.sub(old_buckets_size);
+            alloc::dealloc(old_alloc, old_layout.unwrap());
         }
     }
 
@@ -576,7 +589,6 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
             if self.len >= max_load_for_capacity(cap) {
                 self.num_groups() * 2
             } else {
-                // Tombstones are eating growth_left — rehash in place
                 self.num_groups()
             }
         };
@@ -630,16 +642,15 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
         unsafe {
             if std::mem::needs_drop::<(K, V)>() {
                 for gi in 0..self.num_groups() {
-                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    let group_meta = self.ctrl.add(gi * META_GROUP_BYTES);
                     for si in Group::match_occupied(group_meta) {
                         ptr::drop_in_place(self.bucket_ptr(gi, si));
                     }
                 }
             }
 
-            // Zero metadata only
             let meta_size = self.num_groups() * META_GROUP_BYTES;
-            ptr::write_bytes(self.metadata, 0, meta_size);
+            ptr::write_bytes(self.ctrl, 0, meta_size);
         }
 
         self.len = 0;
@@ -654,7 +665,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
             current_mask: if !self.is_allocated() {
                 bitmask::BitMask(0)
             } else {
-                unsafe { Group::match_occupied(self.metadata) }
+                unsafe { Group::match_occupied(self.ctrl) }
             },
         }
     }
@@ -668,7 +679,7 @@ impl<K, V, T: TombstoneTag> Drop for RawTable<K, V, T> {
         if std::mem::needs_drop::<(K, V)>() {
             unsafe {
                 for gi in 0..self.num_groups() {
-                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    let group_meta = self.ctrl.add(gi * META_GROUP_BYTES);
                     for si in Group::match_occupied(group_meta) {
                         ptr::drop_in_place(self.bucket_ptr(gi, si));
                     }
@@ -694,14 +705,14 @@ impl<K: Clone, V: Clone, T: TombstoneTag> Clone for RawTable<K, V, T> {
         new_table.allocate(self.num_groups());
 
         unsafe {
-            // Copy metadata only (no overflow array)
+            // Copy metadata
             let meta_size = self.num_groups() * META_GROUP_BYTES;
-            ptr::copy_nonoverlapping(self.metadata, new_table.metadata, meta_size);
+            ptr::copy_nonoverlapping(self.ctrl, new_table.ctrl, meta_size);
 
             let bucket_size = std::mem::size_of::<(K, V)>();
             if bucket_size > 0 {
                 for gi in 0..self.num_groups() {
-                    let group_meta = self.metadata.add(gi * META_GROUP_BYTES);
+                    let group_meta = self.ctrl.add(gi * META_GROUP_BYTES);
                     for si in Group::match_occupied(group_meta) {
                         let src = &*self.bucket_ptr(gi, si);
                         new_table.bucket_ptr(gi, si).write(src.clone());
@@ -763,7 +774,8 @@ impl<K, V, T: TombstoneTag> Iterator for IntoIter<K, V, T> {
                 unsafe {
                     let ptr = self.table.bucket_ptr(gi, si);
                     let kv = ptr.read();
-                    let meta = self.table.metadata.add(gi * META_GROUP_BYTES + si);
+                    // Clear metadata byte to EMPTY so Drop won't double-free
+                    let meta = self.table.ctrl.add(gi * META_GROUP_BYTES + si);
                     *meta = EMPTY;
                     self.table.len -= 1;
                     return Some(kv);
@@ -774,7 +786,7 @@ impl<K, V, T: TombstoneTag> Iterator for IntoIter<K, V, T> {
                 return None;
             }
             self.current_mask = unsafe {
-                Group::match_occupied(self.table.metadata.add(self.group * META_GROUP_BYTES))
+                Group::match_occupied(self.table.ctrl.add(self.group * META_GROUP_BYTES))
             };
         }
     }
@@ -844,7 +856,6 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         let h = hash::hash_no_mix(&key, hb);
 
         if self.growth_left == 0 {
-            // At capacity — find existing or grow
             if let Some((gi, si)) = self.find_by_hash(h, |k| k == &key) {
                 let bucket = unsafe { &mut *self.bucket_ptr(gi, si) };
                 return Some(std::mem::replace(&mut bucket.1, value));
@@ -915,7 +926,6 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
             return EntryProbe::Vacant(Some((gi, si, 0)));
         }
 
-        // Full probe needed
         match self.find_or_locate(h, |k| k == key) {
             ProbeResult::Found(gi, si) => EntryProbe::Found(gi, si),
             ProbeResult::InsertSlot(gi, si, mask) => EntryProbe::Vacant(Some((gi, si, mask))),
@@ -989,7 +999,7 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         let mask = if !self.is_allocated() {
             bitmask::BitMask(0)
         } else {
-            unsafe { Group::match_occupied(self.metadata) }
+            unsafe { Group::match_occupied(self.ctrl) }
         };
         let table = unsafe { ptr::read(&self) };
         std::mem::forget(self);
