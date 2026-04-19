@@ -84,3 +84,49 @@ impl TagStrategy for LowByte128 {
         1u8 << (h & 7)
     }
 }
+
+// ── Tombstone tag strategies ──────────────────────────────────────────────
+
+/// Strategy for extracting a hash tag in tombstone-based designs.
+///
+/// Like `TagStrategy` but tags must avoid both 0x00 (EMPTY) and 0x01 (TOMBSTONE),
+/// so valid range is [2, 255].
+pub trait TombstoneTag: 'static + Copy {
+    /// Extract a tag byte for metadata storage.
+    /// Must never return 0x00 (EMPTY) or 0x01 (TOMBSTONE).
+    fn reduced_hash(h: u64) -> u8;
+}
+
+// ── LowByte254 ────────────────────────────────────────────────────────────
+
+/// Tag from low byte, 254 distinct values (range [2, 255]).
+///
+/// Maps 0→2, 1→3, everything else unchanged. This is the default IPO tag
+/// strategy — maximum discrimination with minimal overhead (branchless cmov).
+#[derive(Clone, Copy)]
+pub struct LowByte254;
+
+impl TombstoneTag for LowByte254 {
+    #[inline(always)]
+    fn reduced_hash(h: u64) -> u8 {
+        let low = (h & 0xFF) as u8;
+        if low < 2 { low + 2 } else { low }
+    }
+}
+
+// ── HighByte128 ───────────────────────────────────────────────────────────
+
+/// Tag from bits 8-15 with high bit forced, 128 distinct values (range [128, 255]).
+///
+/// Matches hashbrown's design philosophy: 128 tag values from bits decorrelated
+/// with the group index (which uses high bits of the hash). All values are
+/// naturally ≥ 128, avoiding both 0x00 (EMPTY) and 0x01 (TOMBSTONE).
+#[derive(Clone, Copy)]
+pub struct HighByte128;
+
+impl TombstoneTag for HighByte128 {
+    #[inline(always)]
+    fn reduced_hash(h: u64) -> u8 {
+        ((h >> 8) as u8) | 0x80
+    }
+}

@@ -36,6 +36,7 @@ set linetype  9 lc rgb "#e08214" lw 1.5 dt 2       # Lo128_8bit (orange, dashed)
 set linetype 10 lc rgb "#2166ac" lw 1.5 dt 2       # Lo8_1bit (blue, dashed)
 set linetype 11 lc rgb "#7b3294" lw 1.5 dt 2       # Hi8_1bit (purple, dashed)
 set linetype 12 lc rgb "#1b7837" lw 1.5 dt 2       # Lo128_1bit (green, dashed)
+set linetype 13 lc rgb "#1a1a1a" lw 1.5 dt 2       # Hi128_Tomb (black, dashed)
 
 # ── Per-operation plots ──────────────────────────────────────────────────────
 
@@ -65,5 +66,6 @@ do for [i=1:words(operations)] {
         sprintf("< awk -F, '$1==\"%s\" && $2==\"Lo128_8bit\"'  '%s'", op, csv) using 3:4 with lines lt  9 title "Lo128_8bit", \
         sprintf("< awk -F, '$1==\"%s\" && $2==\"Lo8_1bit\"'    '%s'", op, csv) using 3:4 with lines lt 10 title "Lo8_1bit", \
         sprintf("< awk -F, '$1==\"%s\" && $2==\"Hi8_1bit\"'    '%s'", op, csv) using 3:4 with lines lt 11 title "Hi8_1bit", \
-        sprintf("< awk -F, '$1==\"%s\" && $2==\"Lo128_1bit\"'  '%s'", op, csv) using 3:4 with lines lt 12 title "Lo128_1bit"
+        sprintf("< awk -F, '$1==\"%s\" && $2==\"Lo128_1bit\"'  '%s'", op, csv) using 3:4 with lines lt 12 title "Lo128_1bit", \
+        sprintf("< awk -F, '$1==\"%s\" && $2==\"Hi128_Tomb\"' '%s'", op, csv) using 3:4 with lines lt 13 title "Hi128_Tomb"
 }

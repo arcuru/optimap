@@ -337,6 +337,8 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Lo8_1bitMap<u64,u64>, "Lo8_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Hi8_1bitMap<u64,u64>, "Hi8_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Lo128_1bitMap<u64,u64>, "Lo128_1bit" $(, $arg)*);
+        // Tombstone variant
+        for_each_design!(@run $config, $callback, Hi128_TombMap<u64,u64>, "Hi128_Tomb" $(, $arg)*);
     };
     (@run $config:expr, $callback:ident, $ty:ty, $name:expr $(, $arg:expr)*) => {
         if $config.filter_design.as_ref().is_none_or(|f| f.eq_ignore_ascii_case($name)) {
@@ -362,7 +364,7 @@ fn main() {
         if config.filter_design.is_some() {
             "1"
         } else {
-            "12"
+            "13"
         }
     );
 

@@ -24,6 +24,7 @@ macro_rules! main_maps {
         // Matrix top contenders
         $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
         $helper::<Lo128_8bitMap<u64, u64>>($group, "Lo128_8bit", $($args),*);
+        $helper::<Hi128_TombMap<u64, u64>>($group, "Hi128_Tomb", $($args),*);
     };
 }
 
