@@ -203,7 +203,7 @@ pub(crate) fn hash_tag(h: u64) -> u8 {
 
 pub mod flat_btree;
 pub mod gaps;
-pub(crate) mod generic_map;
+pub mod generic_map;
 mod generic_set;
 pub mod in_place_overflow;
 pub mod ipo64;
@@ -211,7 +211,7 @@ pub(crate) mod map;
 mod opti_set;
 mod opti_sorted;
 pub mod optimap;
-pub(crate) mod raw;
+pub mod raw;
 mod set;
 pub mod split_overflow;
 mod traits;
@@ -244,6 +244,27 @@ pub use set::UnorderedFlatSet;
 
 /// Generic set wrapper — works with any Map implementation.
 pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, SplitsiesSet, UfmSet};
+
+// ── Design matrix types (experimental) ─────────────────────────────────────
+
+/// Matrix variants for benchmarking different tag × overflow combinations.
+pub mod matrix_types {
+    use crate::generic_map::{DefaultHashBuilder, GenericMap};
+    use crate::raw::group_layout::{Hi8_1bit, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit};
+    use crate::raw::overflow_table::RawTable;
+
+    pub type Hi8_8bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Hi8_8bit>>;
+    pub type Lo128_8bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo128_8bit>>;
+    pub type Lo8_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo8_1bit>>;
+    pub type Hi8_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Hi8_1bit>>;
+    pub type Lo128_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo128_1bit>>;
+
+    crate::traits::impl_map_trait!(Hi8_8bitMap);
+    crate::traits::impl_map_trait!(Lo128_8bitMap);
+    crate::traits::impl_map_trait!(Lo8_1bitMap);
+    crate::traits::impl_map_trait!(Hi8_1bitMap);
+    crate::traits::impl_map_trait!(Lo128_1bitMap);
+}
 
 // ── Traits ──────────────────────────────────────────────────────────────────
 

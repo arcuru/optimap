@@ -59,3 +59,7 @@ harness = false
 [[bench]]
 name = "sweep"
 harness = false
+
+[[bench]]
+name = "matrix"
+harness = false

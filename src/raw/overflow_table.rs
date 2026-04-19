@@ -11,10 +11,12 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use super::bitmask::BitMask;
-use super::generic_group::{EMPTY, overflow_bit, reduced_hash};
+use super::generic_group::EMPTY;
 use super::group_layout::{GroupLayout, GroupOps};
 use super::hash;
+use super::overflow_strategy::OverflowStrategy;
 use super::table_api::{EntryProbe, RawTableApi};
+use super::tag_strategy::TagStrategy;
 
 /// Maximum load factor (fixed at 7/8 = 0.875).
 const MAX_LOAD_FACTOR_NUM: usize = 7;
@@ -60,17 +62,22 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
 
     #[inline(always)]
     unsafe fn overflow_ptr(&self, gi: usize) -> *mut u8 {
-        unsafe { L::overflow_ptr(self.metadata, self.mask, gi) }
+        unsafe { L::Overflow::overflow_ptr(self.metadata, self.mask, gi) }
     }
 
     #[inline(always)]
     unsafe fn has_overflow_bit(&self, gi: usize, bit: u8) -> bool {
-        unsafe { (*self.overflow_ptr(gi) & bit) != 0 }
+        unsafe { L::Overflow::has_overflow(self.overflow_ptr(gi), gi, bit) }
     }
 
     #[inline(always)]
     unsafe fn set_overflow_bit(&self, gi: usize, bit: u8) {
-        unsafe { *self.overflow_ptr(gi) |= bit; }
+        unsafe { L::Overflow::set_overflow(self.overflow_ptr(gi), gi, bit); }
+    }
+
+    #[inline(always)]
+    fn bytes_to_copy_total(num_groups: usize) -> usize {
+        num_groups * 16 + L::Overflow::overflow_bytes_to_copy(num_groups)
     }
 
     #[inline(always)]
@@ -83,7 +90,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
 
     fn bucket_offset(num_groups: usize) -> usize {
         let meta_size = num_groups * 16;
-        let before_buckets = meta_size + L::extra_alloc_bytes(num_groups);
+        let before_buckets = meta_size + L::Overflow::extra_alloc_bytes(num_groups);
         let bucket_align = std::mem::align_of::<(K, V)>().max(1);
         (before_buckets + bucket_align - 1) & !(bucket_align - 1)
     }
@@ -109,7 +116,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
             }
             self.metadata = ptr;
             self.buckets = ptr.add(bucket_offset);
-            ptr::write_bytes(self.metadata, 0, L::bytes_to_zero(num_groups));
+            ptr::write_bytes(self.metadata, 0, num_groups * 16 + L::Overflow::overflow_bytes_to_zero(num_groups));
         }
 
         self.mask = num_groups - 1;
@@ -142,9 +149,9 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
+        let reduced = L::Tag::tag(h);
         let mut gi = self.group_index(h);
-        let ofw_bit = overflow_bit(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
         let mut probe = 0usize;
 
         if L::SEPARATE_OVERFLOW {
@@ -183,9 +190,9 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
+        let reduced = L::Tag::tag(h);
         let mut gi = self.group_index(h);
-        let ofw_bit = overflow_bit(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
         let mut probe = 0usize;
 
         if L::SEPARATE_OVERFLOW {
@@ -223,7 +230,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
 
     #[inline(always)]
     fn insert_no_check_impl(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
-        let reduced = reduced_hash(h);
+        let reduced = L::Tag::tag(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
 
@@ -239,7 +246,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
                 return (gi, si);
             }
 
-            let ofw_bit = overflow_bit(h);
+            let ofw_bit = L::Tag::overflow_channel(h);
             unsafe { self.set_overflow_bit(gi, ofw_bit); }
 
             probe += 1;
@@ -248,8 +255,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
     }
 
     fn insert_at_impl(&mut self, h: u64, gi: usize, si: usize, key: K, value: V, full_mask: u8) {
-        let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
+        let reduced = L::Tag::tag(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
 
         if full_mask != 0 {
             let home_gi = self.group_index(h);
@@ -281,8 +288,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
-        let ofw_bit = overflow_bit(h);
+        let reduced = L::Tag::tag(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
         let gi = self.group_index(h);
 
         let meta = unsafe { self.meta_ptr(gi) };
@@ -532,7 +539,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
                     }
                 }
             }
-            ptr::write_bytes(self.metadata, 0, L::bytes_to_zero(self.mask + 1));
+            ptr::write_bytes(self.metadata, 0, (self.mask + 1) * 16 + L::Overflow::overflow_bytes_to_zero(self.mask + 1));
         }
         self.len = 0;
         self.max_load = max_load_for_capacity((self.mask + 1) * L::GROUP_SIZE);
@@ -567,7 +574,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             return self.insert_at_capacity(h, key, value, hb);
         }
 
-        let reduced = reduced_hash(h);
+        let reduced = L::Tag::tag(h);
         let gi = self.group_index(h);
         let meta = unsafe { self.meta_ptr(gi) };
         let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
@@ -579,7 +586,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             }
         }
 
-        let ofw_bit = overflow_bit(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
         if let Some(si) = empties.lowest_set_bit()
             && !unsafe { self.has_overflow_bit(gi, ofw_bit) }
         {
@@ -605,7 +612,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             return EntryProbe::Vacant(None);
         }
 
-        let reduced = reduced_hash(h);
+        let reduced = L::Tag::tag(h);
         let gi = self.group_index(h);
         let meta = unsafe { self.meta_ptr(gi) };
         let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
@@ -617,7 +624,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             }
         }
 
-        let ofw_bit = overflow_bit(h);
+        let ofw_bit = L::Tag::overflow_channel(h);
         if let Some(si) = empties.lowest_set_bit()
             && !unsafe { self.has_overflow_bit(gi, ofw_bit) }
         {
@@ -657,7 +664,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             self.len -= 1;
 
             let initial_gi = self.group_index(h);
-            let ofw_bit = overflow_bit(h);
+            let ofw_bit = L::Tag::overflow_channel(h);
             if self.has_overflow_bit(initial_gi, ofw_bit) {
                 self.max_load = self.max_load.saturating_sub(1);
             }
@@ -672,7 +679,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             self.len -= 1;
 
             let initial_gi = self.group_index(h);
-            let ofw_bit = overflow_bit(h);
+            let ofw_bit = L::Tag::overflow_channel(h);
             if self.has_overflow_bit(initial_gi, ofw_bit) {
                 self.max_load = self.max_load.saturating_sub(1);
             }
@@ -740,7 +747,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         new_table.allocate(self.mask + 1);
 
         unsafe {
-            let copy_size = L::bytes_to_copy(self.mask + 1);
+            let copy_size = Self::bytes_to_copy_total(self.mask + 1);
             ptr::copy_nonoverlapping(self.metadata, new_table.metadata, copy_size);
 
             let bucket_size = std::mem::size_of::<(K, V)>();
@@ -921,6 +928,7 @@ mod tests {
         assert_eq!(items.len(), 50);
     }
 
+    // Existing layouts
     #[test] fn ufm_basic() { test_basic::<UfmLayout>(); }
     #[test] fn splitsies_basic() { test_basic::<SplitsiesLayout>(); }
     #[test] fn gaps_basic() { test_basic::<GapsLayout>(); }
@@ -933,4 +941,18 @@ mod tests {
     #[test] fn ufm_into_iter() { test_into_iter::<UfmLayout>(); }
     #[test] fn splitsies_into_iter() { test_into_iter::<SplitsiesLayout>(); }
     #[test] fn gaps_into_iter() { test_into_iter::<GapsLayout>(); }
+
+    // Matrix entries
+    use crate::raw::group_layout::{Hi8_8bit, Hi8_1bit, Lo128_8bit, Lo128_1bit, Lo8_1bit};
+
+    #[test] fn hi8_8bit_basic() { test_basic::<Hi8_8bit>(); }
+    #[test] fn hi8_8bit_grow() { test_grow::<Hi8_8bit>(); }
+    #[test] fn hi8_1bit_basic() { test_basic::<Hi8_1bit>(); }
+    #[test] fn hi8_1bit_grow() { test_grow::<Hi8_1bit>(); }
+    #[test] fn lo128_8bit_basic() { test_basic::<Lo128_8bit>(); }
+    #[test] fn lo128_8bit_grow() { test_grow::<Lo128_8bit>(); }
+    #[test] fn lo128_1bit_basic() { test_basic::<Lo128_1bit>(); }
+    #[test] fn lo128_1bit_grow() { test_grow::<Lo128_1bit>(); }
+    #[test] fn lo8_1bit_basic() { test_basic::<Lo8_1bit>(); }
+    #[test] fn lo8_1bit_grow() { test_grow::<Lo8_1bit>(); }
 }
