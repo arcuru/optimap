@@ -13,6 +13,7 @@
 mod bench_helpers;
 
 use bench_helpers::{OptiMapBench, Sfc64};
+use optimap::matrix_types::*;
 use optimap::{Gaps, IPO64, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
@@ -322,6 +323,7 @@ fn sweep_iterate<M: Map<u64, u64>>(
 
 macro_rules! for_each_design {
     ($config:expr, $callback:ident $(, $arg:expr)*) => {
+        // Original designs
         for_each_design!(@run $config, $callback, UnorderedFlatMap<u64,u64>, "UFM" $(, $arg)*);
         for_each_design!(@run $config, $callback, Gaps<u64,u64>, "Gaps" $(, $arg)*);
         for_each_design!(@run $config, $callback, Splitsies<u64,u64>, "Splitsies" $(, $arg)*);
@@ -329,6 +331,12 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, IPO64<u64,u64>, "IPO64" $(, $arg)*);
         for_each_design!(@run $config, $callback, hashbrown::HashMap<u64,u64>, "hashbrown" $(, $arg)*);
         for_each_design!(@run $config, $callback, OptiMapBench<u64,u64>, "OptiMap" $(, $arg)*);
+        // Matrix variants
+        for_each_design!(@run $config, $callback, Hi8_8bitMap<u64,u64>, "Hi8_8bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_8bitMap<u64,u64>, "Lo128_8bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo8_1bitMap<u64,u64>, "Lo8_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_1bitMap<u64,u64>, "Hi8_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_1bitMap<u64,u64>, "Lo128_1bit" $(, $arg)*);
     };
     (@run $config:expr, $callback:ident, $ty:ty, $name:expr $(, $arg:expr)*) => {
         if $config.filter_design.as_ref().is_none_or(|f| f.eq_ignore_ascii_case($name)) {
@@ -354,7 +362,7 @@ fn main() {
         if config.filter_design.is_some() {
             "1"
         } else {
-            "7"
+            "12"
         }
     );
 

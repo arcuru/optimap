@@ -10,7 +10,7 @@ use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 use optimap::matrix_types::*;
-use optimap::{InPlaceOverflow, Map, Splitsies};
+use optimap::{InPlaceOverflow, Splitsies};
 
 // ── Table geometry ─────────────────────────────────────────────────────────
 

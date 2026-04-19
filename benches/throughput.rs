@@ -8,6 +8,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
+use optimap::matrix_types::*;
 use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ fn test_sizes() -> Vec<TestSize> {
 
 macro_rules! all_maps {
     ($helper:ident, $group:expr, $($args:expr),*) => {
+        // Original designs
         $helper::<UnorderedFlatMap<u64, u64>>($group, "UFM", $($args),*);
         $helper::<Gaps<u64, u64>>($group, "Gaps", $($args),*);
         $helper::<Splitsies<u64, u64>>($group, "Splitsies", $($args),*);
@@ -61,6 +63,12 @@ macro_rules! all_maps {
         $helper::<IPO64<u64, u64>>($group, "IPO64", $($args),*);
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
         $helper::<OptiMapBench<u64, u64>>($group, "OptiMap", $($args),*);
+        // Matrix variants
+        $helper::<Hi8_8bitMap<u64, u64>>($group, "Hi8_8bit", $($args),*);
+        $helper::<Lo128_8bitMap<u64, u64>>($group, "Lo128_8bit", $($args),*);
+        $helper::<Lo8_1bitMap<u64, u64>>($group, "Lo8_1bit", $($args),*);
+        $helper::<Hi8_1bitMap<u64, u64>>($group, "Hi8_1bit", $($args),*);
+        $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
     };
 }
 

@@ -9,6 +9,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
+use optimap::matrix_types::*;
 use optimap::{InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Macro for main designs ──────────────────────────────────────────────────
@@ -20,6 +21,9 @@ macro_rules! main_maps {
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO", $($args),*);
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
         $helper::<OptiMapBench<u64, u64>>($group, "OptiMap", $($args),*);
+        // Matrix top contenders
+        $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
+        $helper::<Lo128_8bitMap<u64, u64>>($group, "Lo128_8bit", $($args),*);
     };
 }
 
