@@ -181,9 +181,12 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     }
 
     /// Map hash to group index.
+    /// Uses low bits via AND (like hashbrown's h1) instead of high bits via shift.
+    /// This is 1 instruction (AND) vs 2 (SHRX + AND), saving ~1 cycle per lookup.
+    /// Requires that the tag strategy uses decorrelated bits (not low bits).
     #[inline(always)]
     pub(crate) fn group_index(&self, h: u64) -> usize {
-        (h.wrapping_shr(self.shift) as usize) & self.mask
+        (h as usize) & self.mask
     }
 
     /// Pointer to group metadata (16-byte aligned).
