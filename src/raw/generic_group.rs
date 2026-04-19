@@ -1,29 +1,17 @@
-//! 16-slot group operations with separate overflow array.
+//! Shared SIMD group operations parameterized by slot mask.
 //!
-//! Unlike the original 15-slot design, all 16 bytes of the SIMD word are
-//! valid slot metadata. Overflow bytes live in a separate contiguous array.
-//! This eliminates the `& 0x7FFF` mask and gives power-of-2 bucket addressing.
+//! All overflow-bit designs share the same SSE2 intrinsics — the only
+//! difference is whether the 16th bit is masked off (15-slot embedded
+//! overflow) or kept (16-slot separate overflow). The `SLOT_MASK` const
+//! generic eliminates the mask instruction entirely when it's 0xFFFF.
 
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
-use crate::raw::bitmask::BitMask;
-
-/// Number of element slots per group.
-pub const GROUP_SIZE: usize = 16;
-
-/// Total metadata bytes per group (all 16 are slot metadata).
-pub const META_GROUP_BYTES: usize = 16;
+use super::bitmask::BitMask;
 
 /// Metadata byte: slot is empty.
 pub const EMPTY: u8 = 0x00;
-
-/// Extract a non-zero hash tag from the low byte of a hash.
-/// See [`crate::hash_tag`] for implementation details and feature selection.
-#[inline(always)]
-pub fn reduced_hash(h: u64) -> u8 {
-    crate::hash_tag(h)
-}
 
 /// Overflow bit index for a given hash value.
 #[inline(always)]
@@ -31,21 +19,36 @@ pub fn overflow_bit(h: u64) -> u8 {
     1u8 << (h & 7)
 }
 
-// ── x86_64 SSE2 implementation ──────────────────────────────────────────────
+/// Extract a non-zero hash tag from a hash value.
+/// Delegates to the crate-level feature-gated implementation.
+#[inline(always)]
+pub fn reduced_hash(h: u64) -> u8 {
+    crate::hash_tag(h)
+}
+
+// ── x86_64 SSE2 implementation ────────────────────────────────────────────
+
+/// SIMD group operations for overflow-bit designs.
+///
+/// `SLOT_MASK` is applied to all movemask results:
+/// - `0x7FFF` for 15-slot groups (masks off byte 15 = embedded overflow)
+/// - `0xFFFF` for 16-slot groups (all bits valid)
+///
+/// When `SLOT_MASK == 0xFFFF`, the `& SLOT_MASK` compiles away to nothing.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+pub struct Group<const SLOT_MASK: u16>;
 
 #[cfg(all(target_arch = "x86_64", not(miri)))]
-pub struct Group;
-
-#[cfg(all(target_arch = "x86_64", not(miri)))]
-impl Group {
-    /// Return a bitmask of slots matching `value`. All 16 bits are valid.
+impl<const SLOT_MASK: u16> Group<SLOT_MASK> {
+    /// Return a bitmask of slots matching `value`.
+    /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
         unsafe {
             let data = _mm_load_si128(ptr as *const __m128i);
             let needle = _mm_set1_epi8(value as i8);
             let cmp = _mm_cmpeq_epi8(data, needle);
-            BitMask(_mm_movemask_epi8(cmp) as u16)
+            BitMask(_mm_movemask_epi8(cmp) as u16 & SLOT_MASK)
         }
     }
 
@@ -56,7 +59,7 @@ impl Group {
             let data = _mm_load_si128(ptr as *const __m128i);
             let zero = _mm_setzero_si128();
             let cmp = _mm_cmpeq_epi8(data, zero);
-            BitMask(_mm_movemask_epi8(cmp) as u16)
+            BitMask(_mm_movemask_epi8(cmp) as u16 & SLOT_MASK)
         }
     }
 
@@ -68,7 +71,7 @@ impl Group {
             let zero = _mm_setzero_si128();
             let cmp = _mm_cmpeq_epi8(data, zero);
             let mask = _mm_movemask_epi8(cmp) as u16;
-            BitMask(!mask)
+            BitMask((!mask) & SLOT_MASK)
         }
     }
 
@@ -82,8 +85,8 @@ impl Group {
             let match_cmp = _mm_cmpeq_epi8(data, needle);
             let empty_cmp = _mm_cmpeq_epi8(data, zero);
             (
-                BitMask(_mm_movemask_epi8(match_cmp) as u16),
-                BitMask(_mm_movemask_epi8(empty_cmp) as u16),
+                BitMask(_mm_movemask_epi8(match_cmp) as u16 & SLOT_MASK),
+                BitMask(_mm_movemask_epi8(empty_cmp) as u16 & SLOT_MASK),
             )
         }
     }
@@ -96,50 +99,34 @@ impl Group {
         }
     }
 
-    /// Check if a specific overflow bit is set.
-    /// `ptr` points directly to the overflow byte for this group.
-    #[inline(always)]
-    pub unsafe fn has_overflow_bit(ptr: *const u8, bit: u8) -> bool {
-        unsafe { (*ptr & bit) != 0 }
-    }
-
-    /// Set a bit in the overflow byte.
-    /// `ptr` points directly to the overflow byte for this group.
-    #[inline(always)]
-    pub unsafe fn set_overflow_bit(ptr: *mut u8, bit: u8) {
-        unsafe {
-            *ptr |= bit;
-        }
-    }
-
     /// Get the metadata byte for slot `idx`.
     #[inline(always)]
     pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
-        debug_assert!(idx < GROUP_SIZE);
         unsafe { *ptr.add(idx) }
     }
 
     /// Set the metadata byte for slot `idx`.
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
-        debug_assert!(idx < GROUP_SIZE);
         unsafe {
             *ptr.add(idx) = value;
         }
     }
 }
 
-// ── Fallback implementation ─────────────────────────────────────────────────
+// ── Fallback for non-x86_64 / Miri ────────────────────────────────────────
 
 #[cfg(any(not(target_arch = "x86_64"), miri))]
-pub struct Group;
+pub struct Group<const SLOT_MASK: u16>;
 
 #[cfg(any(not(target_arch = "x86_64"), miri))]
-impl Group {
+impl<const SLOT_MASK: u16> Group<SLOT_MASK> {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
         let mut mask = 0u16;
-        for i in 0..GROUP_SIZE {
+        // GROUP_SIZE is derived from SLOT_MASK: 15 for 0x7FFF, 16 for 0xFFFF
+        let count = if SLOT_MASK == 0x7FFF { 15 } else { 16 };
+        for i in 0..count {
             if unsafe { *ptr.add(i) } == value {
                 mask |= 1 << i;
             }
@@ -155,7 +142,8 @@ impl Group {
     #[inline(always)]
     pub unsafe fn match_non_empty(ptr: *const u8) -> BitMask {
         let mut mask = 0u16;
-        for i in 0..GROUP_SIZE {
+        let count = if SLOT_MASK == 0x7FFF { 15 } else { 16 };
+        for i in 0..count {
             if unsafe { *ptr.add(i) } != EMPTY {
                 mask |= 1 << i;
             }
@@ -172,26 +160,12 @@ impl Group {
     pub unsafe fn prefetch_read(_ptr: *const u8) {}
 
     #[inline(always)]
-    pub unsafe fn has_overflow_bit(ptr: *const u8, bit: u8) -> bool {
-        unsafe { (*ptr & bit) != 0 }
-    }
-
-    #[inline(always)]
-    pub unsafe fn set_overflow_bit(ptr: *mut u8, bit: u8) {
-        unsafe {
-            *ptr |= bit;
-        }
-    }
-
-    #[inline(always)]
     pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
-        debug_assert!(idx < GROUP_SIZE);
         unsafe { *ptr.add(idx) }
     }
 
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
-        debug_assert!(idx < GROUP_SIZE);
         unsafe {
             *ptr.add(idx) = value;
         }

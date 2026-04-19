@@ -1,6 +1,10 @@
 pub mod bitmask;
+pub mod generic_group;
 pub mod group;
+pub mod group_layout;
 pub mod hash;
+pub mod overflow_table;
+pub mod table_api;
 
 use std::alloc::{self, Layout};
 use std::hash::{BuildHasher, Hash};

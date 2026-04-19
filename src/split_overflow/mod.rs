@@ -13,6 +13,5 @@
 //! requiring a prefetch to hide the latency of the separate access.
 
 pub(crate) mod map;
-pub(crate) mod raw;
 
 pub use map::Splitsies;

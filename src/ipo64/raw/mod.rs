@@ -784,6 +784,262 @@ impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
     }
 }
 
+// ── IntoIter ───────────────────────────────────────────────────────────────
+
+pub struct IntoIter<K, V> {
+    table: RawTable<K, V>,
+    group: usize,
+    current_mask: BitMask64,
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(si) = self.current_mask.next() {
+                let gi = self.group;
+                unsafe {
+                    let ptr = self.table.bucket_ptr(gi, si);
+                    let kv = ptr.read();
+                    let meta = self.table.metadata.add((gi << 6) + si);
+                    *meta = EMPTY;
+                    self.table.len -= 1;
+                    return Some(kv);
+                }
+            }
+            self.group += 1;
+            if self.group > self.table.mask {
+                return None;
+            }
+            self.current_mask = unsafe {
+                Group::match_occupied(self.table.metadata.add(self.group << 6))
+            };
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.table.len, Some(self.table.len))
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
+impl<K, V> std::iter::FusedIterator for IntoIter<K, V> {}
+
+// ── RawTableApi ────────────────────────────────────────────────────────────
+
+use crate::raw::table_api::{EntryProbe, RawTableApi};
+
+impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
+    type SlotIter<'a> = SlotIter<'a, K, V> where K: 'a, V: 'a;
+    type IntoIter = IntoIter<K, V>;
+
+    fn new() -> Self { RawTable::new() }
+    fn with_capacity(cap: usize) -> Self { RawTable::with_capacity(cap) }
+
+    #[inline(always)]
+    fn len(&self) -> usize { self.len }
+
+    #[inline(always)]
+    fn capacity(&self) -> usize {
+        if self.is_allocated() { self.num_groups() * GROUP_SIZE } else { 0 }
+    }
+
+    #[inline(always)]
+    fn is_allocated(&self) -> bool { self.is_allocated() }
+
+    #[inline(always)]
+    fn num_groups(&self) -> usize { self.mask + 1 }
+
+    fn groups_for_capacity(capacity: usize) -> usize {
+        Self::groups_for_capacity(capacity)
+    }
+
+    fn clear(&mut self) { self.clear(); }
+
+    #[inline(always)]
+    unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
+        unsafe { self.bucket_ptr(gi, si) }
+    }
+
+    #[inline(always)]
+    fn find_bucket<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<*mut (K, V)> {
+        self.find_bucket(h, eq)
+    }
+
+    #[inline(always)]
+    fn find_by_hash<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<(usize, usize)> {
+        self.find_by_hash(h, eq)
+    }
+
+    fn insert_or_replace<S: BuildHasher>(&mut self, key: K, value: V, hb: &S) -> Option<V>
+    where K: Hash + Eq,
+    {
+        if !self.is_allocated() {
+            self.allocate(1);
+        }
+        let h = hash::hash_no_mix(&key, hb);
+
+        if self.growth_left == 0 {
+            if let Some((gi, si)) = self.find_by_hash(h, |k| k == &key) {
+                let bucket = unsafe { &mut *self.bucket_ptr(gi, si) };
+                return Some(std::mem::replace(&mut bucket.1, value));
+            }
+            self.grow_or_rehash(hb);
+            self.insert_no_check(h, key, value);
+            return None;
+        }
+
+        let reduced = reduced_hash(h);
+        let gi = self.group_index(h);
+        let meta = unsafe { self.meta_ptr(gi) };
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        for si in matches {
+            let bucket = unsafe { &mut *self.bucket_ptr(gi, si) };
+            if bucket.0 == key {
+                return Some(std::mem::replace(&mut bucket.1, value));
+            }
+        }
+
+        if let Some(si) = empties.lowest_set_bit() {
+            unsafe {
+                Group::set_meta(meta, si, reduced);
+                self.bucket_ptr(gi, si).write((key, value));
+            }
+            self.len += 1;
+            self.growth_left -= 1;
+            return None;
+        }
+
+        if let Some((gi, si)) = self.find_by_hash(h, |k| k == &key) {
+            let bucket = unsafe { &mut *self.bucket_ptr(gi, si) };
+            return Some(std::mem::replace(&mut bucket.1, value));
+        }
+        if self.growth_left == 0 {
+            self.grow_or_rehash(hb);
+        }
+        self.insert_no_check(h, key, value);
+        None
+    }
+
+    fn find_for_entry(&self, h: u64, key: &K) -> EntryProbe
+    where K: Eq,
+    {
+        if self.growth_left == 0 {
+            if let Some((gi, si)) = self.find_by_hash(h, |k| k == key) {
+                return EntryProbe::Found(gi, si);
+            }
+            return EntryProbe::Vacant(None);
+        }
+
+        let reduced = reduced_hash(h);
+        let gi = self.group_index(h);
+        let meta = unsafe { self.meta_ptr(gi) };
+        let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+        for si in matches {
+            let bucket = unsafe { &*self.bucket_ptr(gi, si) };
+            if bucket.0 == *key {
+                return EntryProbe::Found(gi, si);
+            }
+        }
+
+        if let Some(si) = empties.lowest_set_bit() {
+            return EntryProbe::Vacant(Some((gi, si, 0)));
+        }
+
+        match self.find_or_locate(h, |k| k == key) {
+            ProbeResult::Found(gi, si) => EntryProbe::Found(gi, si),
+            ProbeResult::InsertSlot(gi, si, mask) => EntryProbe::Vacant(Some((gi, si, mask))),
+            ProbeResult::NotFound => EntryProbe::Vacant(None),
+        }
+    }
+
+    #[inline(always)]
+    fn insert_at(&mut self, h: u64, gi: usize, si: usize, k: K, v: V, mask: u8) {
+        self.insert_at(h, gi, si, k, v, mask);
+    }
+
+    #[inline(always)]
+    fn insert_no_check(&mut self, h: u64, k: K, v: V) -> (usize, usize) {
+        self.insert_no_check(h, k, v)
+    }
+
+    fn ensure_capacity<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+        if self.growth_left == 0 {
+            self.grow_or_rehash(hb);
+        }
+    }
+
+    fn remove_by_hash<F: Fn(&K) -> bool>(&mut self, h: u64, eq: F) -> Option<(K, V)> {
+        self.remove_by_hash(h, eq)
+    }
+
+    unsafe fn erase_slot(&mut self, _h: u64, gi: usize, si: usize) {
+        unsafe {
+            let meta = self.meta_ptr(gi);
+            Group::set_meta(meta, si, TOMBSTONE);
+            self.len -= 1;
+        }
+    }
+
+    fn reserve<S: BuildHasher>(&mut self, additional: usize, hb: &S) where K: Hash {
+        let needed = self.len.checked_add(additional).expect("capacity overflow");
+        if !self.is_allocated() {
+            if additional > 0 {
+                self.allocate(Self::groups_for_capacity(needed));
+            }
+            return;
+        }
+        let cap = self.num_groups() * GROUP_SIZE;
+        if needed > max_load_for_capacity(cap) {
+            let new_groups = Self::groups_for_capacity(needed);
+            if new_groups > self.num_groups() {
+                self.rehash_with(new_groups, hb);
+            }
+        }
+    }
+
+    fn shrink_to_fit<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+        if self.len == 0 {
+            let mut empty = Self::new();
+            std::mem::swap(self, &mut empty);
+            return;
+        }
+        let min_groups = Self::groups_for_capacity(self.len);
+        if min_groups < self.num_groups() {
+            self.rehash_with(min_groups, hb);
+        }
+    }
+
+    fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hb: &S) where K: Hash {
+        self.rehash_with(new_num_groups, hb);
+    }
+
+    fn iter_slots(&self) -> SlotIter<'_, K, V> { self.iter_slots() }
+
+    fn into_iter_impl(self) -> IntoIter<K, V> {
+        let mask = if !self.is_allocated() {
+            BitMask64(0)
+        } else {
+            unsafe { Group::match_occupied(self.metadata) }
+        };
+        let table = unsafe { ptr::read(&self) };
+        std::mem::forget(self);
+        IntoIter { table, group: 0, current_mask: mask }
+    }
+
+    fn drain_impl(&mut self) -> IntoIter<K, V> {
+        let table = std::mem::replace(self, Self::new());
+        table.into_iter_impl()
+    }
+
+    fn clone_table(&self) -> Self where K: Clone, V: Clone {
+        self.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

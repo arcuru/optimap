@@ -35,14 +35,21 @@ Requires Rust nightly (for SIMD intrinsics) + miri component. The flake provides
 ## Project Structure
 
 - `src/` — All implementations behind `Map`/`SortedMap`/`Set`/`SortedSet` traits
-  - `raw/` — Shared SIMD group ops, bitmask, hash mixing
-  - `map.rs` — UnorderedFlatMap
+  - `raw/` — Shared infrastructure:
+    - `table_api.rs` — `RawTableApi<K,V>` trait (internal contract for all raw table backends)
+    - `group_layout.rs` — `GroupLayout` trait + `UfmLayout`/`SplitsiesLayout`/`GapsLayout` configs
+    - `generic_group.rs` — Shared SIMD group ops parameterized by slot mask
+    - `overflow_table.rs` — Generic overflow-bit `RawTable<K,V,L>` (replaces 3 separate impls)
+    - `bitmask.rs`, `hash.rs`, `group.rs` — Bitmask, hash mixing, legacy UFM group ops
+    - `mod.rs` — Legacy UFM RawTable (still used by `set.rs`)
+  - `generic_map.rs` — `GenericMap<K,V,S,R>` (single map wrapper over any RawTableApi backend)
+  - `map.rs` — `UnorderedFlatMap` type alias (= `GenericMap` + `UfmLayout`)
   - `set.rs` — UnorderedFlatSet (hand-tuned set with SIMD fast-path)
-  - `split_overflow/` — Splitsies
-  - `in_place_overflow/` — InPlaceOverflow (IPO)
-  - `ipo64/` — IPO64
-  - `gaps/` — Gaps
-  - `flat_btree/` — FlatBTree (B+ tree)
+  - `split_overflow/` — `Splitsies` type alias (= `GenericMap` + `SplitsiesLayout`)
+  - `in_place_overflow/` — InPlaceOverflow (own RawTable + RawTableApi impl, GenericMap alias)
+  - `ipo64/` — IPO64 (own RawTable + RawTableApi impl, GenericMap alias)
+  - `gaps/` — `Gaps` type alias (= `GenericMap` + `GapsLayout`)
+  - `flat_btree/` — FlatBTree (B+ tree, independent architecture)
   - `traits.rs` — `Map`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std
   - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any Map via `Map<T, ()>`)
   - `optimap.rs` — `OptiMap<K, V>` smart wrapper with dynamic backend selection

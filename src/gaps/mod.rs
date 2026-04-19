@@ -9,6 +9,5 @@
 //! Same SIMD operations as UFM (including `& 0x7FFF` mask for 15-slot groups).
 
 pub(crate) mod map;
-pub(crate) mod raw;
 
 pub use map::Gaps;

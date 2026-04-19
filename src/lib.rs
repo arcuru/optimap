@@ -203,6 +203,7 @@ pub(crate) fn hash_tag(h: u64) -> u8 {
 
 pub mod flat_btree;
 pub mod gaps;
+pub(crate) mod generic_map;
 mod generic_set;
 pub mod in_place_overflow;
 pub mod ipo64;
@@ -210,7 +211,7 @@ pub(crate) mod map;
 mod opti_set;
 mod opti_sorted;
 pub mod optimap;
-mod raw;
+pub(crate) mod raw;
 mod set;
 pub mod split_overflow;
 mod traits;
