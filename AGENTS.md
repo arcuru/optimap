@@ -32,21 +32,60 @@ RUSTFLAGS="" MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
 
 Requires Rust nightly (for SIMD intrinsics) + miri component. The flake provides both.
 
+## Architecture: Two Design Families
+
+Hash map designs split into two families based on deletion strategy:
+
+**Overflow-bit family** (tombstone-free): UFM, Splitsies, Gaps, matrix variants
+- Overflow bits track displaced entries → O(1) miss termination
+- Deletion clears the slot and adjusts max_load — no tombstones
+- Generic `RawTable<K,V,L: GroupLayout>` in `src/raw/overflow_table.rs`
+
+**Tombstone family**: InPlaceOverflow (IPO), Hi128_Tomb, Top128_Tomb
+- Tombstones for deletion, EMPTY-based probe termination (like hashbrown)
+- IPO's `RawTable<K,V,T: TombstoneTag>` in `src/in_place_overflow/raw/mod.rs`
+
+Both families use the **mid-pointer memory layout**: a single `ctrl` pointer
+sits between buckets (backward) and metadata (forward). This eliminates a
+struct field and an address computation from the hot path — the same trick
+hashbrown uses. For overflow-bit designs, the overflow region sits after
+metadata (also forward from ctrl).
+
+### Parameterization axes
+
+The design space is parameterized by composable traits:
+
+| Axis | Trait | Implementations |
+|------|-------|-----------------|
+| **Tag extraction** | `TagStrategy` / `TombstoneTag` | LowByte255, HighByte255, LowByte128, TopTag128, TopTag255, LowByte254, HighByte128, TopByte128 |
+| **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
+| **Group indexing** | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
+| **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
+
+New design variants are ~30 lines: a type alias composing these traits.
+The `matrix_types` module in `src/lib.rs` has experimental combinations.
+
+**AND-based indexing constraint**: uses low hash bits for group index, so tags
+must come from top bits (57+) and 8-bit overflow channels (also low bits)
+would correlate. Only safe with 1-bit overflow (BitSeparate).
+
 ## Project Structure
 
 - `src/` — All implementations behind `Map`/`SortedMap`/`Set`/`SortedSet` traits
   - `raw/` — Shared infrastructure:
     - `table_api.rs` — `RawTableApi<K,V>` trait (internal contract for all raw table backends)
-    - `group_layout.rs` — `GroupLayout` trait + `UfmLayout`/`SplitsiesLayout`/`GapsLayout` configs
+    - `group_layout.rs` — `GroupLayout` trait + `Layout16`/`Layout16And` + named layouts
+    - `tag_strategy.rs` — `TagStrategy` trait (tag + overflow channel extraction)
+    - `overflow_strategy.rs` — `OverflowStrategy` trait (ByteSeparate, BitSeparate)
     - `generic_group.rs` — Shared SIMD group ops parameterized by slot mask
-    - `overflow_table.rs` — Generic overflow-bit `RawTable<K,V,L>` (replaces 3 separate impls)
+    - `overflow_table.rs` — Generic overflow-bit `RawTable<K,V,L>` (mid-pointer layout)
     - `bitmask.rs`, `hash.rs`, `group.rs` — Bitmask, hash mixing, legacy UFM group ops
     - `mod.rs` — Legacy UFM RawTable (still used by `set.rs`)
   - `generic_map.rs` — `GenericMap<K,V,S,R>` (single map wrapper over any RawTableApi backend)
   - `map.rs` — `UnorderedFlatMap` type alias (= `GenericMap` + `UfmLayout`)
   - `set.rs` — UnorderedFlatSet (hand-tuned set with SIMD fast-path)
   - `split_overflow/` — `Splitsies` type alias (= `GenericMap` + `SplitsiesLayout`)
-  - `in_place_overflow/` — InPlaceOverflow (own RawTable + RawTableApi impl, GenericMap alias)
+  - `in_place_overflow/` — InPlaceOverflow (own RawTable + TombstoneTag, mid-pointer layout)
   - `ipo64/` — IPO64 (own RawTable + RawTableApi impl, GenericMap alias)
   - `gaps/` — `Gaps` type alias (= `GenericMap` + `GapsLayout`)
   - `flat_btree/` — FlatBTree (B+ tree, independent architecture)
@@ -78,10 +117,27 @@ Requires Rust nightly (for SIMD intrinsics) + miri component. The flake provides
 
 ## Known Gaps / TODO
 
-(none currently)
+- `docs/src/architecture.md` doesn't yet cover AND-based indexing or the mid-pointer layout
+- No mdbook page for the design matrix (tag × overflow × indexing combinations)
+- Sweep plots need regenerating after the latest optimizations
 
 ## Optimization Status
 
 All designs have been through extensive optimization passes. See `docs/` (mdbook) for
-detailed logs. Key finding: optimizations that fail on one design (bucket prefetch,
-cold continuation) tend to fail on all for the same fundamental CPU reasons.
+detailed logs and `.claude/plans/abstract-churning-tome.md` for the latest investigation.
+
+Key results (107K entries, Hi128_Tomb vs hashbrown):
+- Lookup hit: 4.07 vs 4.25 ns (4% faster)
+- Insert: 503 vs 603 µs (17% faster)
+- Remove: 763 vs 1079 µs (29% faster)
+
+Key optimizations applied:
+- **Mid-pointer memory layout** — single `ctrl` pointer between buckets (backward)
+  and metadata (forward), eliminating a struct field and address computation
+- **AND-based group indexing** — `h & mask` (1 instruction) vs `h >> shift` (2 instructions),
+  applied to IPO and 1-bit overflow designs
+- **Tag-group decorrelation** — tags must use hash bits disjoint from group index bits;
+  AND indexing requires tags from top bits (57+)
+
+Future ideas (see plan file): AND indexing for 8-bit overflow with shifted channels,
+mid-pointer for 15-slot designs (UFM/Gaps embed overflow → only 2 regions).
