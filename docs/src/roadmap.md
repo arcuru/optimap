@@ -32,6 +32,10 @@ thoroughly investigated and proven unproductive — see
 | Large-value insert regression | Investigated and found non-reproducible — Splitsies beats hashbrown at all value sizes (0.84-0.93x). Original numbers were from a different machine. |
 | Hash tag optimization (`hash_tag`) | Inline asm `cmp 0xFF; adc 0` (2 instructions, 255 values) replaces 3-instruction pure Rust. Feature-gated: `reduced-hash-asm` (default), `reduced-hash-128`, or pure Rust fallback. UFM sees -26% hit / -41% miss due to codegen scheduling effect. |
 | Code deduplication (`GenericMap` + `RawTableApi`) | Unified 5 identical map.rs files into `GenericMap<K,V,S,R>` and 3 overflow-bit raw tables into generic `RawTable<K,V,L: GroupLayout>`. -4,500 lines (-72%). Zero performance cost (monomorphized). See [Architecture](architecture.md). |
+| Design space matrix | Parameterized tag extraction (`TagStrategy`, `TombstoneTag`), overflow storage (`OverflowStrategy`), and group indexing (`AND_INDEX`). 16 design variants benchmarked. See [Architecture](architecture.md). |
+| Mid-pointer memory layout | Both RawTable impls use hashbrown's mid-pointer trick: single `ctrl` pointer between buckets (backward) and metadata (forward). Eliminates a struct field and address computation. Hi128_Tomb beats hashbrown: lookup hit 4.07 vs 4.25 ns, insert 503 vs 603 µs, remove 763 vs 1079 µs. |
+| AND-based group indexing | `h & mask` (1 instruction) vs `h >> shift` (2 instructions). Applied to IPO tombstone and 1-bit overflow designs. Requires tags from top hash bits (57+) to avoid correlation. |
+| Splitsies-1bit (BitSeparate) | Implemented as `OverflowStrategy` + `Layout16` composition. 1 bit per group instead of 1 byte. See Splitsies-1bit section below for design rationale. |
 
 ## Open — Hash Maps
 
@@ -53,81 +57,103 @@ thoroughly investigated and proven unproductive — see
 |------|-----------|-------|
 | Allocator stress testing | Low | Custom allocator for misalignment and leak tracking. |
 
+### Design Space Exploration
+
+These explore new axes in the parameterized design matrix. Each is a new
+composition of existing traits or a small trait extension.
+
+#### 8-bit overflow + AND indexing (shifted channels)
+
+**Difficulty**: Low — new TagStrategy only \
+**Expected impact**: ~5% lookup for Splitsies-style designs
+
+AND-based group indexing saves 1 instruction per probe but is currently
+blocked for 8-bit overflow designs because `overflow_channel = 1 << (h & 7)`
+uses low bits that correlate with the AND group index. Fix: shift the
+channel source to top bits: `1 << ((h >> 57) & 7)`. The channel only
+needs 3 bits of entropy decorrelated from the group index.
+
+This would let all overflow-bit designs (including Splitsies) benefit
+from AND indexing, not just 1-bit variants.
+
+#### Key-value separation (SoA layout)
+
+**Difficulty**: Medium — new RawTable variant or GroupLayout axis \
+**Expected impact**: Potentially large for big-value workloads
+
+Store keys and values in separate arrays instead of interleaved `(K, V)`
+tuples. On the hit path, the key comparison only touches the key array —
+value bytes don't pollute the cache line.
+
+For `HashMap<u64, [u8; 256]>`, interleaved layout pulls 264 bytes per
+slot into cache just to compare an 8-byte key. SoA layout only pulls
+8 bytes for the key comparison, then fetches the 256-byte value only
+on match.
+
+Trade-off: two memory regions to address on hit (key then value) vs one.
+Wins when `sizeof(V) > cache_line - sizeof(K)` (~56 bytes for u64 keys).
+Needs investigation for the common small-KV case where interleaved
+already fits in one cache line.
+
+#### 32-slot AVX2 groups
+
+**Difficulty**: High — new Group implementation \
+**Expected impact**: Fewer probes for large tables
+
+IPO64 already does 64-slot groups with AVX-512. A 32-slot AVX2 variant
+would be a middle ground available on more hardware (AVX2 is ubiquitous,
+AVX-512 is not). 32 bytes of metadata per group, `vpcmpeqb ymm` for
+matching. Doubles the chance of a home-group hit vs 16-slot.
+
+Trade-off: larger groups = more wasted space at low load, more false
+matches to iterate through per group. Metadata is 32-byte aligned
+instead of 16-byte.
+
+#### Load factor as a type parameter
+
+**Difficulty**: Low — const on GroupLayout \
+**Expected impact**: Tuning knob for memory/speed trade-off
+
+Currently hardcoded at 7/8 (87.5%) for tombstone designs. Making this
+a const on GroupLayout would let users tune per design. Lower load
+factor = fewer collisions + faster probing, but more memory waste.
+
+#### Mid-pointer for 15-slot embedded designs (UFM, Gaps)
+
+**Difficulty**: Medium \
+**Expected impact**: ~5% lookup
+
+UFM and Gaps embed overflow at byte 15 of each 16-byte metadata group —
+no separate overflow region. They have exactly 2 memory regions (metadata
++ buckets), same as tombstone designs. The mid-pointer trick applies
+cleanly. Would also benefit from AND indexing if combined with shifted
+overflow channels.
+
 ### Structural (Speculative)
 
 | Item | Difficulty | Risk | Notes |
 |------|-----------|------|-------|
-| **Splitsies-1bit** (new design) | Medium | Low | See below. |
-| Interleaved memory layout | High | High | Better spatial locality, but large bucket types push groups apart. |
-| Generic group size | ~~High~~ | ~~Done~~ | Implemented as `GroupLayout` trait. See [Architecture](architecture.md). |
 | Concurrent / lock-free variant | Very High | Research | Overflow bits are suited to lock-free reads. |
 
-#### Splitsies-1bit: single-bit overflow
+#### Splitsies-1bit: design rationale (implemented)
 
-A variant of Splitsies where the per-group overflow byte is replaced by a single
-overflow **bit**. The overflow array becomes a compact bitfield instead of a byte
-array.
+Implemented as `BitSeparate` overflow strategy composed via `Layout16`.
+Replaces per-group overflow byte with a single overflow bit. The overflow
+array becomes a compact bitfield: 1 byte per 8 groups instead of 1 byte
+per group.
 
-**Layout (same as Splitsies except overflow):**
-- 16-slot groups: full 16 bytes for hash tags (all SIMD lanes used)
-- Separate bucket array: `(K, V)` pairs
-- Overflow bitfield: 1 bit per group (vs Splitsies' 1 byte per group)
+**Memory savings** (1-bit vs 8-bit overflow):
 
-**How it works:**
-- On insert overflow (home group full → probe to next group): set the home
-  group's overflow bit to 1
-- On miss: if the home group has no SIMD tag match AND its overflow bit is 0,
-  the key is definitely absent → O(1) miss termination (same as Splitsies)
-- On miss with overflow bit = 1: must continue probing (same as Splitsies)
-- Tombstone-free: same deletion strategy as Splitsies (backward-shift or
-  equivalent), clearing the overflow bit when no more overflows exist
-
-**Memory savings:**
-| Table size | Groups | Splitsies overflow | 1-bit overflow |
-|-----------|-------:|-------------------:|---------------:|
-| 10K elements | ~640 | 640 bytes | 80 bytes |
-| 100K | ~6.4K | 6.4 KB | 800 bytes |
+| Table size | Groups | 8-bit | 1-bit |
+|-----------|-------:|------:|------:|
+| 100K | ~6.4K | 6.4 KB | 800 B |
 | 1M | ~64K | 64 KB | 8 KB |
 | 10M | ~640K | 640 KB | 80 KB |
 
-At 1M elements the overflow array drops from 64 KB (L1-sized) to 8 KB — easily
-fitting in L1 with room to spare. At 10M the savings are 560 KB.
-
-**Tradeoff — miss path false positives:**
-
-Splitsies' byte-level overflow stores `1 << (h & 7)`: 8 independent channels.
-A miss probe continues only if the *specific* bit for that hash is set. With
-1-bit overflow, a miss probe continues whenever *anything* overflowed from that
-group — more false continuation.
-
-At 70% load with 16-slot groups:
-- ~7% of groups have any overflow at all (most lookups still terminate in O(1))
-- Splitsies byte: of that 7%, only 1/8 of misses match the specific overflow bit
-- 1-bit: of that 7%, all misses must continue probing
-
-So the miss false-continuation rate rises from ~0.9% (7% × 1/8) to ~7%. This
-matters most at high load (85%+) where overflow rates climb to ~30%.
-
-**Why it might win anyway:**
-1. The overflow bitfield is so small it's always hot in L1 — no cache miss to
-   check it, ever. Splitsies' byte array at 1M+ can spill out of L1.
-2. Checking a single bit (`bitmap[gi / 8] & (1 << (gi % 8))`) is simpler than
-   loading a byte and testing a specific bit pattern (`overflow[gi] & (1 << (h & 7))`).
-3. The extra probing on the 7% false-positive misses costs ~15-20ns per extra
-   group checked. If the cache savings on the other 93% of operations save even
-   1-2ns each, it could break even or win.
-4. At low-medium load (<70%), overflow is rare enough that 1-bit vs 8-bit
-   makes almost no difference — and the memory savings are pure upside.
-
-**Implementation notes:**
-- Could start as a fork of Splitsies with the overflow array replaced by a
-  `Vec<u8>` bitfield (1 byte per 8 groups)
-- The `overflow_bit(h)` function is no longer needed — the hash doesn't index
-  into the overflow; it's just a boolean per group
-- Deletion needs to check whether any elements in the group still have overflows
-  before clearing the bit (scan the group's probe chains)
-- insert/remove of the overflow bit is simpler: `bitmap[gi >> 3] |= 1 << (gi & 7)`
-  to set, more complex to clear (must verify no remaining overflows)
+**Trade-off**: miss false-continuation rate rises from ~0.9% (8-channel)
+to ~7% (binary). But the bitfield is always L1-hot, and at typical load
+(<70%) overflow is rare enough that 1-bit vs 8-bit makes almost no
+difference — the memory savings are pure upside.
 
 ## Open — FlatBTree
 

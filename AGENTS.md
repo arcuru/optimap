@@ -115,10 +115,15 @@ would correlate. Only safe with 1-bit overflow (BitSeparate).
 - `OptiSet<T>` wraps `OptiMap<T, ()>` with set-specific API, inheriting all Hint/MapType/Backend selection
 - `OptiSortedMap<K, V>` and `OptiSortedSet<T>` wrap `FlatBTree` for sorted containers (single backend for now, extensible)
 
+## Working Practices
+
+- **Long-term plans and future work go in `docs/src/roadmap.md`**, not in ephemeral
+  plan files. The roadmap is checked into the repo and survives across sessions.
+- Investigation results and design rationale belong in `docs/` (mdbook) alongside
+  the code they describe, not in external notes.
+
 ## Known Gaps / TODO
 
-- `docs/src/architecture.md` doesn't yet cover AND-based indexing or the mid-pointer layout
-- No mdbook page for the design matrix (tag × overflow × indexing combinations)
 - Sweep plots need regenerating after the latest optimizations
 
 ## Optimization Status
