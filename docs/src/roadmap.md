@@ -31,6 +31,7 @@ thoroughly investigated and proven unproductive — see
 | find_bucket (direct pointer return) | All 5 raw tables expose `find_bucket()` returning `*mut (K,V)` directly, eliminating double `bucket_ptr` computation in `get/get_mut/get_key_value`. Measured ~0% impact (LLVM CSE already optimizing). |
 | Large-value insert regression | Investigated and found non-reproducible — Splitsies beats hashbrown at all value sizes (0.84-0.93x). Original numbers were from a different machine. |
 | Hash tag optimization (`hash_tag`) | Inline asm `cmp 0xFF; adc 0` (2 instructions, 255 values) replaces 3-instruction pure Rust. Feature-gated: `reduced-hash-asm` (default), `reduced-hash-128`, or pure Rust fallback. UFM sees -26% hit / -41% miss due to codegen scheduling effect. |
+| Code deduplication (`GenericMap` + `RawTableApi`) | Unified 5 identical map.rs files into `GenericMap<K,V,S,R>` and 3 overflow-bit raw tables into generic `RawTable<K,V,L: GroupLayout>`. -4,500 lines (-72%). Zero performance cost (monomorphized). See [Architecture](architecture.md). |
 
 ## Open — Hash Maps
 
@@ -58,7 +59,7 @@ thoroughly investigated and proven unproductive — see
 |------|-----------|------|-------|
 | **Splitsies-1bit** (new design) | Medium | Low | See below. |
 | Interleaved memory layout | High | High | Better spatial locality, but large bucket types push groups apart. |
-| Generic group size | High | Unclear | `GROUP_SIZE` as const generic. |
+| Generic group size | ~~High~~ | ~~Done~~ | Implemented as `GroupLayout` trait. See [Architecture](architecture.md). |
 | Concurrent / lock-free variant | Very High | Research | Overflow bits are suited to lock-free reads. |
 
 #### Splitsies-1bit: single-bit overflow

@@ -12,6 +12,9 @@ The five hash map implementations share these properties:
 - 70% default load factor
 - Generic `Map` trait for uniform benchmarking and generic code
 
+All five share a common `GenericMap` wrapper (entry API, iterators, trait impls)
+via the `RawTableApi` trait. See [Architecture](../architecture.md) for details.
+
 The designs split into two families:
 
 ## Overflow-Bit Family (tombstone-free)
@@ -28,6 +31,9 @@ the anti-drift counter. No performance degradation under churn.
 | [UnorderedFlatMap](unordered_flat_map.md) | 15 slots | `gi * 15 + si` (multiply) | Original design, proven |
 | [Splitsies](splitsies.md) | 16 slots | `(gi << 4) \| si` (shift) | Faster arithmetic, separate overflow array |
 | [Gaps](gaps.md) | 15 slots | `(gi << 4) \| si` (shift) | UFM + power-of-2 buckets (wastes 1/16 slots) |
+
+All three share a single generic `overflow_table::RawTable<K,V,L>` parameterized
+by `GroupLayout`. Only the layout constants and overflow pointer calculation differ.
 
 ## Tombstone Family (Swiss-table style)
 

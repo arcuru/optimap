@@ -17,6 +17,10 @@
 - [Methodology](benchmarks/methodology.md)
 - [Results](benchmarks/results.md)
 
+# Architecture
+
+- [Code Deduplication](architecture.md)
+
 # Optimization
 
 - [Overview](optimization/index.md)
