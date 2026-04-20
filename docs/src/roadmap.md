@@ -36,6 +36,9 @@ thoroughly investigated and proven unproductive — see
 | Mid-pointer memory layout | Both RawTable impls use hashbrown's mid-pointer trick: single `ctrl` pointer between buckets (backward) and metadata (forward). Eliminates a struct field and address computation. Hi128_Tomb beats hashbrown: lookup hit 4.07 vs 4.25 ns, insert 503 vs 603 µs, remove 763 vs 1079 µs. |
 | AND-based group indexing | `h & mask` (1 instruction) vs `h >> shift` (2 instructions). Applied to IPO tombstone and 1-bit overflow designs. Requires tags from top hash bits (57+) to avoid correlation. |
 | Splitsies-1bit (BitSeparate) | Implemented as `OverflowStrategy` + `Layout16` composition. 1 bit per group instead of 1 byte. See Splitsies-1bit section below for design rationale. |
+| Load factor as type parameter | `LOAD_FACTOR_NUM`/`LOAD_FACTOR_DEN` constants on `GroupLayout` (default 7/8). Overflow-bit designs derive growth thresholds from the layout. Custom layouts can override to tune memory/speed trade-off. |
+| Mid-pointer for 15-slot designs | Already implemented — UFM and Gaps share `overflow_table::RawTable<K,V,L>` which uses mid-pointer layout. Embedded overflow at byte 15 means exactly 2 memory regions, same as tombstone designs. |
+| Borrow indirection in insert/entry | Investigated: already eliminated. Insert hot path uses `bucket.0 == key` directly. Cold fallback closures produce identical codegen via `#[inline(always)]` monomorphization. Added `find_by_hash_eq` wrapper for clarity, no perf impact. |
 
 ## Open — Hash Maps
 
@@ -44,12 +47,6 @@ thoroughly investigated and proven unproductive — see
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | `raw_entry()` API | Medium | Custom key lookup by hash + eq. Niche. |
-
-### Performance
-
-| Item | Difficulty | Notes |
-|------|-----------|-------|
-| Eliminate Borrow indirection in insert/entry | Medium | `find_by_hash_eq(&K)` that compares directly. |
 
 ### Testing / Quality
 
@@ -61,20 +58,6 @@ thoroughly investigated and proven unproductive — see
 
 These explore new axes in the parameterized design matrix. Each is a new
 composition of existing traits or a small trait extension.
-
-#### 8-bit overflow + AND indexing (shifted channels)
-
-**Difficulty**: Low — new TagStrategy only \
-**Expected impact**: ~5% lookup for Splitsies-style designs
-
-AND-based group indexing saves 1 instruction per probe but is currently
-blocked for 8-bit overflow designs because `overflow_channel = 1 << (h & 7)`
-uses low bits that correlate with the AND group index. Fix: shift the
-channel source to top bits: `1 << ((h >> 57) & 7)`. The channel only
-needs 3 bits of entropy decorrelated from the group index.
-
-This would let all overflow-bit designs (including Splitsies) benefit
-from AND indexing, not just 1-bit variants.
 
 #### Key-value separation (SoA layout)
 
@@ -108,26 +91,6 @@ matching. Doubles the chance of a home-group hit vs 16-slot.
 Trade-off: larger groups = more wasted space at low load, more false
 matches to iterate through per group. Metadata is 32-byte aligned
 instead of 16-byte.
-
-#### Load factor as a type parameter
-
-**Difficulty**: Low — const on GroupLayout \
-**Expected impact**: Tuning knob for memory/speed trade-off
-
-Currently hardcoded at 7/8 (87.5%) for tombstone designs. Making this
-a const on GroupLayout would let users tune per design. Lower load
-factor = fewer collisions + faster probing, but more memory waste.
-
-#### Mid-pointer for 15-slot embedded designs (UFM, Gaps)
-
-**Difficulty**: Medium \
-**Expected impact**: ~5% lookup
-
-UFM and Gaps embed overflow at byte 15 of each 16-byte metadata group —
-no separate overflow region. They have exactly 2 memory regions (metadata
-+ buckets), same as tombstone designs. The mid-pointer trick applies
-cleanly. Would also benefit from AND indexing if combined with shifted
-overflow channels.
 
 ### Structural (Speculative)
 

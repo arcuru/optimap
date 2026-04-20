@@ -57,17 +57,20 @@ The design space is parameterized by composable traits:
 
 | Axis | Trait | Implementations |
 |------|-------|-----------------|
-| **Tag extraction** | `TagStrategy` / `TombstoneTag` | LowByte255, HighByte255, LowByte128, TopTag128, TopTag255, LowByte254, HighByte128, TopByte128 |
+| **Tag extraction** | `TagStrategy` / `TombstoneTag` | LowByte255, HighByte255, LowByte128, TopTag128, TopTag255, TopTag128Ch, TopTag255Ch, LowByte254, HighByte128, TopByte128 |
 | **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
 | **Group indexing** | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
 | **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
+| **Load factor** | `GroupLayout::LOAD_FACTOR_NUM/DEN` | Default 7/8 (87.5%), customizable per layout |
 
 New design variants are ~30 lines: a type alias composing these traits.
 The `matrix_types` module in `src/lib.rs` has experimental combinations.
 
 **AND-based indexing constraint**: uses low hash bits for group index, so tags
-must come from top bits (57+) and 8-bit overflow channels (also low bits)
-would correlate. Only safe with 1-bit overflow (BitSeparate).
+must come from top bits (57+). For 8-bit overflow channels, use shifted
+channel strategies (TopTag128Ch, TopTag255Ch) that source channels from
+top bits too. Standard channel strategies (`1 << (h & 7)`) correlate with
+AND group index.
 
 ## Project Structure
 
