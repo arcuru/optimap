@@ -13,10 +13,23 @@ Buckets:  [slot0 slot1 ... slot63] × num_groups
 ## Key Properties
 
 - **Group size**: 64 slots (one full cache line of metadata)
-- **Hash values**: 254 (same as IPO16)
+- **Hash values**: 254 (default, `LowByte254`); also supports `HighByte128` (128 values) and `TopByte128` (128 values)
+- **Tag strategy**: Parameterized via `TombstoneTag` trait (same as IPO16)
 - **Deletion**: Tombstone-based
 - **SIMD**: AVX-512 (single 64-byte load), AVX2 fallback, SSE2 fallback (4×16-byte loads)
 - **Runtime dispatch**: Feature detection at `find_by_hash` entry point, not per-iteration
+
+## Tag Strategy Variants
+
+Like IPO16, IPO64's `RawTable` is parameterized by `TombstoneTag`:
+
+| Type | Tag | Strategy | Values |
+|------|-----|----------|--------|
+| `IPO64` (default) | `LowByte254` | bits 16-23, avoid 0/1 | 254 |
+| `Hi128_Tomb64Map` | `HighByte128` | bits 24-30, high bit forced | 128 |
+| `Top128_Tomb64Map` | `TopByte128` | bits 25-31, high bit forced | 128 |
+
+All variants are in `matrix_types` and included in the benchmark/test matrix.
 
 ## SIMD Dispatch
 

@@ -14,6 +14,7 @@ use super::bitmask::BitMask;
 use super::generic_group::EMPTY;
 use super::group_layout::{GroupLayout, GroupOps};
 use super::hash;
+use super::kv_storage::{AoS, KvStorage};
 use super::overflow_strategy::OverflowStrategy;
 use super::table_api::{EntryProbe, RawTableApi};
 use super::tag_strategy::TagStrategy;
@@ -57,17 +58,19 @@ static EMPTY_SENTINEL: EmptySentinel = EmptySentinel([0; 32]);
 /// This eliminates the separate `buckets` pointer field. Both metadata
 /// and bucket access derive from `ctrl`, reducing register pressure and
 /// address computations in the hot path.
-pub struct RawTable<K, V, L: GroupLayout> {
+pub struct RawTable<K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
     pub(crate) mask: usize,
     /// Points to the boundary between buckets (backward) and metadata (forward).
     pub(crate) ctrl: *mut u8,
+    /// Extra storage state. AoS: `()` (zero-size). SoA: `*mut u8` (values pointer).
+    pub(crate) extra: S::Extra,
     pub(crate) len: usize,
     pub(crate) max_load: usize,
     pub(crate) shift: u32,
-    _marker: PhantomData<(K, V, L)>,
+    _marker: PhantomData<(K, V, L, S)>,
 }
 
-impl<K, V, L: GroupLayout> RawTable<K, V, L> {
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     /// Map hash to group index. Uses AND (low bits) or shift (high bits) depending
     /// on the layout's AND_INDEX const. The branch is eliminated at compile time.
     #[inline(always)]
@@ -107,35 +110,43 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
     }
 
     #[inline(always)]
-    fn hash_key<S: BuildHasher>(key: &K, hb: &S) -> u64
+    fn hash_key<H: BuildHasher>(key: &K, hb: &H) -> u64
     where
         K: Hash,
     {
         hash::hash_no_mix(key, hb)
     }
 
-    /// Size of the buckets region, rounded up to 16-byte alignment so that
-    /// ctrl (the metadata start) is always SIMD-aligned.
+    /// Size of the backward region (keys for SoA, (K,V) tuples for AoS).
     #[inline(always)]
-    fn buckets_size(num_groups: usize) -> usize {
-        let raw = num_groups * L::BUCKET_STRIDE * std::mem::size_of::<(K, V)>();
-        (raw + 15) & !15
+    fn backward_size(num_groups: usize) -> usize {
+        S::backward_size(num_groups * L::BUCKET_STRIDE)
     }
 
-    /// Layout: [buckets (rounded up to 16)] [metadata: N*16] [overflow: extra]
-    fn combined_layout(num_groups: usize) -> Layout {
-        let buckets_size = Self::buckets_size(num_groups);
+    /// Byte offset from ctrl to start of values region (after metadata + overflow, aligned).
+    fn values_offset(num_groups: usize) -> usize {
         let meta_size = num_groups * 16;
         let overflow_size = L::Overflow::extra_alloc_bytes(num_groups);
-        let total_size = buckets_size + meta_size + overflow_size;
-        let align = 16usize.max(std::mem::align_of::<(K, V)>());
+        let raw_offset = meta_size + overflow_size;
+        let val_align = S::values_align();
+        (raw_offset + val_align - 1) & !(val_align - 1)
+    }
+
+    /// Layout: [backward region] [metadata: N*16] [overflow] [values (SoA only)]
+    fn combined_layout(num_groups: usize) -> Layout {
+        let backward = Self::backward_size(num_groups);
+        let values_offset = Self::values_offset(num_groups);
+        let values_size = S::values_region_size(num_groups * L::BUCKET_STRIDE);
+        let total_size = backward + values_offset + values_size;
+        let align = S::alloc_align();
         Layout::from_size_align(total_size.max(align), align).unwrap()
     }
 
     pub(crate) fn allocate(&mut self, num_groups: usize) {
         debug_assert!(num_groups.is_power_of_two());
         let layout = Self::combined_layout(num_groups);
-        let buckets_size = Self::buckets_size(num_groups);
+        let backward = Self::backward_size(num_groups);
+        let values_offset = Self::values_offset(num_groups);
         let total_buckets = num_groups * L::GROUP_SIZE;
 
         unsafe {
@@ -143,8 +154,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
             if alloc_ptr.is_null() {
                 alloc::handle_alloc_error(layout);
             }
-            // ctrl sits at the boundary: past buckets, at metadata start
-            self.ctrl = alloc_ptr.add(buckets_size);
+            self.ctrl = alloc_ptr.add(backward);
+            self.extra = S::init_extra(self.ctrl, values_offset);
             // Zero metadata + overflow (both forward from ctrl)
             ptr::write_bytes(self.ctrl, 0, num_groups * 16 + L::Overflow::overflow_bytes_to_zero(num_groups));
         }
@@ -154,10 +165,10 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
 
-    /// Recover the allocation base pointer: alloc_ptr = ctrl - buckets_size.
+    /// Recover the allocation base pointer: alloc_ptr = ctrl - backward_size.
     #[inline(always)]
     unsafe fn alloc_ptr(&self) -> *mut u8 {
-        unsafe { self.ctrl.sub(Self::buckets_size(self.mask + 1)) }
+        unsafe { self.ctrl.sub(Self::backward_size(self.mask + 1)) }
     }
 
     unsafe fn deallocate(&mut self) {
@@ -167,15 +178,20 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         let layout = Self::combined_layout(self.mask + 1);
         unsafe { alloc::dealloc(self.alloc_ptr(), layout); }
         self.ctrl = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
+        self.extra = S::extra_null();
         self.max_load = 0;
     }
 
-    /// Bucket pointer via negative offset from ctrl.
-    /// bucket[idx] = ctrl.cast::<(K,V)>().sub(idx + 1).
+    /// Key pointer at (gi, si).
     #[inline(always)]
-    pub(crate) unsafe fn bucket_ptr_impl(&self, gi: usize, si: usize) -> *mut (K, V) {
-        let idx = L::bucket_index(gi, si);
-        unsafe { self.ctrl.cast::<(K, V)>().sub(idx + 1) }
+    pub(crate) unsafe fn key_ptr_impl(&self, gi: usize, si: usize) -> *mut K {
+        unsafe { S::key_ptr(self.ctrl, L::bucket_index(gi, si)) }
+    }
+
+    /// Value pointer at (gi, si).
+    #[inline(always)]
+    pub(crate) unsafe fn value_ptr_impl(&self, gi: usize, si: usize) -> *mut V {
+        unsafe { S::value_ptr(self.ctrl, self.extra, L::bucket_index(gi, si)) }
     }
 
     // ── Core lookup ────────────────────────────────────────────────
@@ -198,8 +214,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
             let meta = unsafe { self.meta_ptr(gi) };
 
             for si in unsafe { L::Grp::match_byte(meta, reduced) } {
-                let bucket = unsafe { &*self.bucket_ptr_impl(gi, si) };
-                if eq(&bucket.0) {
+                let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                if eq(key) {
                     return Some((gi, si));
                 }
             }
@@ -213,48 +229,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
 
             unsafe {
                 L::Grp::prefetch_read(self.meta_ptr(gi) as *const u8);
-                L::Grp::prefetch_read(self.bucket_ptr_impl(gi, 0) as *const u8);
-                if L::SEPARATE_OVERFLOW {
-                    L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);
-                }
-            }
-        }
-    }
-
-    #[inline(always)]
-    fn find_bucket_impl<F>(&self, h: u64, eq: F) -> Option<*mut (K, V)>
-    where
-        F: Fn(&K) -> bool,
-    {
-        let reduced = L::Tag::tag(h);
-        let mut gi = self.group_index(h);
-        let ofw_bit = L::Tag::overflow_channel(h);
-        let mut probe = 0usize;
-
-        if L::SEPARATE_OVERFLOW {
-            unsafe { L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8); }
-        }
-
-        loop {
-            let meta = unsafe { self.meta_ptr(gi) };
-
-            for si in unsafe { L::Grp::match_byte(meta, reduced) } {
-                let bucket = unsafe { self.bucket_ptr_impl(gi, si) };
-                if eq(unsafe { &(*bucket).0 }) {
-                    return Some(bucket);
-                }
-            }
-
-            if !unsafe { self.has_overflow_bit(gi, ofw_bit) } {
-                return None;
-            }
-
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
-
-            unsafe {
-                L::Grp::prefetch_read(self.meta_ptr(gi) as *const u8);
-                L::Grp::prefetch_read(self.bucket_ptr_impl(gi, 0) as *const u8);
+                L::Grp::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
                 if L::SEPARATE_OVERFLOW {
                     L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);
                 }
@@ -288,7 +263,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
             if let Some(si) = unsafe { L::Grp::match_empty(meta) }.lowest_set_bit() {
                 unsafe {
                     L::Grp::set_meta(meta, si, reduced);
-                    self.bucket_ptr_impl(gi, si).write((key, value));
+                    S::write(self.ctrl, self.extra, L::bucket_index(gi, si), key, value);
                 }
                 self.len += 1;
                 return (gi, si);
@@ -324,7 +299,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         unsafe {
             let meta = self.meta_ptr(gi);
             L::Grp::set_meta(meta, si, reduced);
-            self.bucket_ptr_impl(gi, si).write((key, value));
+            S::write(self.ctrl, self.extra, L::bucket_index(gi, si), key, value);
         }
         self.len += 1;
     }
@@ -344,8 +319,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
 
         for si in matches {
-            let bucket = unsafe { &*self.bucket_ptr_impl(gi, si) };
-            if eq(&bucket.0) {
+            let key = unsafe { &*self.key_ptr_impl(gi, si) };
+            if eq(key) {
                 return FindOrLocateResult::Found(gi, si);
             }
         }
@@ -387,8 +362,8 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
             let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
 
             for si in matches {
-                let bucket = unsafe { &*self.bucket_ptr_impl(gi, si) };
-                if eq(&bucket.0) {
+                let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                if eq(key) {
                     return FindOrLocateResult::Found(gi, si);
                 }
             }
@@ -413,7 +388,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
 
             unsafe {
                 L::Grp::prefetch_read(self.meta_ptr(gi) as *const u8);
-                L::Grp::prefetch_read(self.bucket_ptr_impl(gi, 0) as *const u8);
+                L::Grp::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
                 if L::SEPARATE_OVERFLOW {
                     L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);
                 }
@@ -421,7 +396,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         }
     }
 
-    fn rehash_with_impl<S: BuildHasher>(&mut self, new_num_groups: usize, hash_builder: &S)
+    fn rehash_with_impl<H: BuildHasher>(&mut self, new_num_groups: usize, hash_builder: &H)
     where
         K: Hash,
     {
@@ -433,13 +408,15 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         } else {
             None
         };
-        let old_buckets_size = if was_allocated {
-            Self::buckets_size(old_num_groups)
+        let old_backward = if was_allocated {
+            Self::backward_size(old_num_groups)
         } else {
             0
         };
+        let old_extra = self.extra;
 
         self.ctrl = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
+        self.extra = S::extra_null();
         self.mask = 0;
         self.len = 0;
         self.max_load = 0;
@@ -454,13 +431,12 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
                 let group_meta = old_ctrl.add(gi * 16);
                 for si in L::Grp::match_non_empty(group_meta) {
                     let idx = L::bucket_index(gi, si);
-                    let old_bucket = old_ctrl.cast::<(K, V)>().sub(idx + 1);
-                    let (key, value) = old_bucket.read();
+                    let (key, value) = S::read(old_ctrl, old_extra, idx);
                     let h = Self::hash_key(&key, hash_builder);
                     self.insert_no_check_impl(h, key, value);
                 }
             }
-            let old_alloc = old_ctrl.sub(old_buckets_size);
+            let old_alloc = old_ctrl.sub(old_backward);
             alloc::dealloc(old_alloc, old_layout.unwrap());
         }
     }
@@ -484,19 +460,19 @@ enum FindOrLocateResult {
 
 // ── Cold insert paths ──────────────────────────────────────────────────────
 
-impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
+impl<K: Hash + Eq, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     #[cold]
     #[inline(never)]
-    fn insert_overflow<S: BuildHasher>(
+    fn insert_overflow<H: BuildHasher>(
         &mut self,
         h: u64,
         key: K,
         value: V,
-        hb: &S,
+        hb: &H,
     ) -> Option<V> {
         if let Some((gi, si)) = self.find_by_hash_eq(h, &key) {
-            let bucket = unsafe { &mut *self.bucket_ptr_impl(gi, si) };
-            return Some(std::mem::replace(&mut bucket.1, value));
+            let v = unsafe { &mut *self.value_ptr_impl(gi, si) };
+            return Some(std::mem::replace(v, value));
         }
         if self.len >= self.max_load {
             self.grow_and_rehash(hb);
@@ -507,16 +483,16 @@ impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
 
     #[cold]
     #[inline(never)]
-    fn insert_at_capacity<S: BuildHasher>(
+    fn insert_at_capacity<H: BuildHasher>(
         &mut self,
         h: u64,
         key: K,
         value: V,
-        hb: &S,
+        hb: &H,
     ) -> Option<V> {
         if let Some((gi, si)) = self.find_by_hash_eq(h, &key) {
-            let bucket = unsafe { &mut *self.bucket_ptr_impl(gi, si) };
-            return Some(std::mem::replace(&mut bucket.1, value));
+            let v = unsafe { &mut *self.value_ptr_impl(gi, si) };
+            return Some(std::mem::replace(v, value));
         }
         self.grow_and_rehash(hb);
         self.insert_no_check_impl(h, key, value);
@@ -525,7 +501,7 @@ impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
 
     #[cold]
     #[inline(never)]
-    fn grow_and_rehash<S: BuildHasher>(&mut self, hb: &S) {
+    fn grow_and_rehash<H: BuildHasher>(&mut self, hb: &H) {
         let new_groups = if self.max_load == 0 { 1 } else { (self.mask + 1) * 2 };
         self.rehash_with_impl(new_groups, hb);
     }
@@ -533,14 +509,15 @@ impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
 
 // ── RawTableApi implementation ─────────────────────────────────────────────
 
-impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
-    type SlotIter<'a> = SlotIter<'a, K, V, L> where K: 'a, V: 'a;
-    type IntoIter = IntoIter<K, V, L>;
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K, V, L, S> {
+    type SlotIter<'a> = SlotIter<'a, K, V, L, S> where K: 'a, V: 'a;
+    type IntoIter = IntoIter<K, V, L, S>;
 
     fn new() -> Self {
         RawTable {
             mask: 0,
             ctrl: EMPTY_SENTINEL.0.as_ptr() as *mut u8,
+            extra: S::extra_null(),
             len: 0,
             max_load: 0,
             shift: 64,
@@ -579,11 +556,11 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
     fn clear(&mut self) {
         if self.max_load == 0 { return; }
         unsafe {
-            if std::mem::needs_drop::<(K, V)>() {
+            if S::needs_drop() {
                 for gi in 0..self.mask + 1 {
                     let group_meta = self.ctrl.add(gi * 16);
                     for si in L::Grp::match_non_empty(group_meta) {
-                        ptr::drop_in_place(self.bucket_ptr_impl(gi, si));
+                        S::drop_slot(self.ctrl, self.extra, L::bucket_index(gi, si));
                     }
                 }
             }
@@ -594,13 +571,13 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
     }
 
     #[inline(always)]
-    unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
-        unsafe { self.bucket_ptr_impl(gi, si) }
+    unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K {
+        unsafe { self.key_ptr_impl(gi, si) }
     }
 
     #[inline(always)]
-    fn find_bucket<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<*mut (K, V)> {
-        self.find_bucket_impl(h, eq)
+    unsafe fn value_ptr(&self, gi: usize, si: usize) -> *mut V {
+        unsafe { self.value_ptr_impl(gi, si) }
     }
 
     #[inline(always)]
@@ -608,7 +585,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         self.find_by_hash_impl(h, eq)
     }
 
-    fn insert_or_replace<S: BuildHasher>(&mut self, key: K, value: V, hb: &S) -> Option<V>
+    fn insert_or_replace<H: BuildHasher>(&mut self, key: K, value: V, hb: &H) -> Option<V>
     where
         K: Hash + Eq,
     {
@@ -628,9 +605,10 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
 
         for si in matches {
-            let bucket = unsafe { &mut *self.bucket_ptr_impl(gi, si) };
-            if bucket.0 == key {
-                return Some(std::mem::replace(&mut bucket.1, value));
+            let k = unsafe { &*self.key_ptr_impl(gi, si) };
+            if *k == key {
+                let v = unsafe { &mut *self.value_ptr_impl(gi, si) };
+                return Some(std::mem::replace(v, value));
             }
         }
 
@@ -640,7 +618,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         {
             unsafe {
                 L::Grp::set_meta(meta, si, reduced);
-                self.bucket_ptr_impl(gi, si).write((key, value));
+                S::write(self.ctrl, self.extra, L::bucket_index(gi, si), key, value);
             }
             self.len += 1;
             return None;
@@ -666,8 +644,8 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         let (matches, empties) = unsafe { L::Grp::match_byte_and_empty(meta, reduced) };
 
         for si in matches {
-            let bucket = unsafe { &*self.bucket_ptr_impl(gi, si) };
-            if bucket.0 == *key {
+            let k = unsafe { &*self.key_ptr_impl(gi, si) };
+            if *k == *key {
                 return EntryProbe::Found(gi, si);
             }
         }
@@ -696,7 +674,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         self.insert_no_check_impl(h, k, v)
     }
 
-    fn ensure_capacity<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+    fn ensure_capacity<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
         if self.len >= self.max_load {
             let new_groups = if self.max_load == 0 { 1 } else { (self.mask + 1) * 2 };
             self.rehash_with_impl(new_groups, hb);
@@ -706,7 +684,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
     fn remove_by_hash<F: Fn(&K) -> bool>(&mut self, h: u64, eq: F) -> Option<(K, V)> {
         let (gi, si) = self.find_by_hash_impl(h, eq)?;
         unsafe {
-            let bucket = self.bucket_ptr_impl(gi, si).read();
+            let kv = S::read(self.ctrl, self.extra, L::bucket_index(gi, si));
             let meta = self.meta_ptr(gi);
             L::Grp::set_meta(meta, si, EMPTY);
             self.len -= 1;
@@ -716,7 +694,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             if self.has_overflow_bit(initial_gi, ofw_bit) {
                 self.max_load = self.max_load.saturating_sub(1);
             }
-            Some(bucket)
+            Some(kv)
         }
     }
 
@@ -734,7 +712,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         }
     }
 
-    fn reserve<S: BuildHasher>(&mut self, additional: usize, hb: &S) where K: Hash {
+    fn reserve<H: BuildHasher>(&mut self, additional: usize, hb: &H) where K: Hash {
         let needed = self.len.checked_add(additional).expect("capacity overflow");
         if self.max_load == 0 {
             if additional > 0 {
@@ -750,7 +728,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         }
     }
 
-    fn shrink_to_fit<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+    fn shrink_to_fit<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
         if self.len == 0 {
             let mut empty = Self::new();
             std::mem::swap(self, &mut empty);
@@ -762,7 +740,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         }
     }
 
-    fn iter_slots(&self) -> SlotIter<'_, K, V, L> {
+    fn iter_slots(&self) -> SlotIter<'_, K, V, L, S> {
         SlotIter {
             table: self,
             group: 0,
@@ -770,19 +748,19 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         }
     }
 
-    fn into_iter_impl(self) -> IntoIter<K, V, L> {
+    fn into_iter_impl(self) -> IntoIter<K, V, L, S> {
         let mask = self.first_non_empty_mask();
         let table = unsafe { ptr::read(&self) };
         std::mem::forget(self);
         IntoIter { table, group: 0, current_mask: mask }
     }
 
-    fn drain_impl(&mut self) -> IntoIter<K, V, L> {
+    fn drain_impl(&mut self) -> IntoIter<K, V, L, S> {
         let table = std::mem::replace(self, Self::new());
         table.into_iter_impl()
     }
 
-    fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hb: &S) where K: Hash {
+    fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hb: &H) where K: Hash {
         self.rehash_with_impl(new_num_groups, hb);
     }
 
@@ -798,14 +776,11 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             let copy_size = Self::bytes_to_copy_total(self.mask + 1);
             ptr::copy_nonoverlapping(self.ctrl, new_table.ctrl, copy_size);
 
-            let bucket_size = std::mem::size_of::<(K, V)>();
-            if bucket_size > 0 {
-                for gi in 0..self.mask + 1 {
-                    let group_meta = self.ctrl.add(gi * 16);
-                    for si in L::Grp::match_non_empty(group_meta) {
-                        let src = &*self.bucket_ptr_impl(gi, si);
-                        new_table.bucket_ptr_impl(gi, si).write(src.clone());
-                    }
+            for gi in 0..self.mask + 1 {
+                let group_meta = self.ctrl.add(gi * 16);
+                for si in L::Grp::match_non_empty(group_meta) {
+                    let idx = L::bucket_index(gi, si);
+                    S::clone_slot(self.ctrl, self.extra, new_table.ctrl, new_table.extra, idx);
                 }
             }
         }
@@ -818,15 +793,15 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
 
 // ── Drop ───────────────────────────────────────────────────────────────────
 
-impl<K, V, L: GroupLayout> Drop for RawTable<K, V, L> {
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Drop for RawTable<K, V, L, S> {
     fn drop(&mut self) {
         if self.max_load == 0 { return; }
-        if std::mem::needs_drop::<(K, V)>() {
+        if S::needs_drop() {
             unsafe {
                 for gi in 0..self.mask + 1 {
                     let group_meta = self.ctrl.add(gi * 16);
                     for si in L::Grp::match_non_empty(group_meta) {
-                        ptr::drop_in_place(self.bucket_ptr_impl(gi, si));
+                        S::drop_slot(self.ctrl, self.extra, L::bucket_index(gi, si));
                     }
                 }
             }
@@ -835,18 +810,18 @@ impl<K, V, L: GroupLayout> Drop for RawTable<K, V, L> {
     }
 }
 
-unsafe impl<K: Send, V: Send, L: GroupLayout> Send for RawTable<K, V, L> {}
-unsafe impl<K: Sync, V: Sync, L: GroupLayout> Sync for RawTable<K, V, L> {}
+unsafe impl<K: Send, V: Send, L: GroupLayout, S: KvStorage<K, V>> Send for RawTable<K, V, L, S> {}
+unsafe impl<K: Sync, V: Sync, L: GroupLayout, S: KvStorage<K, V>> Sync for RawTable<K, V, L, S> {}
 
 // ── SlotIter ───────────────────────────────────────────────────────────────
 
-pub struct SlotIter<'a, K, V, L: GroupLayout> {
-    pub(crate) table: &'a RawTable<K, V, L>,
+pub struct SlotIter<'a, K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
+    pub(crate) table: &'a RawTable<K, V, L, S>,
     group: usize,
     current_mask: BitMask,
 }
 
-impl<'a, K, V, L: GroupLayout> Iterator for SlotIter<'a, K, V, L> {
+impl<'a, K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for SlotIter<'a, K, V, L, S> {
     type Item = (usize, usize);
 
     #[inline]
@@ -870,13 +845,13 @@ impl<'a, K, V, L: GroupLayout> Iterator for SlotIter<'a, K, V, L> {
 
 // ── IntoIter ───────────────────────────────────────────────────────────────
 
-pub struct IntoIter<K, V, L: GroupLayout> {
-    table: RawTable<K, V, L>,
+pub struct IntoIter<K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
+    table: RawTable<K, V, L, S>,
     group: usize,
     current_mask: BitMask,
 }
 
-impl<K, V, L: GroupLayout> Iterator for IntoIter<K, V, L> {
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for IntoIter<K, V, L, S> {
     type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -884,8 +859,8 @@ impl<K, V, L: GroupLayout> Iterator for IntoIter<K, V, L> {
             if let Some(si) = self.current_mask.next() {
                 let gi = self.group;
                 unsafe {
-                    let ptr = self.table.bucket_ptr_impl(gi, si);
-                    let kv = ptr.read();
+                    let idx = L::bucket_index(gi, si);
+                    let kv = S::read(self.table.ctrl, self.table.extra, idx);
                     let meta = self.table.ctrl.add(gi * 16 + si);
                     *meta = EMPTY;
                     self.table.len -= 1;
@@ -905,8 +880,8 @@ impl<K, V, L: GroupLayout> Iterator for IntoIter<K, V, L> {
     }
 }
 
-impl<K, V, L: GroupLayout> ExactSizeIterator for IntoIter<K, V, L> {}
-impl<K, V, L: GroupLayout> std::iter::FusedIterator for IntoIter<K, V, L> {}
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> ExactSizeIterator for IntoIter<K, V, L, S> {}
+impl<K, V, L: GroupLayout, S: KvStorage<K, V>> std::iter::FusedIterator for IntoIter<K, V, L, S> {}
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -926,8 +901,9 @@ mod tests {
         assert_eq!(table.len(), 1);
 
         let h = hash::hash_no_mix(&42u64, &hb);
-        let bucket = table.find_bucket(h, |k| *k == 42).unwrap();
-        assert_eq!(unsafe { &*bucket }, &(42, 100));
+        let (gi, si) = table.find_by_hash(h, |k| *k == 42).unwrap();
+        assert_eq!(unsafe { *table.key_ptr(gi, si) }, 42);
+        assert_eq!(unsafe { *table.value_ptr(gi, si) }, 100);
 
         assert_eq!(table.insert_or_replace(42, 200, &hb), Some(100));
         assert_eq!(table.len(), 1);
@@ -947,8 +923,8 @@ mod tests {
         assert_eq!(table.len(), 200);
         for i in 0..200 {
             let h = hash::hash_no_mix(&i, &hb);
-            let bucket = table.find_bucket(h, |k| *k == i).unwrap();
-            assert_eq!(unsafe { (*bucket).1 }, i * 10);
+            let (gi, si) = table.find_by_hash(h, |k| *k == i).unwrap();
+            assert_eq!(unsafe { *table.value_ptr(gi, si) }, i * 10);
         }
     }
 
@@ -962,7 +938,7 @@ mod tests {
         assert_eq!(cloned.len(), 50);
         for i in 0..50 {
             let h = hash::hash_no_mix(&i, &hb);
-            assert!(cloned.find_bucket(h, |k| *k == i).is_some());
+            assert!(cloned.find_by_hash(h, |k| *k == i).is_some());
         }
     }
 

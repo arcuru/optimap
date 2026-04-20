@@ -1,6 +1,7 @@
 use optimap::{
     Gaps, InPlaceOverflow, Map, OccupiedError, Splitsies, UnorderedFlatMap, IPO64,
 };
+use optimap::matrix_types::{Hi128_Tomb64Map, Top128_Tomb64Map};
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -198,5 +199,15 @@ proptest! {
     #[test]
     fn gaps_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
         run_differential::<Gaps<u16, u16>>(&ops);
+    }
+
+    #[test]
+    fn ipo64_hi128_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
+        run_differential::<Hi128_Tomb64Map<u16, u16>>(&ops);
+    }
+
+    #[test]
+    fn ipo64_top128_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
+        run_differential::<Top128_Tomb64Map<u16, u16>>(&ops);
     }
 }

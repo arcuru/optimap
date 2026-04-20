@@ -102,8 +102,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
-        Some(unsafe { &(*bucket).1 })
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        Some(unsafe { &*self.table.value_ptr(gi, si) })
     }
 
     #[inline]
@@ -113,9 +113,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
-        let bucket = unsafe { &*bucket };
-        Some((&bucket.0, &bucket.1))
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        unsafe { Some((&*self.table.key_ptr(gi, si), &*self.table.value_ptr(gi, si))) }
     }
 
     #[inline]
@@ -125,8 +124,8 @@ where
         Q: Hash + Eq + ?Sized,
     {
         let h = self.hash_key(key);
-        let bucket = self.table.find_bucket(h, |k| k.borrow() == key)?;
-        Some(unsafe { &mut (*bucket).1 })
+        let (gi, si) = self.table.find_by_hash(h, |k| k.borrow() == key)?;
+        Some(unsafe { &mut *self.table.value_ptr(gi, si) })
     }
 
     #[inline]
@@ -176,10 +175,10 @@ where
 
         match self.table.find_for_entry(h, &key) {
             EntryProbe::Found(gi, si) => {
-                let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
+                let value = unsafe { &mut *self.table.value_ptr(gi, si) };
                 Entry::Occupied(OccupiedEntry {
                     key,
-                    value: &mut bucket.1,
+                    value,
                 })
             }
             EntryProbe::Vacant(slot) => Entry::Vacant(VacantEntry {
@@ -231,11 +230,13 @@ where
 
         let positions = self.table.occupied_positions();
         for (gi, si) in positions {
-            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-            if !f(&bucket.0, &mut bucket.1) {
-                let h = self.hash_key(&bucket.0);
+            let key = unsafe { &*self.table.key_ptr(gi, si) };
+            let value = unsafe { &mut *self.table.value_ptr(gi, si) };
+            if !f(key, value) {
+                let h = self.hash_key(key);
                 unsafe {
-                    ptr::drop_in_place(bucket);
+                    ptr::drop_in_place(self.table.key_ptr(gi, si) as *mut K);
+                    ptr::drop_in_place(self.table.value_ptr(gi, si));
                     self.table.erase_slot(h, gi, si);
                 }
             }
@@ -378,13 +379,11 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher, R: RawTableApi<K, V>> VacantEntry<'a, 
         if let Some((gi, si, full_mask)) = self.slot {
             self.table
                 .insert_at(self.hash, gi, si, self.key, value, full_mask);
-            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-            &mut bucket.1
+            unsafe { &mut *self.table.value_ptr(gi, si) }
         } else {
             self.table.ensure_capacity(self.hash_builder);
             let (gi, si) = self.table.insert_no_check(self.hash, self.key, value);
-            let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-            &mut bucket.1
+            unsafe { &mut *self.table.value_ptr(gi, si) }
         }
     }
 
@@ -409,8 +408,7 @@ impl<'a, K: 'a, V: 'a, R: RawTableApi<K, V> + 'a> Iterator for Iter<'a, K, V, R>
 
     fn next(&mut self) -> Option<Self::Item> {
         let (gi, si) = self.inner.next()?;
-        let bucket = unsafe { &*self.table.bucket_ptr(gi, si) };
-        Some((&bucket.0, &bucket.1))
+        unsafe { Some((&*self.table.key_ptr(gi, si), &*self.table.value_ptr(gi, si))) }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -430,8 +428,7 @@ impl<'a, K: 'a, V: 'a, R: RawTableApi<K, V> + 'a> Iterator for IterMut<'a, K, V,
 
     fn next(&mut self) -> Option<Self::Item> {
         let (gi, si) = self.inner.next()?;
-        let bucket = unsafe { &mut *self.table.bucket_ptr(gi, si) };
-        Some((&bucket.0, &mut bucket.1))
+        unsafe { Some((&*self.table.key_ptr(gi, si), &mut *self.table.value_ptr(gi, si))) }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

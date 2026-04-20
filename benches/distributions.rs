@@ -19,7 +19,7 @@ use criterion::{
     measurement::WallTime,
 };
 
-use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
+use optimap::{InPlaceOverflow, Map, SoaMap, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 
@@ -405,6 +405,11 @@ macro_rules! bench_value_size {
             hb.insert(k, val);
         }
 
+        let mut soa: SoaMap<u64, $val_type> = SoaMap::with_capacity($capacity);
+        for &k in &keys {
+            soa.insert(k, val);
+        }
+
         // Insert (clear + refill)
         $group.bench_with_input(
             BenchmarkId::new(format!("UFM_insert_{}", $name), keys.len()),
@@ -448,6 +453,20 @@ macro_rules! bench_value_size {
             },
         );
 
+        $group.bench_with_input(
+            BenchmarkId::new(format!("SoaMap_insert_{}", $name), keys.len()),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    soa.clear();
+                    for &k in keys.iter() {
+                        soa.insert(k, val);
+                    }
+                    black_box(soa.len());
+                });
+            },
+        );
+
         // Lookup hit
         $group.bench_with_input(
             BenchmarkId::new(format!("UFM_hit_{}", $name), keys.len()),
@@ -485,6 +504,20 @@ macro_rules! bench_value_size {
                     let mut sum = 0u64;
                     for &k in keys {
                         sum = sum.wrapping_add(hb.get(&k).map(|v| v[0] as u64).unwrap_or(0));
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        $group.bench_with_input(
+            BenchmarkId::new(format!("SoaMap_hit_{}", $name), keys.len()),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for &k in keys {
+                        sum = sum.wrapping_add(soa.get(&k).map(|v| v[0] as u64).unwrap_or(0));
                     }
                     black_box(sum);
                 });

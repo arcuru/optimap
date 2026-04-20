@@ -103,7 +103,9 @@ effective at finding bugs than random testing, but requires longer runs.
 | `fuzz_hashmap_ufm` | UnorderedFlatMap vs HashMap | `u16` |
 | `fuzz_hashmap_splitsies` | Splitsies vs HashMap | `u16` |
 | `fuzz_hashmap_ipo` | InPlaceOverflow vs HashMap | `u16` |
-| `fuzz_hashmap_ipo64` | IPO64 vs HashMap | `u16` |
+| `fuzz_hashmap_ipo64` | IPO64 (LowByte254) vs HashMap | `u16` |
+| `fuzz_hashmap_ipo64_hi128` | IPO64 (HighByte128) vs HashMap | `u16` |
+| `fuzz_hashmap_ipo64_top128` | IPO64 (TopByte128) vs HashMap | `u16` |
 | `fuzz_hashmap_gaps` | Gaps vs HashMap | `u16` |
 | `fuzz_btree` | FlatBTree vs BTreeMap | `u8` |
 

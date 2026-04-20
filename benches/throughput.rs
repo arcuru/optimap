@@ -75,6 +75,24 @@ macro_rules! all_maps {
         // Tombstone variant
         $helper::<Hi128_TombMap<u64, u64>>($group, "Hi128_Tomb", $($args),*);
         $helper::<Top128_TombMap<u64, u64>>($group, "Top128_Tomb", $($args),*);
+        // IPO64 tombstone variants
+        $helper::<Hi128_Tomb64Map<u64, u64>>($group, "Hi128_Tomb64", $($args),*);
+        $helper::<Top128_Tomb64Map<u64, u64>>($group, "Top128_Tomb64", $($args),*);
+        // SoA variants
+        $helper::<optimap::SoaMap<u64, u64>>($group, "SoaMap", $($args),*);
+        $helper::<optimap::soa::SoaLo128<u64, u64>>($group, "SoaLo128", $($args),*);
+        $helper::<optimap::soa::SoaHi8<u64, u64>>($group, "SoaHi8", $($args),*);
+        $helper::<optimap::soa::SoaLo8_1bit<u64, u64>>($group, "SoaLo8_1bit", $($args),*);
+        $helper::<optimap::soa::SoaHi8_1bit<u64, u64>>($group, "SoaHi8_1bit", $($args),*);
+        $helper::<optimap::soa::SoaLo128_1bit<u64, u64>>($group, "SoaLo128_1bit", $($args),*);
+        $helper::<optimap::soa::SoaTop128And<u64, u64>>($group, "SoaTop128And", $($args),*);
+        $helper::<optimap::soa::SoaTop255And<u64, u64>>($group, "SoaTop255And", $($args),*);
+        $helper::<optimap::soa::SoaTop128_8bitAnd<u64, u64>>($group, "SoaTop128_8bitAnd", $($args),*);
+        $helper::<optimap::soa::SoaTop255_8bitAnd<u64, u64>>($group, "SoaTop255_8bitAnd", $($args),*);
+        // SoA tombstone variants
+        $helper::<optimap::soa::SoaIpo<u64, u64>>($group, "SoaIpo", $($args),*);
+        $helper::<optimap::soa::SoaHi128_Tomb<u64, u64>>($group, "SoaHi128_Tomb", $($args),*);
+        $helper::<optimap::soa::SoaTop128_Tomb<u64, u64>>($group, "SoaTop128_Tomb", $($args),*);
     };
 }
 

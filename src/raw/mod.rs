@@ -3,6 +3,7 @@ pub mod generic_group;
 pub mod group;
 pub mod group_layout;
 pub mod hash;
+pub mod kv_storage;
 pub mod overflow_strategy;
 pub mod overflow_table;
 pub mod table_api;

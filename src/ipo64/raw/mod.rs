@@ -6,7 +6,8 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use crate::raw::hash;
-use group::{BitMask64, EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE, reduced_hash};
+use crate::raw::tag_strategy::{LowByte254, TombstoneTag};
+use group::{BitMask64, EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE};
 
 /// 64-byte all-zeros sentinel for unallocated tables.
 /// Avoids a branch on every lookup for unallocated tables.
@@ -41,7 +42,7 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 ///   - metadata: `num_groups * 64` bytes, 64-byte aligned
 ///   - (padding to bucket alignment)
 ///   - buckets: `num_groups * 64 * sizeof((K,V))`
-pub struct RawTable<K, V> {
+pub struct RawTable<K, V, T: TombstoneTag = LowByte254> {
     /// num_groups - 1. Used directly for probe wraparound and group_index masking.
     pub(crate) mask: usize,
     pub(crate) metadata: *mut u8,
@@ -51,10 +52,10 @@ pub struct RawTable<K, V> {
     pub(crate) growth_left: usize,
     /// group_index = hash >> shift. For num_groups=1, shift=64.
     pub(crate) shift: u32,
-    _marker: PhantomData<(K, V)>,
+    _marker: PhantomData<(K, V, T)>,
 }
 
-impl<K, V> RawTable<K, V> {
+impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     pub fn new() -> Self {
         RawTable {
             mask: 0,
@@ -246,7 +247,7 @@ impl<K, V> RawTable<K, V> {
         F: Fn(&K) -> bool,
     {
         unsafe {
-            let reduced = reduced_hash(h);
+            let reduced = T::reduced_hash(h);
             let mut gi = self.group_index(h);
             let mut probe = 0usize;
             loop {
@@ -277,7 +278,7 @@ impl<K, V> RawTable<K, V> {
         F: Fn(&K) -> bool,
     {
         unsafe {
-            let reduced = reduced_hash(h);
+            let reduced = T::reduced_hash(h);
             let mut gi = self.group_index(h);
             let mut probe = 0usize;
             loop {
@@ -306,7 +307,7 @@ impl<K, V> RawTable<K, V> {
         F: Fn(&K) -> bool,
     {
         unsafe {
-            let reduced = reduced_hash(h);
+            let reduced = T::reduced_hash(h);
             let mut gi = self.group_index(h);
             let mut probe = 0usize;
             loop {
@@ -362,7 +363,7 @@ impl<K, V> RawTable<K, V> {
     /// Probes until an EMPTY slot is found, tracking the first tombstone seen.
     #[inline(always)]
     pub(crate) fn insert_no_check(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
-        let reduced = reduced_hash(h);
+        let reduced = T::reduced_hash(h);
         let mut gi = self.group_index(h);
         let mut probe = 0usize;
         let mut first_tombstone: Option<(usize, usize)> = None;
@@ -412,7 +413,7 @@ impl<K, V> RawTable<K, V> {
     where
         F: Fn(&K) -> bool,
     {
-        let reduced = reduced_hash(h);
+        let reduced = T::reduced_hash(h);
         let gi = self.group_index(h);
 
         // Home group fast path
@@ -511,7 +512,7 @@ impl<K, V> RawTable<K, V> {
         value: V,
         _full_mask: u8,
     ) {
-        let reduced = reduced_hash(h);
+        let reduced = T::reduced_hash(h);
 
         unsafe {
             let meta = self.meta_ptr(gi);
@@ -686,7 +687,7 @@ impl<K, V> RawTable<K, V> {
     }
 
     /// Iterate over all occupied slots using SIMD to skip empty/tombstone groups.
-    pub fn iter_slots(&self) -> SlotIter<'_, K, V> {
+    pub fn iter_slots(&self) -> SlotIter<'_, K, V, T> {
         SlotIter {
             table: self,
             group: 0,
@@ -699,7 +700,7 @@ impl<K, V> RawTable<K, V> {
     }
 }
 
-impl<K, V> Drop for RawTable<K, V> {
+impl<K, V, T: TombstoneTag> Drop for RawTable<K, V, T> {
     fn drop(&mut self) {
         if !self.is_allocated() {
             return;
@@ -720,10 +721,10 @@ impl<K, V> Drop for RawTable<K, V> {
     }
 }
 
-unsafe impl<K: Send, V: Send> Send for RawTable<K, V> {}
-unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
+unsafe impl<K: Send, V: Send, T: TombstoneTag> Send for RawTable<K, V, T> {}
+unsafe impl<K: Sync, V: Sync, T: TombstoneTag> Sync for RawTable<K, V, T> {}
 
-impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
+impl<K: Clone, V: Clone, T: TombstoneTag> Clone for RawTable<K, V, T> {
     fn clone(&self) -> Self {
         if !self.is_allocated() {
             return Self::new();
@@ -756,13 +757,13 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
 }
 
 /// SIMD-accelerated iterator over occupied slot positions.
-pub struct SlotIter<'a, K, V> {
-    pub(crate) table: &'a RawTable<K, V>,
+pub struct SlotIter<'a, K, V, T: TombstoneTag = LowByte254> {
+    pub(crate) table: &'a RawTable<K, V, T>,
     group: usize,
     current_mask: BitMask64,
 }
 
-impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
+impl<'a, K, V, T: TombstoneTag> Iterator for SlotIter<'a, K, V, T> {
     type Item = (usize, usize);
 
     #[inline]
@@ -786,13 +787,13 @@ impl<'a, K, V> Iterator for SlotIter<'a, K, V> {
 
 // ── IntoIter ───────────────────────────────────────────────────────────────
 
-pub struct IntoIter<K, V> {
-    table: RawTable<K, V>,
+pub struct IntoIter<K, V, T: TombstoneTag = LowByte254> {
+    table: RawTable<K, V, T>,
     group: usize,
     current_mask: BitMask64,
 }
 
-impl<K, V> Iterator for IntoIter<K, V> {
+impl<K, V, T: TombstoneTag> Iterator for IntoIter<K, V, T> {
     type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -823,16 +824,16 @@ impl<K, V> Iterator for IntoIter<K, V> {
     }
 }
 
-impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
-impl<K, V> std::iter::FusedIterator for IntoIter<K, V> {}
+impl<K, V, T: TombstoneTag> ExactSizeIterator for IntoIter<K, V, T> {}
+impl<K, V, T: TombstoneTag> std::iter::FusedIterator for IntoIter<K, V, T> {}
 
 // ── RawTableApi ────────────────────────────────────────────────────────────
 
 use crate::raw::table_api::{EntryProbe, RawTableApi};
 
-impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
-    type SlotIter<'a> = SlotIter<'a, K, V> where K: 'a, V: 'a;
-    type IntoIter = IntoIter<K, V>;
+impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
+    type SlotIter<'a> = SlotIter<'a, K, V, T> where K: 'a, V: 'a;
+    type IntoIter = IntoIter<K, V, T>;
 
     fn new() -> Self { RawTable::new() }
     fn with_capacity(cap: usize) -> Self { RawTable::with_capacity(cap) }
@@ -858,13 +859,13 @@ impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
     fn clear(&mut self) { self.clear(); }
 
     #[inline(always)]
-    unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
-        unsafe { self.bucket_ptr(gi, si) }
+    unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K {
+        unsafe { &(*self.bucket_ptr(gi, si)).0 }
     }
 
     #[inline(always)]
-    fn find_bucket<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<*mut (K, V)> {
-        self.find_bucket(h, eq)
+    unsafe fn value_ptr(&self, gi: usize, si: usize) -> *mut V {
+        unsafe { &raw mut (*self.bucket_ptr(gi, si)).1 }
     }
 
     #[inline(always)]
@@ -890,7 +891,7 @@ impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
             return None;
         }
 
-        let reduced = reduced_hash(h);
+        let reduced = T::reduced_hash(h);
         let gi = self.group_index(h);
         let meta = unsafe { self.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
@@ -933,7 +934,7 @@ impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
             return EntryProbe::Vacant(None);
         }
 
-        let reduced = reduced_hash(h);
+        let reduced = T::reduced_hash(h);
         let gi = self.group_index(h);
         let meta = unsafe { self.meta_ptr(gi) };
         let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
@@ -1017,9 +1018,9 @@ impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
         self.rehash_with(new_num_groups, hb);
     }
 
-    fn iter_slots(&self) -> SlotIter<'_, K, V> { self.iter_slots() }
+    fn iter_slots(&self) -> SlotIter<'_, K, V, T> { self.iter_slots() }
 
-    fn into_iter_impl(self) -> IntoIter<K, V> {
+    fn into_iter_impl(self) -> IntoIter<K, V, T> {
         let mask = if !self.is_allocated() {
             BitMask64(0)
         } else {
@@ -1030,7 +1031,7 @@ impl<K, V> RawTableApi<K, V> for RawTable<K, V> {
         IntoIter { table, group: 0, current_mask: mask }
     }
 
-    fn drain_impl(&mut self) -> IntoIter<K, V> {
+    fn drain_impl(&mut self) -> IntoIter<K, V, T> {
         let table = std::mem::replace(self, Self::new());
         table.into_iter_impl()
     }

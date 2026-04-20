@@ -213,6 +213,7 @@ mod opti_sorted;
 pub mod optimap;
 pub mod raw;
 mod set;
+pub mod soa;
 pub mod split_overflow;
 mod traits;
 
@@ -224,6 +225,10 @@ pub use in_place_overflow::InPlaceOverflow;
 pub use ipo64::IPO64;
 pub use map::UnorderedFlatMap;
 pub use split_overflow::Splitsies;
+
+// ── SoA (Structure-of-Arrays) map types ───────────────────────────────────
+
+pub use soa::SoaMap;
 
 // ── Smart wrapper ──────────────────────────────────────────────────────────
 
@@ -281,6 +286,12 @@ pub mod matrix_types {
     pub type Top128_TombMap<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, crate::in_place_overflow::raw::RawTable<K, V, TopByte128>>;
 
+    // IPO64 tombstone variants — different tag strategies on 64-slot groups
+    pub type Hi128_Tomb64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, crate::ipo64::raw::RawTable<K, V, HighByte128>>;
+    pub type Top128_Tomb64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, crate::ipo64::raw::RawTable<K, V, TopByte128>>;
+
     crate::traits::impl_map_trait!(Hi8_8bitMap);
     crate::traits::impl_map_trait!(Lo128_8bitMap);
     crate::traits::impl_map_trait!(Lo8_1bitMap);
@@ -292,6 +303,8 @@ pub mod matrix_types {
     crate::traits::impl_map_trait!(Top255_8bitAndMap);
     crate::traits::impl_map_trait!(Hi128_TombMap);
     crate::traits::impl_map_trait!(Top128_TombMap);
+    crate::traits::impl_map_trait!(Hi128_Tomb64Map);
+    crate::traits::impl_map_trait!(Top128_Tomb64Map);
 }
 
 // ── Traits ──────────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ thoroughly investigated and proven unproductive — see
 | Load factor as type parameter | `LOAD_FACTOR_NUM`/`LOAD_FACTOR_DEN` constants on `GroupLayout` (default 7/8). Overflow-bit designs derive growth thresholds from the layout. Custom layouts can override to tune memory/speed trade-off. |
 | Mid-pointer for 15-slot designs | Already implemented — UFM and Gaps share `overflow_table::RawTable<K,V,L>` which uses mid-pointer layout. Embedded overflow at byte 15 means exactly 2 memory regions, same as tombstone designs. |
 | Borrow indirection in insert/entry | Investigated: already eliminated. Insert hot path uses `bucket.0 == key` directly. Cold fallback closures produce identical codegen via `#[inline(always)]` monomorphization. Added `find_by_hash_eq` wrapper for clarity, no perf impact. |
+| Key-value separation (SoA layout) | `SoaRawTable<K,V,L>` + `SoaGenericMap` with separate key/value arrays. 7 matrix variants. Mid-pointer for keys, values after metadata+overflow. At 10K entries: competitive with Splitsies (32µs vs 31µs hit, 142µs vs 133µs insert for 256B values). Key-only probing may show more benefit at larger table sizes. |
 
 ## Open — Hash Maps
 
@@ -59,24 +60,31 @@ thoroughly investigated and proven unproductive — see
 These explore new axes in the parameterized design matrix. Each is a new
 composition of existing traits or a small trait extension.
 
-#### Key-value separation (SoA layout)
+#### Group size parameterization for overflow-bit designs
 
-**Difficulty**: Medium — new RawTable variant or GroupLayout axis \
-**Expected impact**: Potentially large for big-value workloads
+**Difficulty**: Medium — extend `GroupLayout` or new `RawTable` variants \
+**Expected impact**: Unknown — needs benchmarking
 
-Store keys and values in separate arrays instead of interleaved `(K, V)`
-tuples. On the hit path, the key comparison only touches the key array —
-value bytes don't pollute the cache line.
+IPO64 demonstrated that 64-slot groups trade per-probe cost for fewer
+probe steps at high load. The same idea applies to the overflow-bit
+family: what if Splitsies, UFM, or Gaps used 32-slot or 64-slot groups
+instead of 15/16?
 
-For `HashMap<u64, [u8; 256]>`, interleaved layout pulls 264 bytes per
-slot into cache just to compare an 8-byte key. SoA layout only pulls
-8 bytes for the key comparison, then fetches the 256-byte value only
-on match.
+Currently only the tombstone family has been explored at multiple group
+sizes (IPO16 vs IPO64). The overflow-bit designs are locked to 15-slot
+(UFM, Gaps) or 16-slot (Splitsies, matrix variants). Experimenting with
+larger groups would reveal whether the overflow-bit miss-termination
+advantage scales differently than tombstone-based probe termination at
+larger group widths.
 
-Trade-off: two memory regions to address on hit (key then value) vs one.
-Wins when `sizeof(V) > cache_line - sizeof(K)` (~56 bytes for u64 keys).
-Needs investigation for the common small-KV case where interleaved
-already fits in one cache line.
+Concrete experiments:
+- 32-slot overflow-bit groups (AVX2: single `vpcmpeqb ymm` for tag match)
+- 64-slot overflow-bit groups (AVX-512, matching IPO64's approach)
+- Both with 1-bit and 8-bit overflow strategies
+- AND vs shift indexing at each size
+
+The tag × overflow × group-size × indexing matrix is large; sweep
+benchmarks would be the right tool to compare them.
 
 #### 32-slot AVX2 groups
 

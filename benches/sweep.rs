@@ -343,6 +343,24 @@ macro_rules! for_each_design {
         // Tombstone variant
         for_each_design!(@run $config, $callback, Hi128_TombMap<u64,u64>, "Hi128_Tomb" $(, $arg)*);
         for_each_design!(@run $config, $callback, Top128_TombMap<u64,u64>, "Top128_Tomb" $(, $arg)*);
+        // IPO64 tombstone variants
+        for_each_design!(@run $config, $callback, Hi128_Tomb64Map<u64,u64>, "Hi128_Tomb64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_Tomb64Map<u64,u64>, "Top128_Tomb64" $(, $arg)*);
+        // SoA variants
+        for_each_design!(@run $config, $callback, optimap::SoaMap<u64,u64>, "SoaMap" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLo128<u64,u64>, "SoaLo128" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHi8<u64,u64>, "SoaHi8" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLo8_1bit<u64,u64>, "SoaLo8_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHi8_1bit<u64,u64>, "SoaHi8_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLo128_1bit<u64,u64>, "SoaLo128_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaTop128And<u64,u64>, "SoaTop128And" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaTop255And<u64,u64>, "SoaTop255And" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaTop128_8bitAnd<u64,u64>, "SoaTop128_8bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaTop255_8bitAnd<u64,u64>, "SoaTop255_8bitAnd" $(, $arg)*);
+        // SoA tombstone variants
+        for_each_design!(@run $config, $callback, optimap::soa::SoaIpo<u64,u64>, "SoaIpo" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHi128_Tomb<u64,u64>, "SoaHi128_Tomb" $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaTop128_Tomb<u64,u64>, "SoaTop128_Tomb" $(, $arg)*);
     };
     (@run $config:expr, $callback:ident, $ty:ty, $name:expr $(, $arg:expr)*) => {
         if $config.filter_design.as_ref().is_none_or(|f| f.eq_ignore_ascii_case($name)) {

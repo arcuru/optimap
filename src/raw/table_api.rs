@@ -54,18 +54,21 @@ pub trait RawTableApi<K, V>: Sized {
 
     fn clear(&mut self);
 
-    // ── Bucket access ──────────────────────────────────────────────────────
+    // ── Slot access ────────────────────────────────────────────────────────
 
-    /// Pointer to the bucket at (group_index, slot_index).
+    /// Pointer to the key at (group_index, slot_index).
     ///
     /// # Safety
     /// `gi` and `si` must be within bounds of an allocated table.
-    unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V);
+    unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K;
+
+    /// Pointer to the value at (group_index, slot_index).
+    ///
+    /// # Safety
+    /// `gi` and `si` must be within bounds of an allocated table.
+    unsafe fn value_ptr(&self, gi: usize, si: usize) -> *mut V;
 
     // ── Lookups ────────────────────────────────────────────────────────────
-
-    /// Find a key, returning a pointer to its bucket.
-    fn find_bucket<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<*mut (K, V)>;
 
     /// Find a key, returning its (group_index, slot_index).
     fn find_by_hash<F: Fn(&K) -> bool>(&self, h: u64, eq: F) -> Option<(usize, usize)>;

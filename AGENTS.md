@@ -14,6 +14,7 @@ with different performance trade-offs, benchmarked against hashbrown (Rust's std
 | **InPlaceOverflow** | 16-slot Swiss-table style | Lookup hit, insert |
 | **IPO64** | 64-slot cache-line, AVX-512 | Specialty: high-load resilience |
 | **Gaps** | 15-slot + power-of-2 buckets | Iteration |
+| **SoaMap** | Separate key/value arrays (SoA) | Large-value workloads |
 | **FlatBTree** | 256-byte B+ tree nodes | Sorted iteration, range queries |
 
 ## Build & Test
@@ -41,9 +42,10 @@ Hash map designs split into two families based on deletion strategy:
 - Deletion clears the slot and adjusts max_load — no tombstones
 - Generic `RawTable<K,V,L: GroupLayout>` in `src/raw/overflow_table.rs`
 
-**Tombstone family**: InPlaceOverflow (IPO), Hi128_Tomb, Top128_Tomb
+**Tombstone family**: InPlaceOverflow (IPO), IPO64, Hi128_Tomb, Top128_Tomb, Hi128_Tomb64, Top128_Tomb64
 - Tombstones for deletion, EMPTY-based probe termination (like hashbrown)
 - IPO's `RawTable<K,V,T: TombstoneTag>` in `src/in_place_overflow/raw/mod.rs`
+- IPO64's `RawTable<K,V,T: TombstoneTag>` in `src/ipo64/raw/mod.rs`
 
 Both families use the **mid-pointer memory layout**: a single `ctrl` pointer
 sits between buckets (backward) and metadata (forward). This eliminates a
@@ -89,8 +91,9 @@ AND group index.
   - `set.rs` — UnorderedFlatSet (hand-tuned set with SIMD fast-path)
   - `split_overflow/` — `Splitsies` type alias (= `GenericMap` + `SplitsiesLayout`)
   - `in_place_overflow/` — InPlaceOverflow (own RawTable + TombstoneTag, mid-pointer layout)
-  - `ipo64/` — IPO64 (own RawTable + RawTableApi impl, GenericMap alias)
+  - `ipo64/` — IPO64 (own RawTable + TombstoneTag + RawTableApi impl, GenericMap alias)
   - `gaps/` — `Gaps` type alias (= `GenericMap` + `GapsLayout`)
+  - `soa/` — SoA layout: `SoaRawTable<K,V,L>` + `SoaGenericMap` (separate key/value arrays)
   - `flat_btree/` — FlatBTree (B+ tree, independent architecture)
   - `traits.rs` — `Map`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std
   - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any Map via `Map<T, ()>`)

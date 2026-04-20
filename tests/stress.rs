@@ -1,4 +1,4 @@
-use optimap::{UnorderedFlatMap, UnorderedFlatSet};
+use optimap::{SoaMap, UnorderedFlatMap, UnorderedFlatSet};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
@@ -298,6 +298,70 @@ fn borrow_string_str() {
     assert!(!set.contains("gamma"));
     assert!(set.remove("alpha"));
     assert!(!set.contains("alpha"));
+}
+
+/// SoA map matches std::collections::HashMap for correctness.
+#[test]
+fn soa_map_matches_std_hashmap() {
+    let mut rng = StdRng::seed_from_u64(0x50A_BEEF);
+    let mut ours = SoaMap::new();
+    let mut std_map = HashMap::new();
+
+    for _ in 0..10_000 {
+        let op = rng.gen_range(0..3);
+        let key = rng.gen_range(0..500i32);
+        let value = rng.gen_range(0..10000i32);
+
+        match op {
+            0 => {
+                let ours_old = ours.insert(key, value);
+                let std_old = std_map.insert(key, value);
+                assert_eq!(ours_old, std_old, "insert mismatch for key={key}");
+            }
+            1 => {
+                let ours_removed = ours.remove(&key);
+                let std_removed = std_map.remove(&key);
+                assert_eq!(ours_removed, std_removed, "remove mismatch for key={key}");
+            }
+            2 => {
+                let ours_val = ours.get(&key);
+                let std_val = std_map.get(&key);
+                assert_eq!(ours_val, std_val, "get mismatch for key={key}");
+            }
+            _ => unreachable!(),
+        }
+
+        assert_eq!(ours.len(), std_map.len(), "length mismatch");
+    }
+
+    for (k, v) in &std_map {
+        assert_eq!(ours.get(k), Some(v), "final check: key {k} missing or wrong");
+    }
+}
+
+/// SoA map with large values (the main use case).
+#[test]
+fn soa_large_values() {
+    let mut map: SoaMap<u64, [u8; 256]> = SoaMap::new();
+    for i in 0..1000u64 {
+        let mut val = [0u8; 256];
+        val[0] = (i & 0xFF) as u8;
+        val[255] = ((i >> 8) & 0xFF) as u8;
+        map.insert(i, val);
+    }
+    assert_eq!(map.len(), 1000);
+
+    for i in 0..1000u64 {
+        let val = map.get(&i).unwrap();
+        assert_eq!(val[0], (i & 0xFF) as u8);
+        assert_eq!(val[255], ((i >> 8) & 0xFF) as u8);
+    }
+
+    // Remove half
+    for i in (0..1000u64).step_by(2) {
+        map.remove(&i);
+    }
+    assert_eq!(map.len(), 500);
 }
 
 /// Test large capacity to exercise multiple rehashes.

@@ -23,14 +23,6 @@ pub const EMPTY: u8 = 0x00;
 /// Metadata byte: slot was occupied but has been deleted.
 pub const TOMBSTONE: u8 = 0x01;
 
-/// Compute the reduced hash value from the low byte of a hash.
-/// Maps to range [2, 255]. Values 0 (EMPTY) and 1 (TOMBSTONE) are reserved.
-#[inline(always)]
-pub fn reduced_hash(h: u64) -> u8 {
-    let low = (h & 0xFF) as u8;
-    if low < 2 { low + 2 } else { low }
-}
-
 /// 64-bit bitmask for 64-slot groups.
 #[derive(Clone, Copy, Debug)]
 pub struct BitMask64(pub u64);
