@@ -262,6 +262,18 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         }
     }
 
+    /// Like `find_by_hash_impl` but compares with `K::eq` directly (no closure).
+    ///
+    /// Used by insert/entry paths where we already have an owned `K`
+    /// and don't need Borrow indirection.
+    #[inline(always)]
+    fn find_by_hash_eq(&self, h: u64, key: &K) -> Option<(usize, usize)>
+    where
+        K: Eq,
+    {
+        self.find_by_hash_impl(h, |k| k == key)
+    }
+
     // ── Insert ─────────────────────────────────────────────────────
 
     #[inline(always)]
@@ -482,7 +494,7 @@ impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
         value: V,
         hb: &S,
     ) -> Option<V> {
-        if let Some((gi, si)) = self.find_by_hash_impl(h, |k| k == &key) {
+        if let Some((gi, si)) = self.find_by_hash_eq(h, &key) {
             let bucket = unsafe { &mut *self.bucket_ptr_impl(gi, si) };
             return Some(std::mem::replace(&mut bucket.1, value));
         }
@@ -502,7 +514,7 @@ impl<K: Hash + Eq, V, L: GroupLayout> RawTable<K, V, L> {
         value: V,
         hb: &S,
     ) -> Option<V> {
-        if let Some((gi, si)) = self.find_by_hash_impl(h, |k| k == &key) {
+        if let Some((gi, si)) = self.find_by_hash_eq(h, &key) {
             let bucket = unsafe { &mut *self.bucket_ptr_impl(gi, si) };
             return Some(std::mem::replace(&mut bucket.1, value));
         }
@@ -642,7 +654,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
         K: Eq,
     {
         if self.len >= self.max_load {
-            if let Some((gi, si)) = self.find_by_hash_impl(h, |k| k == key) {
+            if let Some((gi, si)) = self.find_by_hash_eq(h, key) {
                 return EntryProbe::Found(gi, si);
             }
             return EntryProbe::Vacant(None);
