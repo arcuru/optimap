@@ -18,13 +18,10 @@ use super::overflow_strategy::OverflowStrategy;
 use super::table_api::{EntryProbe, RawTableApi};
 use super::tag_strategy::TagStrategy;
 
-/// Maximum load factor (fixed at 7/8 = 0.875).
-const MAX_LOAD_FACTOR_NUM: usize = 7;
-const MAX_LOAD_FACTOR_DEN: usize = 8;
-
+/// Compute max load for a given slot capacity and load factor.
 #[inline(always)]
-fn max_load_for_capacity(capacity: usize) -> usize {
-    capacity * MAX_LOAD_FACTOR_NUM / MAX_LOAD_FACTOR_DEN
+fn max_load_for_capacity(capacity: usize, num: usize, den: usize) -> usize {
+    capacity * num / den
 }
 
 /// Static sentinel for empty tables. Sized for the largest layout (32 bytes).
@@ -153,7 +150,7 @@ impl<K, V, L: GroupLayout> RawTable<K, V, L> {
         }
 
         self.mask = num_groups - 1;
-        self.max_load = max_load_for_capacity(total_buckets);
+        self.max_load = max_load_for_capacity(total_buckets, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
         self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
 
@@ -562,7 +559,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
     fn num_groups(&self) -> usize { self.mask + 1 }
 
     fn groups_for_capacity(capacity: usize) -> usize {
-        let min_slots = (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
+        let min_slots = (capacity * L::LOAD_FACTOR_DEN + L::LOAD_FACTOR_NUM - 1) / L::LOAD_FACTOR_NUM;
         let min_groups = (min_slots + L::GROUP_SIZE - 1) / L::GROUP_SIZE;
         min_groups.next_power_of_two()
     }
@@ -581,7 +578,7 @@ impl<K, V, L: GroupLayout> RawTableApi<K, V> for RawTable<K, V, L> {
             ptr::write_bytes(self.ctrl, 0, (self.mask + 1) * 16 + L::Overflow::overflow_bytes_to_zero(self.mask + 1));
         }
         self.len = 0;
-        self.max_load = max_load_for_capacity((self.mask + 1) * L::GROUP_SIZE);
+        self.max_load = max_load_for_capacity((self.mask + 1) * L::GROUP_SIZE, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
     }
 
     #[inline(always)]
@@ -1025,4 +1022,101 @@ mod tests {
     #[test] fn top255_8bit_and_grow() { test_grow::<Top255_8bitAnd>(); }
     #[test] fn top255_8bit_and_clone() { test_clone::<Top255_8bitAnd>(); }
     #[test] fn top255_8bit_and_into_iter() { test_into_iter::<Top255_8bitAnd>(); }
+
+    // ── Custom load factor tests ──────────────────────────────────────────
+
+    use crate::raw::generic_group::Group;
+    use crate::raw::overflow_strategy::ByteSeparate;
+    use crate::raw::tag_strategy::LowByte255;
+
+    /// 50% load factor layout for testing early growth.
+    #[derive(Clone, Copy)]
+    struct HalfLoadLayout;
+    impl GroupLayout for HalfLoadLayout {
+        type Grp = Group<0xFFFF>;
+        type Tag = LowByte255;
+        type Overflow = ByteSeparate;
+        const GROUP_SIZE: usize = 16;
+        const BUCKET_STRIDE: usize = 16;
+        const SEPARATE_OVERFLOW: bool = true;
+        const LOAD_FACTOR_NUM: usize = 1;
+        const LOAD_FACTOR_DEN: usize = 2;
+    }
+
+    /// 15/16 (93.75%) load factor layout for testing late growth.
+    #[derive(Clone, Copy)]
+    struct HighLoadLayout;
+    impl GroupLayout for HighLoadLayout {
+        type Grp = Group<0xFFFF>;
+        type Tag = LowByte255;
+        type Overflow = ByteSeparate;
+        const GROUP_SIZE: usize = 16;
+        const BUCKET_STRIDE: usize = 16;
+        const SEPARATE_OVERFLOW: bool = true;
+        const LOAD_FACTOR_NUM: usize = 15;
+        const LOAD_FACTOR_DEN: usize = 16;
+    }
+
+    #[test] fn half_load_basic() { test_basic::<HalfLoadLayout>(); }
+    #[test] fn half_load_grow() { test_grow::<HalfLoadLayout>(); }
+    #[test] fn half_load_clone() { test_clone::<HalfLoadLayout>(); }
+    #[test] fn half_load_into_iter() { test_into_iter::<HalfLoadLayout>(); }
+    #[test] fn high_load_basic() { test_basic::<HighLoadLayout>(); }
+    #[test] fn high_load_grow() { test_grow::<HighLoadLayout>(); }
+    #[test] fn high_load_clone() { test_clone::<HighLoadLayout>(); }
+    #[test] fn high_load_into_iter() { test_into_iter::<HighLoadLayout>(); }
+
+    /// Verify that a 50% load factor grows earlier (more groups for same element count).
+    #[test]
+    fn load_factor_affects_capacity() {
+        let default_groups = RawTable::<u64, u64, SplitsiesLayout>::groups_for_capacity(100);
+        let half_groups = RawTable::<u64, u64, HalfLoadLayout>::groups_for_capacity(100);
+        let high_groups = RawTable::<u64, u64, HighLoadLayout>::groups_for_capacity(100);
+
+        // Lower load factor → more groups needed for same capacity
+        assert!(half_groups > default_groups,
+            "50% load factor should need more groups than 87.5%: {half_groups} vs {default_groups}");
+        // Higher load factor → fewer groups (or equal)
+        assert!(high_groups <= default_groups,
+            "93.75% load factor should need fewer/equal groups than 87.5%: {high_groups} vs {default_groups}");
+    }
+
+    /// Verify max_load is computed correctly for different load factors.
+    #[test]
+    fn load_factor_max_load() {
+        let hb = RandomState::new();
+
+        let mut half: RawTable<u64, u64, HalfLoadLayout> = RawTable::with_capacity(16);
+        let half_max = half.max_load;
+        let half_cap = half.capacity();
+        // 50% of capacity
+        assert_eq!(half_max, half_cap / 2,
+            "half load: max_load={half_max}, capacity={half_cap}");
+
+        let mut high: RawTable<u64, u64, HighLoadLayout> = RawTable::with_capacity(16);
+        let high_max = high.max_load;
+        let high_cap = high.capacity();
+        // 15/16 of capacity
+        assert_eq!(high_max, high_cap * 15 / 16,
+            "high load: max_load={high_max}, capacity={high_cap}");
+
+        // Verify the half-load table grows earlier by filling both
+        let mut half_grew = false;
+        let mut high_grew = false;
+        let half_initial_groups = half.mask + 1;
+        let high_initial_groups = high.mask + 1;
+        for i in 0..100u64 {
+            half.insert_or_replace(i, i, &hb);
+            high.insert_or_replace(i, i, &hb);
+            if !half_grew && half.mask + 1 > half_initial_groups {
+                half_grew = true;
+            }
+            if !high_grew && high.mask + 1 > high_initial_groups {
+                high_grew = true;
+            }
+        }
+        // Both should have grown (100 elements exceeds any 16-slot table)
+        assert!(half_grew, "half-load table should have grown");
+        assert!(high_grew, "high-load table should have grown");
+    }
 }

@@ -85,6 +85,12 @@ pub trait GroupLayout: 'static + Copy {
     /// use low bits which would correlate with the AND group index.
     const AND_INDEX: bool = false;
 
+    /// Load factor numerator. Table grows when `len >= capacity * NUM / DEN`.
+    /// Default: 7/8 = 87.5%. Lower values waste memory but reduce collisions.
+    const LOAD_FACTOR_NUM: usize = 7;
+    /// Load factor denominator.
+    const LOAD_FACTOR_DEN: usize = 8;
+
     /// Compute bucket index from (group_index, slot_index).
     #[inline(always)]
     fn bucket_index(gi: usize, si: usize) -> usize {
