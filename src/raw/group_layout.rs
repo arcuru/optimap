@@ -330,16 +330,85 @@ impl GroupLayout for GapsLayout {
     const SEPARATE_OVERFLOW: bool = false;
 }
 
+// ── Embedded overflow at 32/64-slot widths ────────────────────────────────
+// Same trick: last byte of each metadata group is the overflow byte.
+// Needs a SLOT_MASK that masks off the top bit (bit 31 at 32-slot,
+// bit 63 at 64-slot) so the overflow byte is never matched as a hash tag.
+
+/// UFM-32: 31-slot, embedded overflow at byte 31, low-byte tag, compact stride.
+#[derive(Clone, Copy)]
+pub struct Ufm32Layout;
+
+impl GroupLayout for Ufm32Layout {
+    type Grp = Group32<0x7FFF_FFFF>;
+    type Tag = LowByte255;
+    type Overflow = EmbeddedOverflow;
+    const GROUP_SIZE: usize = 31;
+    const BUCKET_STRIDE: usize = 31;
+    const META_STRIDE: usize = 32;
+    const SEPARATE_OVERFLOW: bool = false;
+}
+
+/// Gaps-32: 31-slot, embedded overflow at byte 31, low-byte tag, power-of-2 stride.
+#[derive(Clone, Copy)]
+pub struct Gaps32Layout;
+
+impl GroupLayout for Gaps32Layout {
+    type Grp = Group32<0x7FFF_FFFF>;
+    type Tag = LowByte255;
+    type Overflow = EmbeddedOverflow;
+    const GROUP_SIZE: usize = 31;
+    const BUCKET_STRIDE: usize = 32;
+    const META_STRIDE: usize = 32;
+    const SEPARATE_OVERFLOW: bool = false;
+}
+
+/// UFM-64: 63-slot, embedded overflow at byte 63, low-byte tag, compact stride.
+#[derive(Clone, Copy)]
+pub struct Ufm64Layout;
+
+impl GroupLayout for Ufm64Layout {
+    type Grp = Group64<0x7FFF_FFFF_FFFF_FFFF>;
+    type Tag = LowByte255;
+    type Overflow = EmbeddedOverflow;
+    const GROUP_SIZE: usize = 63;
+    const BUCKET_STRIDE: usize = 63;
+    const META_STRIDE: usize = 64;
+    const SEPARATE_OVERFLOW: bool = false;
+}
+
+/// Gaps-64: 63-slot, embedded overflow at byte 63, low-byte tag, power-of-2 stride.
+#[derive(Clone, Copy)]
+pub struct Gaps64Layout;
+
+impl GroupLayout for Gaps64Layout {
+    type Grp = Group64<0x7FFF_FFFF_FFFF_FFFF>;
+    type Tag = LowByte255;
+    type Overflow = EmbeddedOverflow;
+    const GROUP_SIZE: usize = 63;
+    const BUCKET_STRIDE: usize = 64;
+    const META_STRIDE: usize = 64;
+    const SEPARATE_OVERFLOW: bool = false;
+}
+
 // ── Embedded overflow for UFM/Gaps ─────────────────────────────────────────
 // These can't use the generic OverflowStrategy because the overflow byte
 // is at a fixed offset within the metadata group (byte 15), not in a
 // separate array. The pointer arithmetic differs.
 
-/// Embedded overflow at byte 15 of each 16-byte metadata group (UFM).
+/// Embedded overflow: one overflow byte at the LAST byte of each metadata group.
+///
+/// Works for any `META_STRIDE` — the overflow byte sits at
+/// `gi * meta_stride + (meta_stride - 1)`. The layout's SLOT_MASK must mask
+/// off the top bit of the match results so the overflow byte is never
+/// mistaken for an EMPTY-or-matching hash slot.
+///
+/// Zero extra allocation — the overflow byte steals slot `meta_stride - 1`
+/// from the SIMD group, costing one usable slot per group. 16→15, 32→31, 64→63.
 #[derive(Clone, Copy)]
-pub struct UfmEmbeddedOverflow;
+pub struct EmbeddedOverflow;
 
-impl OverflowStrategy for UfmEmbeddedOverflow {
+impl OverflowStrategy for EmbeddedOverflow {
     const CHANNELED: bool = true;
 
     #[inline(always)]
@@ -350,9 +419,8 @@ impl OverflowStrategy for UfmEmbeddedOverflow {
     fn overflow_bytes_to_copy(_num_groups: usize) -> usize { 0 }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, _mask: usize, gi: usize, _meta_stride: usize) -> *mut u8 {
-        // Byte 15 of the 16-byte metadata group — only valid when META_STRIDE = 16.
-        unsafe { metadata.add(gi * 16 + 15) }
+    unsafe fn overflow_ptr(metadata: *mut u8, _mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+        unsafe { metadata.add(gi * meta_stride + meta_stride - 1) }
     }
 
     #[inline(always)]
@@ -366,8 +434,9 @@ impl OverflowStrategy for UfmEmbeddedOverflow {
     }
 }
 
-/// Embedded overflow at byte 15 (Gaps — same logic as UFM).
-pub type GapsEmbeddedOverflow = UfmEmbeddedOverflow;
+/// Back-compat aliases.
+pub type UfmEmbeddedOverflow = EmbeddedOverflow;
+pub type GapsEmbeddedOverflow = EmbeddedOverflow;
 
 // ── Matrix entries ─────────────────────────────────────────────────────────
 

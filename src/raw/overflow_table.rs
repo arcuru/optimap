@@ -1020,9 +1020,10 @@ mod tests {
 
     // 32-slot (AVX2) layouts
     use crate::raw::group_layout::{
-        Hi8_1bit32, Hi8_8bit32, Lo128_1bit32, Lo128_8bit32,
+        Gaps32Layout, Hi8_1bit32, Hi8_8bit32, Lo128_1bit32, Lo128_8bit32,
         Splitsies32Layout, Splitsies32_1bit,
         Top128_1bitAnd32, Top128_8bitAnd32, Top255_1bitAnd32, Top255_8bitAnd32,
+        Ufm32Layout,
     };
 
     #[test] fn splitsies32_basic() { test_basic::<Splitsies32Layout>(); }
@@ -1049,6 +1050,14 @@ mod tests {
     #[test] fn lo128_1bit32_grow() { test_grow::<Lo128_1bit32>(); }
     #[test] fn lo128_1bit32_clone() { test_clone::<Lo128_1bit32>(); }
     #[test] fn lo128_1bit32_into_iter() { test_into_iter::<Lo128_1bit32>(); }
+    #[test] fn ufm32_basic() { test_basic::<Ufm32Layout>(); }
+    #[test] fn ufm32_grow() { test_grow::<Ufm32Layout>(); }
+    #[test] fn ufm32_clone() { test_clone::<Ufm32Layout>(); }
+    #[test] fn ufm32_into_iter() { test_into_iter::<Ufm32Layout>(); }
+    #[test] fn gaps32_basic() { test_basic::<Gaps32Layout>(); }
+    #[test] fn gaps32_grow() { test_grow::<Gaps32Layout>(); }
+    #[test] fn gaps32_clone() { test_clone::<Gaps32Layout>(); }
+    #[test] fn gaps32_into_iter() { test_into_iter::<Gaps32Layout>(); }
     #[test] fn top128_1bit_and32_basic() { test_basic::<Top128_1bitAnd32>(); }
     #[test] fn top128_1bit_and32_grow() { test_grow::<Top128_1bitAnd32>(); }
     #[test] fn top128_1bit_and32_clone() { test_clone::<Top128_1bitAnd32>(); }
@@ -1068,9 +1077,10 @@ mod tests {
 
     // 64-slot (AVX-512 / tiered) layouts
     use crate::raw::group_layout::{
-        Hi8_1bit64, Hi8_8bit64, Lo128_1bit64, Lo128_8bit64,
+        Gaps64Layout, Hi8_1bit64, Hi8_8bit64, Lo128_1bit64, Lo128_8bit64,
         Splitsies64Layout, Splitsies64_1bit,
         Top128_1bitAnd64, Top128_8bitAnd64, Top255_1bitAnd64, Top255_8bitAnd64,
+        Ufm64Layout,
     };
 
     #[test] fn splitsies64_basic() { test_basic::<Splitsies64Layout>(); }
@@ -1097,6 +1107,14 @@ mod tests {
     #[test] fn lo128_1bit64_grow() { test_grow::<Lo128_1bit64>(); }
     #[test] fn lo128_1bit64_clone() { test_clone::<Lo128_1bit64>(); }
     #[test] fn lo128_1bit64_into_iter() { test_into_iter::<Lo128_1bit64>(); }
+    #[test] fn ufm64_basic() { test_basic::<Ufm64Layout>(); }
+    #[test] fn ufm64_grow() { test_grow::<Ufm64Layout>(); }
+    #[test] fn ufm64_clone() { test_clone::<Ufm64Layout>(); }
+    #[test] fn ufm64_into_iter() { test_into_iter::<Ufm64Layout>(); }
+    #[test] fn gaps64_basic() { test_basic::<Gaps64Layout>(); }
+    #[test] fn gaps64_grow() { test_grow::<Gaps64Layout>(); }
+    #[test] fn gaps64_clone() { test_clone::<Gaps64Layout>(); }
+    #[test] fn gaps64_into_iter() { test_into_iter::<Gaps64Layout>(); }
     #[test] fn top128_1bit_and64_basic() { test_basic::<Top128_1bitAnd64>(); }
     #[test] fn top128_1bit_and64_grow() { test_grow::<Top128_1bitAnd64>(); }
     #[test] fn top128_1bit_and64_clone() { test_clone::<Top128_1bitAnd64>(); }

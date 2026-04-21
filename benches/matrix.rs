@@ -65,6 +65,8 @@ macro_rules! matrix_maps {
         $helper::<Hi8_8bit32Map<u64, u64>>($group, "Hi8_8bit32", $($args),*);
         $helper::<Lo128_8bit32Map<u64, u64>>($group, "Lo128_8bit32", $($args),*);
         $helper::<Lo128_1bit32Map<u64, u64>>($group, "Lo128_1bit32", $($args),*);
+        $helper::<Ufm32Map<u64, u64>>($group, "Ufm32", $($args),*);
+        $helper::<Gaps32Map<u64, u64>>($group, "Gaps32", $($args),*);
         $helper::<Top128_1bitAnd32Map<u64, u64>>($group, "Top128_1bitAnd32", $($args),*);
         $helper::<Top255_1bitAnd32Map<u64, u64>>($group, "Top255_1bitAnd32", $($args),*);
         $helper::<Top128_8bitAnd32Map<u64, u64>>($group, "Top128_8bitAnd32", $($args),*);
@@ -76,6 +78,8 @@ macro_rules! matrix_maps {
         $helper::<Hi8_8bit64Map<u64, u64>>($group, "Hi8_8bit64", $($args),*);
         $helper::<Lo128_8bit64Map<u64, u64>>($group, "Lo128_8bit64", $($args),*);
         $helper::<Lo128_1bit64Map<u64, u64>>($group, "Lo128_1bit64", $($args),*);
+        $helper::<Ufm64Map<u64, u64>>($group, "Ufm64", $($args),*);
+        $helper::<Gaps64Map<u64, u64>>($group, "Gaps64", $($args),*);
         $helper::<Top128_1bitAnd64Map<u64, u64>>($group, "Top128_1bitAnd64", $($args),*);
         $helper::<Top255_1bitAnd64Map<u64, u64>>($group, "Top255_1bitAnd64", $($args),*);
         $helper::<Top128_8bitAnd64Map<u64, u64>>($group, "Top128_8bitAnd64", $($args),*);
