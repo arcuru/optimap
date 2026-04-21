@@ -128,10 +128,6 @@ AND group index.
 - Investigation results and design rationale belong in `docs/` (mdbook) alongside
   the code they describe, not in external notes.
 
-## Known Gaps / TODO
-
-- Sweep plots need regenerating after the latest optimizations
-
 ## Optimization Status
 
 All designs have been through extensive optimization passes. See `docs/` (mdbook) for
