@@ -12,7 +12,7 @@ pub type DefaultHashBuilder = foldhash::fast::RandomState;
 /// A hash set using open addressing with SIMD-accelerated group probing,
 /// inspired by `boost::unordered_flat_set`.
 ///
-/// Backed by the same engine as [`UnorderedFlatMap`], but stores only keys
+/// Backed by the same engine as [`crate::UnorderedFlatMap`], but stores only keys
 /// (values are zero-sized `()`).
 pub struct UnorderedFlatSet<T, S = DefaultHashBuilder> {
     table: RawTable<T, ()>,

@@ -13,7 +13,7 @@ pub const META_GROUP_BYTES: usize = 16;
 pub const EMPTY: u8 = 0x00;
 
 /// Extract a non-zero hash tag from the low byte of a hash.
-/// See [`crate::hash_tag`] for implementation details and feature selection.
+/// See `crate::hash_tag` for implementation details and feature selection.
 #[inline(always)]
 pub fn reduced_hash(h: u64) -> u8 {
     crate::hash_tag(h)

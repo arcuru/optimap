@@ -22,7 +22,7 @@ use crate::traits::SortedMap;
 /// `OptiSortedMap` provides sorted iteration, range queries, and
 /// first/last access in addition to the standard map operations.
 /// Currently delegates to `FlatBTree`; the wrapper exists for API
-/// consistency with [`OptiMap`] and as an extension point for future
+/// consistency with [`crate::OptiMap`] and as an extension point for future
 /// sorted backends.
 ///
 /// # Examples

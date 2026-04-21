@@ -26,7 +26,7 @@ pub trait KvStorage<K, V>: 'static + Copy {
     /// AoS: 0 (values are interleaved with keys). SoA: sizeof(V) * num_slots.
     fn values_region_size(num_slots: usize) -> usize;
 
-    /// Alignment required for the values region. AoS: 1. SoA: align_of::<V>().
+    /// Alignment required for the values region. AoS: 1. SoA: `align_of::<V>()`.
     fn values_align() -> usize;
 
     /// Minimum allocation alignment.
