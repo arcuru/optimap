@@ -62,6 +62,9 @@ macro_rules! matrix_maps {
         $helper::<Splitsies32Map<u64, u64>>($group, "Splitsies32", $($args),*);
         $helper::<Splitsies32_1bitMap<u64, u64>>($group, "Splitsies32_1bit", $($args),*);
         $helper::<Hi8_1bit32Map<u64, u64>>($group, "Hi8_1bit32", $($args),*);
+        $helper::<Hi8_8bit32Map<u64, u64>>($group, "Hi8_8bit32", $($args),*);
+        $helper::<Lo128_8bit32Map<u64, u64>>($group, "Lo128_8bit32", $($args),*);
+        $helper::<Lo128_1bit32Map<u64, u64>>($group, "Lo128_1bit32", $($args),*);
         $helper::<Top128_1bitAnd32Map<u64, u64>>($group, "Top128_1bitAnd32", $($args),*);
         $helper::<Top255_1bitAnd32Map<u64, u64>>($group, "Top255_1bitAnd32", $($args),*);
         $helper::<Top128_8bitAnd32Map<u64, u64>>($group, "Top128_8bitAnd32", $($args),*);
@@ -70,6 +73,9 @@ macro_rules! matrix_maps {
         $helper::<Splitsies64Map<u64, u64>>($group, "Splitsies64", $($args),*);
         $helper::<Splitsies64_1bitMap<u64, u64>>($group, "Splitsies64_1bit", $($args),*);
         $helper::<Hi8_1bit64Map<u64, u64>>($group, "Hi8_1bit64", $($args),*);
+        $helper::<Hi8_8bit64Map<u64, u64>>($group, "Hi8_8bit64", $($args),*);
+        $helper::<Lo128_8bit64Map<u64, u64>>($group, "Lo128_8bit64", $($args),*);
+        $helper::<Lo128_1bit64Map<u64, u64>>($group, "Lo128_1bit64", $($args),*);
         $helper::<Top128_1bitAnd64Map<u64, u64>>($group, "Top128_1bitAnd64", $($args),*);
         $helper::<Top255_1bitAnd64Map<u64, u64>>($group, "Top255_1bitAnd64", $($args),*);
         $helper::<Top128_8bitAnd64Map<u64, u64>>($group, "Top128_8bitAnd64", $($args),*);

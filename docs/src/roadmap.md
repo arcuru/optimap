@@ -73,6 +73,35 @@ groups may shine at higher load factors (>87%) or for collision-heavy
 workloads where the home-group hit rate dominates. A continuous N-sweep
 across the full size range would reveal the crossover regime.
 
+Promising observation from point-bench: **255-tag wins miss on wider groups**.
+Going Top128 → Top255 on lookup_miss: 16-slot −4.7%, 32-slot **+19.8%**,
+64-slot **+10.7%**. Consistent with the hypothesis that wider groups probe
+more slots per home match, so the tag's false-positive rate matters more.
+Sweep should confirm this holds across N.
+
+#### Hot-path optimizations for 32/64-slot designs
+
+**Difficulty**: Low-Medium \
+**Expected impact**: Unknown per item — needs targeted benches
+
+Candidates identified during the Group32/Group64 landing:
+
+1. **`bucket_index` shortcuts for 32/64 stride** (Low). Currently
+   `GroupLayout::bucket_index` only short-circuits `BUCKET_STRIDE == 16`
+   to `(gi << 4) | si`; 32/64 fall through to a general multiply. Add
+   explicit `gi << 5` / `gi << 6` cases.
+2. **AVX-512 mask-register fusion** (Medium). `Group64::match_byte_and_empty`
+   computes two independent compares against the same 512-bit load. The
+   `__mmask64` results should live in k-registers; verify LLVM isn't
+   round-tripping through GP regs.
+3. **Inline propagation audit** (Low). Spot-check `cargo asm` on
+   `Splitsies32/64` lookup to confirm `Group32/64::match_*` inline all
+   the way through `GroupOps` trait dispatch.
+4. **Top255 insert regression at 32/64-slot** (investigation).
+   `Top255_1bitAnd{32,64}` underperformed `Top128` counterparts on
+   insert (−6% / −15%) despite tag width not affecting per-op cost.
+   Likely a codegen interaction with the inline-asm `hash_tag`.
+
 ### Structural (Speculative)
 
 | Item | Difficulty | Risk | Notes |

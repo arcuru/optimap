@@ -413,6 +413,15 @@ pub type Splitsies32_1bit = Layout32<LowByte255, BitSeparate>;
 /// Hi8_1bit32: 32-slot, decorrelated tag + 1-bit overflow.
 pub type Hi8_1bit32 = Layout32<HighByte255, BitSeparate>;
 
+/// Hi8_8bit32: 32-slot, decorrelated tag + 8-channel byte overflow.
+pub type Hi8_8bit32 = Layout32<HighByte255, ByteSeparate>;
+
+/// Lo128_8bit32: 32-slot, 128-value low-byte tag + 8-channel overflow.
+pub type Lo128_8bit32 = Layout32<LowByte128, ByteSeparate>;
+
+/// Lo128_1bit32: 32-slot, 128-value low-byte tag + 1-bit overflow.
+pub type Lo128_1bit32 = Layout32<LowByte128, BitSeparate>;
+
 /// Top128_1bitAnd32: 32-slot AND-indexed, top-bit tag + 1-bit overflow.
 pub type Top128_1bitAnd32 = Layout32And<TopTag128, BitSeparate>;
 
@@ -435,6 +444,15 @@ pub type Splitsies64_1bit = Layout64<LowByte255, BitSeparate>;
 
 /// Hi8_1bit64: 64-slot, decorrelated tag + 1-bit overflow.
 pub type Hi8_1bit64 = Layout64<HighByte255, BitSeparate>;
+
+/// Hi8_8bit64: 64-slot, decorrelated tag + 8-channel byte overflow.
+pub type Hi8_8bit64 = Layout64<HighByte255, ByteSeparate>;
+
+/// Lo128_8bit64: 64-slot, 128-value low-byte tag + 8-channel overflow.
+pub type Lo128_8bit64 = Layout64<LowByte128, ByteSeparate>;
+
+/// Lo128_1bit64: 64-slot, 128-value low-byte tag + 1-bit overflow.
+pub type Lo128_1bit64 = Layout64<LowByte128, BitSeparate>;
 
 /// Top128_1bitAnd64: 64-slot AND-indexed, top-bit tag + 1-bit overflow.
 pub type Top128_1bitAnd64 = Layout64And<TopTag128, BitSeparate>;
