@@ -257,8 +257,10 @@ pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, Split
 pub mod matrix_types {
     use crate::generic_map::{DefaultHashBuilder, GenericMap};
     use crate::raw::group_layout::{
-        Hi8_1bit, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit,
-        Top128_1bitAnd, Top128_8bitAnd, Top255_1bitAnd, Top255_8bitAnd,
+        Hi8_1bit, Hi8_1bit32, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit,
+        Splitsies32Layout, Splitsies32_1bit,
+        Top128_1bitAnd, Top128_1bitAnd32, Top128_8bitAnd, Top128_8bitAnd32,
+        Top255_1bitAnd, Top255_1bitAnd32, Top255_8bitAnd, Top255_8bitAnd32,
     };
     use crate::raw::overflow_table::RawTable;
     use crate::raw::tag_strategy::{HighByte128, TopByte128};
@@ -279,6 +281,22 @@ pub mod matrix_types {
         GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd>>;
     pub type Top255_8bitAndMap<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd>>;
+
+    // 32-slot (AVX2) overflow-bit variants
+    pub type Splitsies32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Splitsies32Layout>>;
+    pub type Splitsies32_1bitMap<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Splitsies32_1bit>>;
+    pub type Hi8_1bit32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Hi8_1bit32>>;
+    pub type Top128_1bitAnd32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd32>>;
+    pub type Top255_1bitAnd32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd32>>;
+    pub type Top128_8bitAnd32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd32>>;
+    pub type Top255_8bitAnd32Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd32>>;
 
     // Tombstone variants — different tag strategies on IPO infrastructure
     pub type Hi128_TombMap<K, V, S = DefaultHashBuilder> =
@@ -301,6 +319,13 @@ pub mod matrix_types {
     crate::traits::impl_map_trait!(Top255_1bitAndMap);
     crate::traits::impl_map_trait!(Top128_8bitAndMap);
     crate::traits::impl_map_trait!(Top255_8bitAndMap);
+    crate::traits::impl_map_trait!(Splitsies32Map);
+    crate::traits::impl_map_trait!(Splitsies32_1bitMap);
+    crate::traits::impl_map_trait!(Hi8_1bit32Map);
+    crate::traits::impl_map_trait!(Top128_1bitAnd32Map);
+    crate::traits::impl_map_trait!(Top255_1bitAnd32Map);
+    crate::traits::impl_map_trait!(Top128_8bitAnd32Map);
+    crate::traits::impl_map_trait!(Top255_8bitAnd32Map);
     crate::traits::impl_map_trait!(Hi128_TombMap);
     crate::traits::impl_map_trait!(Top128_TombMap);
     crate::traits::impl_map_trait!(Hi128_Tomb64Map);

@@ -26,9 +26,13 @@ pub trait OverflowStrategy: 'static + Copy {
     /// For ByteSeparate: pointer to the overflow byte for this group.
     /// For BitSeparate: pointer to the byte containing this group's bit.
     ///
+    /// `meta_stride` is the metadata bytes per group (16 for SSE2, 32 for AVX2,
+    /// 64 for AVX-512). The overflow region sits immediately after the
+    /// metadata array, at offset `(mask + 1) * meta_stride`.
+    ///
     /// # Safety
     /// `metadata` must point to a valid allocation.
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize) -> *mut u8;
+    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8;
 
     /// Check if overflow is set for the given channel.
     /// For 1-bit: `channel` is ignored; checks the group's single bit.
@@ -73,10 +77,8 @@ impl OverflowStrategy for ByteSeparate {
     }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize) -> *mut u8 {
-        // Overflow array starts at metadata + num_groups * 16
-        // num_groups = mask + 1
-        unsafe { metadata.add(((mask + 1) << 4) + gi) }
+    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+        unsafe { metadata.add((mask + 1) * meta_stride + gi) }
     }
 
     #[inline(always)]
@@ -124,10 +126,8 @@ impl OverflowStrategy for BitSeparate {
     }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize) -> *mut u8 {
-        // Bitfield starts at metadata + num_groups * 16
-        // Group gi's byte is at offset gi >> 3
-        unsafe { metadata.add(((mask + 1) << 4) + (gi >> 3)) }
+    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+        unsafe { metadata.add((mask + 1) * meta_stride + (gi >> 3)) }
     }
 
     #[inline(always)]

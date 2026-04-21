@@ -94,7 +94,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     /// just like metadata — the OverflowStrategy computes the exact offset.
     #[inline(always)]
     unsafe fn overflow_ptr(&self, gi: usize) -> *mut u8 {
-        unsafe { L::Overflow::overflow_ptr(self.ctrl, self.mask, gi) }
+        unsafe { L::Overflow::overflow_ptr(self.ctrl, self.mask, gi, L::META_STRIDE) }
     }
 
     #[inline(always)]
@@ -121,9 +121,13 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     }
 
     /// Size of the backward region (keys for SoA, (K,V) tuples for AoS).
+    /// Rounded up to L::META_ALIGN so that ctrl (= alloc + backward) is aligned
+    /// for the metadata SIMD load width.
     #[inline(always)]
     fn backward_size(num_groups: usize) -> usize {
-        S::backward_size(num_groups * L::BUCKET_STRIDE)
+        let raw = S::backward_size(num_groups * L::BUCKET_STRIDE);
+        let align = L::META_ALIGN;
+        (raw + align - 1) & !(align - 1)
     }
 
     /// Byte offset from ctrl to start of values region (after metadata + overflow, aligned).
@@ -135,13 +139,13 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
         (raw_offset + val_align - 1) & !(val_align - 1)
     }
 
-    /// Layout: [backward region] [metadata: N*16] [overflow] [values (SoA only)]
+    /// Layout: [backward region] [metadata: N*META_STRIDE] [overflow] [values (SoA only)]
     fn combined_layout(num_groups: usize) -> Layout {
         let backward = Self::backward_size(num_groups);
         let values_offset = Self::values_offset(num_groups);
         let values_size = S::values_region_size(num_groups * L::BUCKET_STRIDE);
         let total_size = backward + values_offset + values_size;
-        let align = S::alloc_align();
+        let align = S::alloc_align().max(L::META_ALIGN);
         Layout::from_size_align(total_size.max(align), align).unwrap()
     }
 
@@ -1013,6 +1017,41 @@ mod tests {
     #[test] fn top255_8bit_and_grow() { test_grow::<Top255_8bitAnd>(); }
     #[test] fn top255_8bit_and_clone() { test_clone::<Top255_8bitAnd>(); }
     #[test] fn top255_8bit_and_into_iter() { test_into_iter::<Top255_8bitAnd>(); }
+
+    // 32-slot (AVX2) layouts
+    use crate::raw::group_layout::{
+        Hi8_1bit32, Splitsies32Layout, Splitsies32_1bit,
+        Top128_1bitAnd32, Top128_8bitAnd32, Top255_1bitAnd32, Top255_8bitAnd32,
+    };
+
+    #[test] fn splitsies32_basic() { test_basic::<Splitsies32Layout>(); }
+    #[test] fn splitsies32_grow() { test_grow::<Splitsies32Layout>(); }
+    #[test] fn splitsies32_clone() { test_clone::<Splitsies32Layout>(); }
+    #[test] fn splitsies32_into_iter() { test_into_iter::<Splitsies32Layout>(); }
+    #[test] fn splitsies32_1bit_basic() { test_basic::<Splitsies32_1bit>(); }
+    #[test] fn splitsies32_1bit_grow() { test_grow::<Splitsies32_1bit>(); }
+    #[test] fn splitsies32_1bit_clone() { test_clone::<Splitsies32_1bit>(); }
+    #[test] fn splitsies32_1bit_into_iter() { test_into_iter::<Splitsies32_1bit>(); }
+    #[test] fn hi8_1bit32_basic() { test_basic::<Hi8_1bit32>(); }
+    #[test] fn hi8_1bit32_grow() { test_grow::<Hi8_1bit32>(); }
+    #[test] fn hi8_1bit32_clone() { test_clone::<Hi8_1bit32>(); }
+    #[test] fn hi8_1bit32_into_iter() { test_into_iter::<Hi8_1bit32>(); }
+    #[test] fn top128_1bit_and32_basic() { test_basic::<Top128_1bitAnd32>(); }
+    #[test] fn top128_1bit_and32_grow() { test_grow::<Top128_1bitAnd32>(); }
+    #[test] fn top128_1bit_and32_clone() { test_clone::<Top128_1bitAnd32>(); }
+    #[test] fn top128_1bit_and32_into_iter() { test_into_iter::<Top128_1bitAnd32>(); }
+    #[test] fn top255_1bit_and32_basic() { test_basic::<Top255_1bitAnd32>(); }
+    #[test] fn top255_1bit_and32_grow() { test_grow::<Top255_1bitAnd32>(); }
+    #[test] fn top255_1bit_and32_clone() { test_clone::<Top255_1bitAnd32>(); }
+    #[test] fn top255_1bit_and32_into_iter() { test_into_iter::<Top255_1bitAnd32>(); }
+    #[test] fn top128_8bit_and32_basic() { test_basic::<Top128_8bitAnd32>(); }
+    #[test] fn top128_8bit_and32_grow() { test_grow::<Top128_8bitAnd32>(); }
+    #[test] fn top128_8bit_and32_clone() { test_clone::<Top128_8bitAnd32>(); }
+    #[test] fn top128_8bit_and32_into_iter() { test_into_iter::<Top128_8bitAnd32>(); }
+    #[test] fn top255_8bit_and32_basic() { test_basic::<Top255_8bitAnd32>(); }
+    #[test] fn top255_8bit_and32_grow() { test_grow::<Top255_8bitAnd32>(); }
+    #[test] fn top255_8bit_and32_clone() { test_clone::<Top255_8bitAnd32>(); }
+    #[test] fn top255_8bit_and32_into_iter() { test_into_iter::<Top255_8bitAnd32>(); }
 
     // ── Custom load factor tests ──────────────────────────────────────────
 

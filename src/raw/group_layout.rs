@@ -10,8 +10,9 @@
 
 use std::marker::PhantomData;
 
-use super::bitmask::{BitMask, BitMaskOps};
+use super::bitmask::{BitMask, BitMask32, BitMaskOps};
 use super::generic_group::Group;
+use super::group32::Group32;
 use super::overflow_strategy::OverflowStrategy;
 use super::tag_strategy::TagStrategy;
 
@@ -69,6 +70,41 @@ impl<const M: u16> GroupOps for Group<M> {
     }
 }
 
+impl<const M: u32> GroupOps for Group32<M> {
+    type Mask = BitMask32;
+
+    #[inline(always)]
+    unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask32 {
+        unsafe { Group32::<M>::match_byte(ptr, value) }
+    }
+    #[inline(always)]
+    unsafe fn match_empty(ptr: *const u8) -> BitMask32 {
+        unsafe { Group32::<M>::match_empty(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn match_non_empty(ptr: *const u8) -> BitMask32 {
+        unsafe { Group32::<M>::match_non_empty(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask32, BitMask32) {
+        unsafe { Group32::<M>::match_byte_and_empty(ptr, value) }
+    }
+    #[inline(always)]
+    fn empty_mask() -> BitMask32 { BitMask32(0) }
+    #[inline(always)]
+    unsafe fn prefetch_read(ptr: *const u8) {
+        unsafe { Group32::<M>::prefetch_read(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { Group32::<M>::get_meta(ptr, idx) }
+    }
+    #[inline(always)]
+    unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe { Group32::<M>::set_meta(ptr, idx, value) }
+    }
+}
+
 /// Layout configuration for overflow-bit hash table designs.
 pub trait GroupLayout: 'static + Copy {
     /// The SIMD group type for this layout.
@@ -86,6 +122,10 @@ pub trait GroupLayout: 'static + Copy {
     /// Defaults to 16 for backward compat with 15/16-slot SSE2 designs;
     /// 32-slot (AVX2) uses 32, 64-slot uses 64.
     const META_STRIDE: usize = 16;
+    /// Required alignment for metadata loads. Matches META_STRIDE so
+    /// `ctrl + gi * META_STRIDE` is naturally aligned for the SIMD load
+    /// width (avoids cache-line-split penalties on unaligned wide loads).
+    const META_ALIGN: usize = Self::META_STRIDE;
     /// Whether overflow is in a separate array (controls extra prefetch).
     const SEPARATE_OVERFLOW: bool;
 
@@ -150,6 +190,41 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout16And<T, O> {
     const AND_INDEX: bool = true;
 }
 
+// ── Layout32: generic 32-slot layout (AVX2) ────────────────────────────────
+
+/// Generic 32-slot layout with separate overflow. Requires AVX2 for the
+/// single-load fast path; falls back to two SSE2 loads when AVX2 is not
+/// enabled at compile time. Metadata is 32 bytes per group, 32-byte aligned.
+#[derive(Clone, Copy)]
+pub struct Layout32<T: TagStrategy, O: OverflowStrategy>(PhantomData<(T, O)>);
+
+impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout32<T, O> {
+    type Grp = Group32<0xFFFF_FFFF>;
+    type Tag = T;
+    type Overflow = O;
+    const GROUP_SIZE: usize = 32;
+    const BUCKET_STRIDE: usize = 32;
+    const META_STRIDE: usize = 32;
+    const SEPARATE_OVERFLOW: bool = true;
+}
+
+/// Layout32 with AND-based group indexing. Same constraints as Layout16And:
+/// tags must come from top hash bits (57+) and overflow must not use low-bit
+/// channels correlated with the group index.
+#[derive(Clone, Copy)]
+pub struct Layout32And<T: TagStrategy, O: OverflowStrategy>(PhantomData<(T, O)>);
+
+impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout32And<T, O> {
+    type Grp = Group32<0xFFFF_FFFF>;
+    type Tag = T;
+    type Overflow = O;
+    const GROUP_SIZE: usize = 32;
+    const BUCKET_STRIDE: usize = 32;
+    const META_STRIDE: usize = 32;
+    const SEPARATE_OVERFLOW: bool = true;
+    const AND_INDEX: bool = true;
+}
+
 // ── Named layouts for existing designs ─────────────────────────────────────
 
 use super::overflow_strategy::ByteSeparate;
@@ -204,7 +279,8 @@ impl OverflowStrategy for UfmEmbeddedOverflow {
     fn overflow_bytes_to_copy(_num_groups: usize) -> usize { 0 }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, _mask: usize, gi: usize) -> *mut u8 {
+    unsafe fn overflow_ptr(metadata: *mut u8, _mask: usize, gi: usize, _meta_stride: usize) -> *mut u8 {
+        // Byte 15 of the 16-byte metadata group — only valid when META_STRIDE = 16.
         unsafe { metadata.add(gi * 16 + 15) }
     }
 
@@ -256,3 +332,26 @@ pub type Top128_8bitAnd = Layout16And<TopTag128Ch, ByteSeparate>;
 
 /// Top255_8bitAnd: 255-value top-bit tag + 8-channel byte overflow + AND indexing.
 pub type Top255_8bitAnd = Layout16And<TopTag255Ch, ByteSeparate>;
+
+// ── 32-slot (AVX2) matrix entries ─────────────────────────────────────────
+
+/// Splitsies32: 32-slot, separate byte overflow, low-byte tag.
+pub type Splitsies32Layout = Layout32<LowByte255, ByteSeparate>;
+
+/// Splitsies32-1bit: 32-slot, 1-bit binary overflow, low-byte tag.
+pub type Splitsies32_1bit = Layout32<LowByte255, BitSeparate>;
+
+/// Hi8_1bit32: 32-slot, decorrelated tag + 1-bit overflow.
+pub type Hi8_1bit32 = Layout32<HighByte255, BitSeparate>;
+
+/// Top128_1bitAnd32: 32-slot AND-indexed, top-bit tag + 1-bit overflow.
+pub type Top128_1bitAnd32 = Layout32And<TopTag128, BitSeparate>;
+
+/// Top255_1bitAnd32: 32-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
+pub type Top255_1bitAnd32 = Layout32And<TopTag255, BitSeparate>;
+
+/// Top128_8bitAnd32: 32-slot AND-indexed, top-bit tag + 8-channel overflow.
+pub type Top128_8bitAnd32 = Layout32And<TopTag128Ch, ByteSeparate>;
+
+/// Top255_8bitAnd32: 32-slot AND-indexed, 255-value top tag + 8-channel overflow.
+pub type Top255_8bitAnd32 = Layout32And<TopTag255Ch, ByteSeparate>;
