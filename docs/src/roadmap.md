@@ -141,6 +141,21 @@ Candidates identified during the Group32/Group64 landing:
    Group64), 83 × `vpcmpeqb %ymm` (AVX2 Group32), 359 × `vpcmpeqb %xmm`
    (SSE2 Group<>, VEX-encoded). Trait dispatch through `GroupOps` fully
    monomorphizes and inlines.
+6. **Embedded-overflow byte read adds a shadow SIMD load** (not yet
+   closed). At 32-slot with AVX2, the hot path emits:
+     ```
+     vmovdqa   (%rcx,%r9,1), %ymm0     ; meta load (32 bytes) for match_byte
+     vmovdqa   0x10(%rcx,%r9,1),%xmm1  ; reload upper half for the overflow byte
+     ...
+     vpextrb   $0xf, %xmm1, %r15d       ; extract byte 31 (overflow)
+     ```
+   LLVM doesn't reuse the upper half of `%ymm0` — it issues a separate
+   16-byte load. Both hit L1 (same cache line), so the cost is likely
+   just one extra load-port µop. Options to eliminate it: `vextracti128`
+   from `%ymm0` into `%xmm1`, or plumb an overflow-byte-extract API
+   through `GroupOps` so we can fuse at the call site. Unclear if the
+   saving is measurable.
+
 4. ~~**Top255 insert regression at 32/64-slot**~~ **Closed — not reproducible.**
    The initial `--quick` numbers showed Top255_1bitAnd{32,64} regressing
    vs Top128 on insert (−6%/−15%). A full-sample (100 samples) rerun
