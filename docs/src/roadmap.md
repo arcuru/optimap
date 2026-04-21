@@ -86,10 +86,14 @@ Sweep should confirm this holds across N.
 
 Candidates identified during the Group32/Group64 landing:
 
-1. **`bucket_index` shortcuts for 32/64 stride** (Low). Currently
-   `GroupLayout::bucket_index` only short-circuits `BUCKET_STRIDE == 16`
-   to `(gi << 4) | si`; 32/64 fall through to a general multiply. Add
-   explicit `gi << 5` / `gi << 6` cases.
+1. ~~**`bucket_index` shortcuts for 32/64 stride**~~ **Applied, inverse direction.**
+   The existing 16-slot shortcut `(gi << 4) | si` was **worse** than the
+   naïve `gi * 16 + si`: LEA can fuse `shift + add` into a single µop
+   (`shlq`+`leaq` = 2 µops) but not `shift + or` (`mov`+`shlq`+`orq` =
+   3 µops). Simplified `bucket_index` to just `gi * BUCKET_STRIDE + si`
+   and trusted LLVM to fold the multiply; same change applied to
+   `ipo64::bucket_ptr`. Bench signal was lost in machine noise at this
+   granularity, but codegen is strictly better (1 µop saved per call).
 2. **AVX-512 mask-register fusion** (Medium). `Group64::match_byte_and_empty`
    computes two independent compares against the same 512-bit load. The
    `__mmask64` results should live in k-registers; verify LLVM isn't

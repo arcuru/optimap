@@ -180,13 +180,15 @@ pub trait GroupLayout: 'static + Copy {
     const LOAD_FACTOR_DEN: usize = 8;
 
     /// Compute bucket index from (group_index, slot_index).
+    ///
+    /// Using `+` rather than `|` even for power-of-2 strides is intentional:
+    /// LLVM folds `gi * const_pow2 + si` into a single `lea` (2 µops total:
+    /// shift-in-place + LEA), while `(gi << N) | si` forces a `mov` + `shl`
+    /// + `or` (3 µops) because LEA cannot fuse bitwise OR. Leave the
+    /// multiply form and trust the backend.
     #[inline(always)]
     fn bucket_index(gi: usize, si: usize) -> usize {
-        if Self::BUCKET_STRIDE == 16 {
-            (gi << 4) | si
-        } else {
-            gi * Self::BUCKET_STRIDE + si
-        }
+        gi * Self::BUCKET_STRIDE + si
     }
 }
 

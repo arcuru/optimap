@@ -186,11 +186,13 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
         unsafe { self.metadata.add(gi << 6) }
     }
 
-    /// Pointer to bucket slot. Uses shift+or since GROUP_SIZE=64.
+    /// Pointer to bucket slot. `gi * 64 + si` rather than `(gi<<6) | si` so
+    /// LLVM can fuse the shift + add into a single LEA (saves 1 µop vs
+    /// mov+shl+or, since LEA cannot fuse bitwise OR).
     #[inline(always)]
     pub(crate) unsafe fn bucket_ptr(&self, gi: usize, si: usize) -> *mut (K, V) {
         let bucket_size = std::mem::size_of::<(K, V)>();
-        let idx = (gi << 6) | si;
+        let idx = gi * 64 + si;
         unsafe { self.buckets.add(idx * bucket_size).cast::<(K, V)>() }
     }
 
