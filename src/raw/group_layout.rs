@@ -10,9 +10,10 @@
 
 use std::marker::PhantomData;
 
-use super::bitmask::{BitMask, BitMask32, BitMaskOps};
+use super::bitmask::{BitMask, BitMask32, BitMask64, BitMaskOps};
 use super::generic_group::Group;
 use super::group32::Group32;
+use super::group64::Group64;
 use super::overflow_strategy::OverflowStrategy;
 use super::tag_strategy::TagStrategy;
 
@@ -102,6 +103,41 @@ impl<const M: u32> GroupOps for Group32<M> {
     #[inline(always)]
     unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
         unsafe { Group32::<M>::set_meta(ptr, idx, value) }
+    }
+}
+
+impl<const M: u64> GroupOps for Group64<M> {
+    type Mask = BitMask64;
+
+    #[inline(always)]
+    unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {
+        unsafe { Group64::<M>::match_byte(ptr, value) }
+    }
+    #[inline(always)]
+    unsafe fn match_empty(ptr: *const u8) -> BitMask64 {
+        unsafe { Group64::<M>::match_empty(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn match_non_empty(ptr: *const u8) -> BitMask64 {
+        unsafe { Group64::<M>::match_non_empty(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask64, BitMask64) {
+        unsafe { Group64::<M>::match_byte_and_empty(ptr, value) }
+    }
+    #[inline(always)]
+    fn empty_mask() -> BitMask64 { BitMask64(0) }
+    #[inline(always)]
+    unsafe fn prefetch_read(ptr: *const u8) {
+        unsafe { Group64::<M>::prefetch_read(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { Group64::<M>::get_meta(ptr, idx) }
+    }
+    #[inline(always)]
+    unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe { Group64::<M>::set_meta(ptr, idx, value) }
     }
 }
 
@@ -221,6 +257,39 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout32And<T, O> {
     const GROUP_SIZE: usize = 32;
     const BUCKET_STRIDE: usize = 32;
     const META_STRIDE: usize = 32;
+    const SEPARATE_OVERFLOW: bool = true;
+    const AND_INDEX: bool = true;
+}
+
+// ── Layout64: generic 64-slot layout (AVX-512 / tiered fallback) ───────────
+
+/// Generic 64-slot layout with separate overflow. Best on AVX-512BW (single
+/// 512-bit load), with AVX2 (2 × 256-bit) and SSE2 (4 × 128-bit) fallbacks.
+/// Metadata is 64 bytes per group (one cache line), 64-byte aligned.
+#[derive(Clone, Copy)]
+pub struct Layout64<T: TagStrategy, O: OverflowStrategy>(PhantomData<(T, O)>);
+
+impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout64<T, O> {
+    type Grp = Group64<0xFFFF_FFFF_FFFF_FFFF>;
+    type Tag = T;
+    type Overflow = O;
+    const GROUP_SIZE: usize = 64;
+    const BUCKET_STRIDE: usize = 64;
+    const META_STRIDE: usize = 64;
+    const SEPARATE_OVERFLOW: bool = true;
+}
+
+/// Layout64 with AND-based group indexing.
+#[derive(Clone, Copy)]
+pub struct Layout64And<T: TagStrategy, O: OverflowStrategy>(PhantomData<(T, O)>);
+
+impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout64And<T, O> {
+    type Grp = Group64<0xFFFF_FFFF_FFFF_FFFF>;
+    type Tag = T;
+    type Overflow = O;
+    const GROUP_SIZE: usize = 64;
+    const BUCKET_STRIDE: usize = 64;
+    const META_STRIDE: usize = 64;
     const SEPARATE_OVERFLOW: bool = true;
     const AND_INDEX: bool = true;
 }
@@ -355,3 +424,26 @@ pub type Top128_8bitAnd32 = Layout32And<TopTag128Ch, ByteSeparate>;
 
 /// Top255_8bitAnd32: 32-slot AND-indexed, 255-value top tag + 8-channel overflow.
 pub type Top255_8bitAnd32 = Layout32And<TopTag255Ch, ByteSeparate>;
+
+// ── 64-slot (AVX-512) matrix entries ──────────────────────────────────────
+
+/// Splitsies64: 64-slot, separate byte overflow, low-byte tag.
+pub type Splitsies64Layout = Layout64<LowByte255, ByteSeparate>;
+
+/// Splitsies64-1bit: 64-slot, 1-bit binary overflow, low-byte tag.
+pub type Splitsies64_1bit = Layout64<LowByte255, BitSeparate>;
+
+/// Hi8_1bit64: 64-slot, decorrelated tag + 1-bit overflow.
+pub type Hi8_1bit64 = Layout64<HighByte255, BitSeparate>;
+
+/// Top128_1bitAnd64: 64-slot AND-indexed, top-bit tag + 1-bit overflow.
+pub type Top128_1bitAnd64 = Layout64And<TopTag128, BitSeparate>;
+
+/// Top255_1bitAnd64: 64-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
+pub type Top255_1bitAnd64 = Layout64And<TopTag255, BitSeparate>;
+
+/// Top128_8bitAnd64: 64-slot AND-indexed, top-bit tag + 8-channel overflow.
+pub type Top128_8bitAnd64 = Layout64And<TopTag128Ch, ByteSeparate>;
+
+/// Top255_8bitAnd64: 64-slot AND-indexed, 255-value top tag + 8-channel overflow.
+pub type Top255_8bitAnd64 = Layout64And<TopTag255Ch, ByteSeparate>;

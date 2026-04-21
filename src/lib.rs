@@ -257,10 +257,12 @@ pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, Split
 pub mod matrix_types {
     use crate::generic_map::{DefaultHashBuilder, GenericMap};
     use crate::raw::group_layout::{
-        Hi8_1bit, Hi8_1bit32, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit,
-        Splitsies32Layout, Splitsies32_1bit,
-        Top128_1bitAnd, Top128_1bitAnd32, Top128_8bitAnd, Top128_8bitAnd32,
-        Top255_1bitAnd, Top255_1bitAnd32, Top255_8bitAnd, Top255_8bitAnd32,
+        Hi8_1bit, Hi8_1bit32, Hi8_1bit64, Hi8_8bit, Lo128_1bit, Lo128_8bit, Lo8_1bit,
+        Splitsies32Layout, Splitsies32_1bit, Splitsies64Layout, Splitsies64_1bit,
+        Top128_1bitAnd, Top128_1bitAnd32, Top128_1bitAnd64,
+        Top128_8bitAnd, Top128_8bitAnd32, Top128_8bitAnd64,
+        Top255_1bitAnd, Top255_1bitAnd32, Top255_1bitAnd64,
+        Top255_8bitAnd, Top255_8bitAnd32, Top255_8bitAnd64,
     };
     use crate::raw::overflow_table::RawTable;
     use crate::raw::tag_strategy::{HighByte128, TopByte128};
@@ -298,6 +300,22 @@ pub mod matrix_types {
     pub type Top255_8bitAnd32Map<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd32>>;
 
+    // 64-slot (AVX-512 / tiered) overflow-bit variants
+    pub type Splitsies64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Splitsies64Layout>>;
+    pub type Splitsies64_1bitMap<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Splitsies64_1bit>>;
+    pub type Hi8_1bit64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Hi8_1bit64>>;
+    pub type Top128_1bitAnd64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd64>>;
+    pub type Top255_1bitAnd64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd64>>;
+    pub type Top128_8bitAnd64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd64>>;
+    pub type Top255_8bitAnd64Map<K, V, S = DefaultHashBuilder> =
+        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd64>>;
+
     // Tombstone variants — different tag strategies on IPO infrastructure
     pub type Hi128_TombMap<K, V, S = DefaultHashBuilder> =
         GenericMap<K, V, S, crate::in_place_overflow::raw::RawTable<K, V, HighByte128>>;
@@ -326,6 +344,13 @@ pub mod matrix_types {
     crate::traits::impl_map_trait!(Top255_1bitAnd32Map);
     crate::traits::impl_map_trait!(Top128_8bitAnd32Map);
     crate::traits::impl_map_trait!(Top255_8bitAnd32Map);
+    crate::traits::impl_map_trait!(Splitsies64Map);
+    crate::traits::impl_map_trait!(Splitsies64_1bitMap);
+    crate::traits::impl_map_trait!(Hi8_1bit64Map);
+    crate::traits::impl_map_trait!(Top128_1bitAnd64Map);
+    crate::traits::impl_map_trait!(Top255_1bitAnd64Map);
+    crate::traits::impl_map_trait!(Top128_8bitAnd64Map);
+    crate::traits::impl_map_trait!(Top255_8bitAnd64Map);
     crate::traits::impl_map_trait!(Hi128_TombMap);
     crate::traits::impl_map_trait!(Top128_TombMap);
     crate::traits::impl_map_trait!(Hi128_Tomb64Map);

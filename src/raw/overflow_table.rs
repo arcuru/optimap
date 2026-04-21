@@ -1053,6 +1053,41 @@ mod tests {
     #[test] fn top255_8bit_and32_clone() { test_clone::<Top255_8bitAnd32>(); }
     #[test] fn top255_8bit_and32_into_iter() { test_into_iter::<Top255_8bitAnd32>(); }
 
+    // 64-slot (AVX-512 / tiered) layouts
+    use crate::raw::group_layout::{
+        Hi8_1bit64, Splitsies64Layout, Splitsies64_1bit,
+        Top128_1bitAnd64, Top128_8bitAnd64, Top255_1bitAnd64, Top255_8bitAnd64,
+    };
+
+    #[test] fn splitsies64_basic() { test_basic::<Splitsies64Layout>(); }
+    #[test] fn splitsies64_grow() { test_grow::<Splitsies64Layout>(); }
+    #[test] fn splitsies64_clone() { test_clone::<Splitsies64Layout>(); }
+    #[test] fn splitsies64_into_iter() { test_into_iter::<Splitsies64Layout>(); }
+    #[test] fn splitsies64_1bit_basic() { test_basic::<Splitsies64_1bit>(); }
+    #[test] fn splitsies64_1bit_grow() { test_grow::<Splitsies64_1bit>(); }
+    #[test] fn splitsies64_1bit_clone() { test_clone::<Splitsies64_1bit>(); }
+    #[test] fn splitsies64_1bit_into_iter() { test_into_iter::<Splitsies64_1bit>(); }
+    #[test] fn hi8_1bit64_basic() { test_basic::<Hi8_1bit64>(); }
+    #[test] fn hi8_1bit64_grow() { test_grow::<Hi8_1bit64>(); }
+    #[test] fn hi8_1bit64_clone() { test_clone::<Hi8_1bit64>(); }
+    #[test] fn hi8_1bit64_into_iter() { test_into_iter::<Hi8_1bit64>(); }
+    #[test] fn top128_1bit_and64_basic() { test_basic::<Top128_1bitAnd64>(); }
+    #[test] fn top128_1bit_and64_grow() { test_grow::<Top128_1bitAnd64>(); }
+    #[test] fn top128_1bit_and64_clone() { test_clone::<Top128_1bitAnd64>(); }
+    #[test] fn top128_1bit_and64_into_iter() { test_into_iter::<Top128_1bitAnd64>(); }
+    #[test] fn top255_1bit_and64_basic() { test_basic::<Top255_1bitAnd64>(); }
+    #[test] fn top255_1bit_and64_grow() { test_grow::<Top255_1bitAnd64>(); }
+    #[test] fn top255_1bit_and64_clone() { test_clone::<Top255_1bitAnd64>(); }
+    #[test] fn top255_1bit_and64_into_iter() { test_into_iter::<Top255_1bitAnd64>(); }
+    #[test] fn top128_8bit_and64_basic() { test_basic::<Top128_8bitAnd64>(); }
+    #[test] fn top128_8bit_and64_grow() { test_grow::<Top128_8bitAnd64>(); }
+    #[test] fn top128_8bit_and64_clone() { test_clone::<Top128_8bitAnd64>(); }
+    #[test] fn top128_8bit_and64_into_iter() { test_into_iter::<Top128_8bitAnd64>(); }
+    #[test] fn top255_8bit_and64_basic() { test_basic::<Top255_8bitAnd64>(); }
+    #[test] fn top255_8bit_and64_grow() { test_grow::<Top255_8bitAnd64>(); }
+    #[test] fn top255_8bit_and64_clone() { test_clone::<Top255_8bitAnd64>(); }
+    #[test] fn top255_8bit_and64_into_iter() { test_into_iter::<Top255_8bitAnd64>(); }
+
     // ── Custom load factor tests ──────────────────────────────────────────
 
     use crate::raw::generic_group::Group;

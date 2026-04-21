@@ -2,6 +2,7 @@ pub mod bitmask;
 pub mod generic_group;
 pub mod group;
 pub mod group32;
+pub mod group64;
 pub mod group_layout;
 pub mod hash;
 pub mod kv_storage;
