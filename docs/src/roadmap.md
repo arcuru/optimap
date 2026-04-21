@@ -87,6 +87,18 @@ insert 164 (vs Splitsies32 122, **+34%**). Saves the separate overflow
 array's allocation, prefetch, and second-cache-line fetch — the cost of
 which is proportionally larger at wider groups. Worth a full sweep run.
 
+**Embedded matrix completed** (2026-04-21) with the remaining combinations:
+`Hi8_Emb{,32,64}`, `Hi8_EmbP2{,32,64}`, `Lo128_Emb{,32,64}`, `Lo128_EmbP2{,32,64}`,
+and the novel AND-indexed embedded variants `Top128_EmbAnd{,32,64}` /
+`Top128_EmbP2And{,32,64}` / `Top255_EmbAnd{,32,64}` / `Top255_EmbP2And{,32,64}`.
+The AND-indexed embedded variants use `TopTag128Ch` / `TopTag255Ch`
+(top-bit tag + top-bit-shifted channels) to keep the overflow channel
+decorrelated from the low-bit AND group index. Standout from initial
+`--quick` bench: `Top255_EmbP2And64` insert 201 Mel/s, tying the overall
+64-slot insert leader. AND-indexed embedded still trails separate 1-bit
+on hit (~460 vs ~500 Mel/s) — the SLOT_MASK top-bit AND and one fewer
+usable slot per group both cost a little.
+
 #### Hot-path optimizations for 32/64-slot designs
 
 **Difficulty**: Low-Medium \
