@@ -10,7 +10,7 @@ use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 use optimap::matrix_types::*;
-use optimap::{InPlaceOverflow, Splitsies};
+use optimap::{Gaps, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ─────────────────────────────────────────────────────────
 
@@ -45,6 +45,8 @@ macro_rules! matrix_maps {
     ($helper:ident, $group:expr, $($args:expr),*) => {
         // Baselines
         $helper::<Splitsies<u64, u64>>($group, "Lo8_8bit", $($args),*);
+        $helper::<UnorderedFlatMap<u64, u64>>($group, "Ufm", $($args),*);
+        $helper::<Gaps<u64, u64>>($group, "Gaps", $($args),*);
         $helper::<InPlaceOverflow<u64, u64>>($group, "Tombstone", $($args),*);
         // 8-bit overflow variants
         $helper::<Hi8_8bitMap<u64, u64>>($group, "Hi8_8bit", $($args),*);
