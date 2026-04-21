@@ -94,17 +94,31 @@ Candidates identified during the Group32/Group64 landing:
    and trusted LLVM to fold the multiply; same change applied to
    `ipo64::bucket_ptr`. Bench signal was lost in machine noise at this
    granularity, but codegen is strictly better (1 µop saved per call).
-2. **AVX-512 mask-register fusion** (Medium). `Group64::match_byte_and_empty`
-   computes two independent compares against the same 512-bit load. The
-   `__mmask64` results should live in k-registers; verify LLVM isn't
-   round-tripping through GP regs.
-3. **Inline propagation audit** (Low). Spot-check `cargo asm` on
-   `Splitsies32/64` lookup to confirm `Group32/64::match_*` inline all
-   the way through `GroupOps` trait dispatch.
-4. **Top255 insert regression at 32/64-slot** (investigation).
-   `Top255_1bitAnd{32,64}` underperformed `Top128` counterparts on
-   insert (−6% / −15%) despite tag width not affecting per-op cost.
-   Likely a codegen interaction with the inline-asm `hash_tag`.
+2. ~~**AVX-512 mask-register fusion**~~ **Verified optimal, no action.**
+   Inspection of the matrix bench disassembly shows LLVM emits:
+   - `vpcmpeqb (mem), %zmm0, %k0` — load fused with compare
+   - `vptestmb` / `vptestnmb` for match_non_empty / match_empty (direct
+     test against zero, no need for a broadcast zero register)
+   - `kortestq` on k-registers for "any match" tests (no kmovq round-trip)
+   - Single `kmovq` to GP only when iteration (`tzcnt`/`blsr`) is needed
+   - `& SLOT_MASK` elided for full-width (all-ones) SLOT_MASK
+   LLVM was already smarter than our source. Nothing to hand-optimize.
+3. ~~**Inline propagation audit**~~ **Verified clean.** `objdump` of the
+   matrix bench binary shows zero `call` instructions targeting
+   `match_byte`/`match_empty`/`Group32`/`Group64` symbols. The raw
+   SIMD ops appear directly at call sites: 68 × `vpcmpeqb %zmm` (AVX-512
+   Group64), 83 × `vpcmpeqb %ymm` (AVX2 Group32), 359 × `vpcmpeqb %xmm`
+   (SSE2 Group<>, VEX-encoded). Trait dispatch through `GroupOps` fully
+   monomorphizes and inlines.
+4. ~~**Top255 insert regression at 32/64-slot**~~ **Closed — not reproducible.**
+   The initial `--quick` numbers showed Top255_1bitAnd{32,64} regressing
+   vs Top128 on insert (−6%/−15%). A full-sample (100 samples) rerun
+   flipped the sign: Top255 was +5%/+7% *faster*. Codegen analysis does
+   show Top255 uses 1 more µop (`shr+cmp+adc` vs `shr+or`) and the
+   inline-asm acts as a scheduling barrier — but the actual perf
+   difference sits well inside measurement noise at medium size. Tag
+   choice should be driven by false-match rate (255 strictly better at
+   1/254 vs 128's 1/127), not per-op cost.
 
 ### Structural (Speculative)
 
