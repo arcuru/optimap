@@ -79,6 +79,14 @@ Going Top128 → Top255 on lookup_miss: 16-slot −4.7%, 32-slot **+19.8%**,
 more slots per home match, so the tag's false-positive rate matters more.
 Sweep should confirm this holds across N.
 
+**Embedded-overflow at 32/64-slot is a standout.** Ufm32/Ufm64/Gaps32/Gaps64
+(added 2026-04-20) put the overflow byte at the last byte of the wider
+metadata group, same trick as the original 15-slot UFM. At medium size
+`--quick`: Gaps64 insert 209 Mel/s (vs Splitsies64 126, **+66%**); Gaps32
+insert 164 (vs Splitsies32 122, **+34%**). Saves the separate overflow
+array's allocation, prefetch, and second-cache-line fetch — the cost of
+which is proportionally larger at wider groups. Worth a full sweep run.
+
 #### Hot-path optimizations for 32/64-slot designs
 
 **Difficulty**: Low-Medium \
