@@ -974,7 +974,13 @@ mod tests {
     #[test] fn gaps_into_iter() { test_into_iter::<GapsLayout>(); }
 
     // Matrix entries
-    use crate::raw::group_layout::{Hi8_8bit, Hi8_1bit, Lo128_8bit, Lo128_1bit, Lo8_1bit, Top128_1bitAnd, Top255_1bitAnd, Top128_8bitAnd, Top255_8bitAnd};
+    use crate::raw::group_layout::{
+        Hi8_8bit, Hi8_1bit, Hi8_Emb, Hi8_EmbP2,
+        Lo128_8bit, Lo128_1bit, Lo128_Emb, Lo128_EmbP2,
+        Lo8_1bit,
+        Top128_1bitAnd, Top128_8bitAnd, Top128_EmbAnd, Top128_EmbP2And,
+        Top255_1bitAnd, Top255_8bitAnd, Top255_EmbAnd, Top255_EmbP2And,
+    };
 
     // Matrix entries — all 4 test functions
     #[test] fn hi8_8bit_basic() { test_basic::<Hi8_8bit>(); }
@@ -1018,11 +1024,31 @@ mod tests {
     #[test] fn top255_8bit_and_clone() { test_clone::<Top255_8bitAnd>(); }
     #[test] fn top255_8bit_and_into_iter() { test_into_iter::<Top255_8bitAnd>(); }
 
+    // Embedded 16-slot matrix (other tags)
+    #[test] fn hi8_emb_basic() { test_basic::<Hi8_Emb>(); }
+    #[test] fn hi8_emb_grow() { test_grow::<Hi8_Emb>(); }
+    #[test] fn hi8_embp2_basic() { test_basic::<Hi8_EmbP2>(); }
+    #[test] fn hi8_embp2_grow() { test_grow::<Hi8_EmbP2>(); }
+    #[test] fn lo128_emb_basic() { test_basic::<Lo128_Emb>(); }
+    #[test] fn lo128_emb_grow() { test_grow::<Lo128_Emb>(); }
+    #[test] fn lo128_embp2_basic() { test_basic::<Lo128_EmbP2>(); }
+    #[test] fn lo128_embp2_grow() { test_grow::<Lo128_EmbP2>(); }
+    #[test] fn top128_emband_basic() { test_basic::<Top128_EmbAnd>(); }
+    #[test] fn top128_emband_grow() { test_grow::<Top128_EmbAnd>(); }
+    #[test] fn top128_embp2and_basic() { test_basic::<Top128_EmbP2And>(); }
+    #[test] fn top128_embp2and_grow() { test_grow::<Top128_EmbP2And>(); }
+    #[test] fn top255_emband_basic() { test_basic::<Top255_EmbAnd>(); }
+    #[test] fn top255_emband_grow() { test_grow::<Top255_EmbAnd>(); }
+    #[test] fn top255_embp2and_basic() { test_basic::<Top255_EmbP2And>(); }
+    #[test] fn top255_embp2and_grow() { test_grow::<Top255_EmbP2And>(); }
+
     // 32-slot (AVX2) layouts
     use crate::raw::group_layout::{
-        Gaps32Layout, Hi8_1bit32, Hi8_8bit32, Lo128_1bit32, Lo128_8bit32,
+        Gaps32Layout, Hi8_1bit32, Hi8_8bit32, Hi8_Emb32, Hi8_EmbP232,
+        Lo128_1bit32, Lo128_8bit32, Lo128_Emb32, Lo128_EmbP232,
         Splitsies32Layout, Splitsies32_1bit,
-        Top128_1bitAnd32, Top128_8bitAnd32, Top255_1bitAnd32, Top255_8bitAnd32,
+        Top128_1bitAnd32, Top128_8bitAnd32, Top128_EmbAnd32, Top128_EmbP2And32,
+        Top255_1bitAnd32, Top255_8bitAnd32, Top255_EmbAnd32, Top255_EmbP2And32,
         Ufm32Layout,
     };
 
@@ -1058,6 +1084,24 @@ mod tests {
     #[test] fn gaps32_grow() { test_grow::<Gaps32Layout>(); }
     #[test] fn gaps32_clone() { test_clone::<Gaps32Layout>(); }
     #[test] fn gaps32_into_iter() { test_into_iter::<Gaps32Layout>(); }
+
+    // Embedded 32-slot matrix (other tags)
+    #[test] fn hi8_emb32_basic() { test_basic::<Hi8_Emb32>(); }
+    #[test] fn hi8_emb32_grow() { test_grow::<Hi8_Emb32>(); }
+    #[test] fn hi8_embp232_basic() { test_basic::<Hi8_EmbP232>(); }
+    #[test] fn hi8_embp232_grow() { test_grow::<Hi8_EmbP232>(); }
+    #[test] fn lo128_emb32_basic() { test_basic::<Lo128_Emb32>(); }
+    #[test] fn lo128_emb32_grow() { test_grow::<Lo128_Emb32>(); }
+    #[test] fn lo128_embp232_basic() { test_basic::<Lo128_EmbP232>(); }
+    #[test] fn lo128_embp232_grow() { test_grow::<Lo128_EmbP232>(); }
+    #[test] fn top128_embandp232_basic() { test_basic::<Top128_EmbP2And32>(); }
+    #[test] fn top128_embandp232_grow() { test_grow::<Top128_EmbP2And32>(); }
+    #[test] fn top128_emband32_basic() { test_basic::<Top128_EmbAnd32>(); }
+    #[test] fn top128_emband32_grow() { test_grow::<Top128_EmbAnd32>(); }
+    #[test] fn top255_emband32_basic() { test_basic::<Top255_EmbAnd32>(); }
+    #[test] fn top255_emband32_grow() { test_grow::<Top255_EmbAnd32>(); }
+    #[test] fn top255_embandp232_basic() { test_basic::<Top255_EmbP2And32>(); }
+    #[test] fn top255_embandp232_grow() { test_grow::<Top255_EmbP2And32>(); }
     #[test] fn top128_1bit_and32_basic() { test_basic::<Top128_1bitAnd32>(); }
     #[test] fn top128_1bit_and32_grow() { test_grow::<Top128_1bitAnd32>(); }
     #[test] fn top128_1bit_and32_clone() { test_clone::<Top128_1bitAnd32>(); }
@@ -1077,9 +1121,11 @@ mod tests {
 
     // 64-slot (AVX-512 / tiered) layouts
     use crate::raw::group_layout::{
-        Gaps64Layout, Hi8_1bit64, Hi8_8bit64, Lo128_1bit64, Lo128_8bit64,
+        Gaps64Layout, Hi8_1bit64, Hi8_8bit64, Hi8_Emb64, Hi8_EmbP264,
+        Lo128_1bit64, Lo128_8bit64, Lo128_Emb64, Lo128_EmbP264,
         Splitsies64Layout, Splitsies64_1bit,
-        Top128_1bitAnd64, Top128_8bitAnd64, Top255_1bitAnd64, Top255_8bitAnd64,
+        Top128_1bitAnd64, Top128_8bitAnd64, Top128_EmbAnd64, Top128_EmbP2And64,
+        Top255_1bitAnd64, Top255_8bitAnd64, Top255_EmbAnd64, Top255_EmbP2And64,
         Ufm64Layout,
     };
 
@@ -1115,6 +1161,24 @@ mod tests {
     #[test] fn gaps64_grow() { test_grow::<Gaps64Layout>(); }
     #[test] fn gaps64_clone() { test_clone::<Gaps64Layout>(); }
     #[test] fn gaps64_into_iter() { test_into_iter::<Gaps64Layout>(); }
+
+    // Embedded 64-slot matrix (other tags)
+    #[test] fn hi8_emb64_basic() { test_basic::<Hi8_Emb64>(); }
+    #[test] fn hi8_emb64_grow() { test_grow::<Hi8_Emb64>(); }
+    #[test] fn hi8_embp264_basic() { test_basic::<Hi8_EmbP264>(); }
+    #[test] fn hi8_embp264_grow() { test_grow::<Hi8_EmbP264>(); }
+    #[test] fn lo128_emb64_basic() { test_basic::<Lo128_Emb64>(); }
+    #[test] fn lo128_emb64_grow() { test_grow::<Lo128_Emb64>(); }
+    #[test] fn lo128_embp264_basic() { test_basic::<Lo128_EmbP264>(); }
+    #[test] fn lo128_embp264_grow() { test_grow::<Lo128_EmbP264>(); }
+    #[test] fn top128_emband64_basic() { test_basic::<Top128_EmbAnd64>(); }
+    #[test] fn top128_emband64_grow() { test_grow::<Top128_EmbAnd64>(); }
+    #[test] fn top128_embp2and64_basic() { test_basic::<Top128_EmbP2And64>(); }
+    #[test] fn top128_embp2and64_grow() { test_grow::<Top128_EmbP2And64>(); }
+    #[test] fn top255_emband64_basic() { test_basic::<Top255_EmbAnd64>(); }
+    #[test] fn top255_emband64_grow() { test_grow::<Top255_EmbAnd64>(); }
+    #[test] fn top255_embp2and64_basic() { test_basic::<Top255_EmbP2And64>(); }
+    #[test] fn top255_embp2and64_grow() { test_grow::<Top255_EmbP2And64>(); }
     #[test] fn top128_1bit_and64_basic() { test_basic::<Top128_1bitAnd64>(); }
     #[test] fn top128_1bit_and64_grow() { test_grow::<Top128_1bitAnd64>(); }
     #[test] fn top128_1bit_and64_clone() { test_clone::<Top128_1bitAnd64>(); }

@@ -47,6 +47,15 @@ macro_rules! matrix_maps {
         $helper::<Splitsies<u64, u64>>($group, "Lo8_8bit", $($args),*);
         $helper::<UnorderedFlatMap<u64, u64>>($group, "Ufm", $($args),*);
         $helper::<Gaps<u64, u64>>($group, "Gaps", $($args),*);
+        // 16-slot embedded-overflow matrix entries (other tags)
+        $helper::<Hi8_EmbMap<u64, u64>>($group, "Hi8_Emb", $($args),*);
+        $helper::<Hi8_EmbP2Map<u64, u64>>($group, "Hi8_EmbP2", $($args),*);
+        $helper::<Lo128_EmbMap<u64, u64>>($group, "Lo128_Emb", $($args),*);
+        $helper::<Lo128_EmbP2Map<u64, u64>>($group, "Lo128_EmbP2", $($args),*);
+        $helper::<Top128_EmbAndMap<u64, u64>>($group, "Top128_EmbAnd", $($args),*);
+        $helper::<Top128_EmbP2AndMap<u64, u64>>($group, "Top128_EmbP2And", $($args),*);
+        $helper::<Top255_EmbAndMap<u64, u64>>($group, "Top255_EmbAnd", $($args),*);
+        $helper::<Top255_EmbP2AndMap<u64, u64>>($group, "Top255_EmbP2And", $($args),*);
         $helper::<InPlaceOverflow<u64, u64>>($group, "Tombstone", $($args),*);
         // 8-bit overflow variants
         $helper::<Hi8_8bitMap<u64, u64>>($group, "Hi8_8bit", $($args),*);
@@ -69,6 +78,15 @@ macro_rules! matrix_maps {
         $helper::<Lo128_1bit32Map<u64, u64>>($group, "Lo128_1bit32", $($args),*);
         $helper::<Ufm32Map<u64, u64>>($group, "Ufm32", $($args),*);
         $helper::<Gaps32Map<u64, u64>>($group, "Gaps32", $($args),*);
+        // Embedded-overflow matrix entries (other tags)
+        $helper::<Hi8_Emb32Map<u64, u64>>($group, "Hi8_Emb32", $($args),*);
+        $helper::<Hi8_EmbP232Map<u64, u64>>($group, "Hi8_EmbP232", $($args),*);
+        $helper::<Lo128_Emb32Map<u64, u64>>($group, "Lo128_Emb32", $($args),*);
+        $helper::<Lo128_EmbP232Map<u64, u64>>($group, "Lo128_EmbP232", $($args),*);
+        $helper::<Top128_EmbAnd32Map<u64, u64>>($group, "Top128_EmbAnd32", $($args),*);
+        $helper::<Top128_EmbP2And32Map<u64, u64>>($group, "Top128_EmbP2And32", $($args),*);
+        $helper::<Top255_EmbAnd32Map<u64, u64>>($group, "Top255_EmbAnd32", $($args),*);
+        $helper::<Top255_EmbP2And32Map<u64, u64>>($group, "Top255_EmbP2And32", $($args),*);
         $helper::<Top128_1bitAnd32Map<u64, u64>>($group, "Top128_1bitAnd32", $($args),*);
         $helper::<Top255_1bitAnd32Map<u64, u64>>($group, "Top255_1bitAnd32", $($args),*);
         $helper::<Top128_8bitAnd32Map<u64, u64>>($group, "Top128_8bitAnd32", $($args),*);
@@ -82,6 +100,14 @@ macro_rules! matrix_maps {
         $helper::<Lo128_1bit64Map<u64, u64>>($group, "Lo128_1bit64", $($args),*);
         $helper::<Ufm64Map<u64, u64>>($group, "Ufm64", $($args),*);
         $helper::<Gaps64Map<u64, u64>>($group, "Gaps64", $($args),*);
+        $helper::<Hi8_Emb64Map<u64, u64>>($group, "Hi8_Emb64", $($args),*);
+        $helper::<Hi8_EmbP264Map<u64, u64>>($group, "Hi8_EmbP264", $($args),*);
+        $helper::<Lo128_Emb64Map<u64, u64>>($group, "Lo128_Emb64", $($args),*);
+        $helper::<Lo128_EmbP264Map<u64, u64>>($group, "Lo128_EmbP264", $($args),*);
+        $helper::<Top128_EmbAnd64Map<u64, u64>>($group, "Top128_EmbAnd64", $($args),*);
+        $helper::<Top128_EmbP2And64Map<u64, u64>>($group, "Top128_EmbP2And64", $($args),*);
+        $helper::<Top255_EmbAnd64Map<u64, u64>>($group, "Top255_EmbAnd64", $($args),*);
+        $helper::<Top255_EmbP2And64Map<u64, u64>>($group, "Top255_EmbP2And64", $($args),*);
         $helper::<Top128_1bitAnd64Map<u64, u64>>($group, "Top128_1bitAnd64", $($args),*);
         $helper::<Top255_1bitAnd64Map<u64, u64>>($group, "Top255_1bitAnd64", $($args),*);
         $helper::<Top128_8bitAnd64Map<u64, u64>>($group, "Top128_8bitAnd64", $($args),*);

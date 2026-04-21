@@ -8,6 +8,11 @@
 //! The `Layout16<T, O>` generic struct makes new matrix entries trivial:
 //! just pick a tag strategy and overflow strategy.
 
+// Matrix entry type aliases use mixed-case conventions (e.g. Hi8_Emb,
+// Top128_EmbAnd) that combine tag/overflow/index shorthand. Suppress the
+// camel-case lint for this file.
+#![allow(non_camel_case_types)]
+
 use std::marker::PhantomData;
 
 use super::bitmask::{BitMask, BitMask32, BitMask64, BitMaskOps};
@@ -438,6 +443,48 @@ impl OverflowStrategy for EmbeddedOverflow {
 pub type UfmEmbeddedOverflow = EmbeddedOverflow;
 pub type GapsEmbeddedOverflow = EmbeddedOverflow;
 
+// ── Generic embedded-overflow layouts ──────────────────────────────────────
+// Parametric over tag strategy. `EmbCompact` uses compact bucket stride
+// (GROUP_SIZE), `EmbP2` uses power-of-2 stride (META_STRIDE, wasting 1 bucket
+// per group). `*And` variants use AND-based group indexing — requires a tag
+// whose `overflow_channel` also comes from top bits (TopTag128Ch /
+// TopTag255Ch) to avoid correlation with the low-bit group index.
+
+macro_rules! define_embedded_layout {
+    ($name:ident, $grp:ty, $gs:expr, $bs:expr, $ms:expr, $and:expr) => {
+        #[derive(Clone, Copy)]
+        pub struct $name<T: TagStrategy>(PhantomData<T>);
+        impl<T: TagStrategy> GroupLayout for $name<T> {
+            type Grp = $grp;
+            type Tag = T;
+            type Overflow = EmbeddedOverflow;
+            const GROUP_SIZE: usize = $gs;
+            const BUCKET_STRIDE: usize = $bs;
+            const META_STRIDE: usize = $ms;
+            const SEPARATE_OVERFLOW: bool = false;
+            const AND_INDEX: bool = $and;
+        }
+    };
+}
+
+// 16-byte metadata, 15 usable slots (byte 15 is overflow)
+define_embedded_layout!(Layout16EmbCompact,    Group<0x7FFF>, 15, 15, 16, false);
+define_embedded_layout!(Layout16EmbP2,         Group<0x7FFF>, 15, 16, 16, false);
+define_embedded_layout!(Layout16EmbCompactAnd, Group<0x7FFF>, 15, 15, 16, true);
+define_embedded_layout!(Layout16EmbP2And,      Group<0x7FFF>, 15, 16, 16, true);
+
+// 32-byte metadata, 31 usable slots (byte 31 is overflow)
+define_embedded_layout!(Layout32EmbCompact,    Group32<0x7FFF_FFFF>, 31, 31, 32, false);
+define_embedded_layout!(Layout32EmbP2,         Group32<0x7FFF_FFFF>, 31, 32, 32, false);
+define_embedded_layout!(Layout32EmbCompactAnd, Group32<0x7FFF_FFFF>, 31, 31, 32, true);
+define_embedded_layout!(Layout32EmbP2And,      Group32<0x7FFF_FFFF>, 31, 32, 32, true);
+
+// 64-byte metadata, 63 usable slots (byte 63 is overflow)
+define_embedded_layout!(Layout64EmbCompact,    Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, false);
+define_embedded_layout!(Layout64EmbP2,         Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, false);
+define_embedded_layout!(Layout64EmbCompactAnd, Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, true);
+define_embedded_layout!(Layout64EmbP2And,      Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, true);
+
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
 use super::overflow_strategy::BitSeparate;
@@ -536,3 +583,41 @@ pub type Top128_8bitAnd64 = Layout64And<TopTag128Ch, ByteSeparate>;
 
 /// Top255_8bitAnd64: 64-slot AND-indexed, 255-value top tag + 8-channel overflow.
 pub type Top255_8bitAnd64 = Layout64And<TopTag255Ch, ByteSeparate>;
+
+// ── Embedded-overflow matrix entries ──────────────────────────────────────
+// Covers all tag × stride × indexing combinations at 15/31/63-slot widths
+// (the "embedded" family — one overflow byte at position meta_stride-1).
+// LowByte255 variants (UfmLayout/GapsLayout/Ufm32Layout/Gaps32Layout/
+// Ufm64Layout/Gaps64Layout) already exist above.
+
+// Hi8 (decorrelated 255-tag, shift indexing)
+pub type Hi8_Emb    = Layout16EmbCompact<HighByte255>;
+pub type Hi8_EmbP2  = Layout16EmbP2<HighByte255>;
+pub type Hi8_Emb32   = Layout32EmbCompact<HighByte255>;
+pub type Hi8_EmbP232 = Layout32EmbP2<HighByte255>;
+pub type Hi8_Emb64   = Layout64EmbCompact<HighByte255>;
+pub type Hi8_EmbP264 = Layout64EmbP2<HighByte255>;
+
+// Lo128 (128-value low-byte tag, shift indexing; faster hash_tag)
+pub type Lo128_Emb    = Layout16EmbCompact<LowByte128>;
+pub type Lo128_EmbP2  = Layout16EmbP2<LowByte128>;
+pub type Lo128_Emb32   = Layout32EmbCompact<LowByte128>;
+pub type Lo128_EmbP232 = Layout32EmbP2<LowByte128>;
+pub type Lo128_Emb64   = Layout64EmbCompact<LowByte128>;
+pub type Lo128_EmbP264 = Layout64EmbP2<LowByte128>;
+
+// Top128Ch + AND indexing (tag AND channel from top bits — decorrelated from AND group index)
+pub type Top128_EmbAnd    = Layout16EmbCompactAnd<TopTag128Ch>;
+pub type Top128_EmbP2And  = Layout16EmbP2And<TopTag128Ch>;
+pub type Top128_EmbAnd32   = Layout32EmbCompactAnd<TopTag128Ch>;
+pub type Top128_EmbP2And32 = Layout32EmbP2And<TopTag128Ch>;
+pub type Top128_EmbAnd64   = Layout64EmbCompactAnd<TopTag128Ch>;
+pub type Top128_EmbP2And64 = Layout64EmbP2And<TopTag128Ch>;
+
+// Top255Ch + AND indexing (255-value top-bit tag, shifted channels)
+pub type Top255_EmbAnd    = Layout16EmbCompactAnd<TopTag255Ch>;
+pub type Top255_EmbP2And  = Layout16EmbP2And<TopTag255Ch>;
+pub type Top255_EmbAnd32   = Layout32EmbCompactAnd<TopTag255Ch>;
+pub type Top255_EmbP2And32 = Layout32EmbP2And<TopTag255Ch>;
+pub type Top255_EmbAnd64   = Layout64EmbCompactAnd<TopTag255Ch>;
+pub type Top255_EmbP2And64 = Layout64EmbP2And<TopTag255Ch>;
