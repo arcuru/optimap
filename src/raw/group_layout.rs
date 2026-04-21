@@ -309,92 +309,10 @@ use super::tag_strategy::LowByte255;
 /// Splitsies: 16-slot, separate byte overflow, low-byte tag.
 pub type SplitsiesLayout = Layout16<LowByte255, ByteSeparate>;
 
-/// UFM: 15-slot, embedded overflow at byte 15, low-byte tag, compact stride.
-#[derive(Clone, Copy)]
-pub struct UfmLayout;
-
-impl GroupLayout for UfmLayout {
-    type Grp = Group<0x7FFF>;
-    type Tag = LowByte255;
-    type Overflow = UfmEmbeddedOverflow;
-    const GROUP_SIZE: usize = 15;
-    const BUCKET_STRIDE: usize = 15;
-    const SEPARATE_OVERFLOW: bool = false;
-}
-
-/// Gaps: 15-slot, embedded overflow at byte 15, low-byte tag, power-of-2 stride.
-#[derive(Clone, Copy)]
-pub struct GapsLayout;
-
-impl GroupLayout for GapsLayout {
-    type Grp = Group<0x7FFF>;
-    type Tag = LowByte255;
-    type Overflow = GapsEmbeddedOverflow;
-    const GROUP_SIZE: usize = 15;
-    const BUCKET_STRIDE: usize = 16;
-    const SEPARATE_OVERFLOW: bool = false;
-}
-
-// ── Embedded overflow at 32/64-slot widths ────────────────────────────────
-// Same trick: last byte of each metadata group is the overflow byte.
-// Needs a SLOT_MASK that masks off the top bit (bit 31 at 32-slot,
-// bit 63 at 64-slot) so the overflow byte is never matched as a hash tag.
-
-/// UFM-32: 31-slot, embedded overflow at byte 31, low-byte tag, compact stride.
-#[derive(Clone, Copy)]
-pub struct Ufm32Layout;
-
-impl GroupLayout for Ufm32Layout {
-    type Grp = Group32<0x7FFF_FFFF>;
-    type Tag = LowByte255;
-    type Overflow = EmbeddedOverflow;
-    const GROUP_SIZE: usize = 31;
-    const BUCKET_STRIDE: usize = 31;
-    const META_STRIDE: usize = 32;
-    const SEPARATE_OVERFLOW: bool = false;
-}
-
-/// Gaps-32: 31-slot, embedded overflow at byte 31, low-byte tag, power-of-2 stride.
-#[derive(Clone, Copy)]
-pub struct Gaps32Layout;
-
-impl GroupLayout for Gaps32Layout {
-    type Grp = Group32<0x7FFF_FFFF>;
-    type Tag = LowByte255;
-    type Overflow = EmbeddedOverflow;
-    const GROUP_SIZE: usize = 31;
-    const BUCKET_STRIDE: usize = 32;
-    const META_STRIDE: usize = 32;
-    const SEPARATE_OVERFLOW: bool = false;
-}
-
-/// UFM-64: 63-slot, embedded overflow at byte 63, low-byte tag, compact stride.
-#[derive(Clone, Copy)]
-pub struct Ufm64Layout;
-
-impl GroupLayout for Ufm64Layout {
-    type Grp = Group64<0x7FFF_FFFF_FFFF_FFFF>;
-    type Tag = LowByte255;
-    type Overflow = EmbeddedOverflow;
-    const GROUP_SIZE: usize = 63;
-    const BUCKET_STRIDE: usize = 63;
-    const META_STRIDE: usize = 64;
-    const SEPARATE_OVERFLOW: bool = false;
-}
-
-/// Gaps-64: 63-slot, embedded overflow at byte 63, low-byte tag, power-of-2 stride.
-#[derive(Clone, Copy)]
-pub struct Gaps64Layout;
-
-impl GroupLayout for Gaps64Layout {
-    type Grp = Group64<0x7FFF_FFFF_FFFF_FFFF>;
-    type Tag = LowByte255;
-    type Overflow = EmbeddedOverflow;
-    const GROUP_SIZE: usize = 63;
-    const BUCKET_STRIDE: usize = 64;
-    const META_STRIDE: usize = 64;
-    const SEPARATE_OVERFLOW: bool = false;
-}
+// UfmLayout / GapsLayout / Ufm{32,64}Layout / Gaps{32,64}Layout are now
+// type aliases over the generic embedded-overflow layouts defined below
+// (after the EmbeddedOverflow strategy). Placed after the generics to avoid
+// a forward declaration.
 
 // ── Embedded overflow for UFM/Gaps ─────────────────────────────────────────
 // These can't use the generic OverflowStrategy because the overflow byte
@@ -484,6 +402,21 @@ define_embedded_layout!(Layout64EmbCompact,    Group64<0x7FFF_FFFF_FFFF_FFFF>, 6
 define_embedded_layout!(Layout64EmbP2,         Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, false);
 define_embedded_layout!(Layout64EmbCompactAnd, Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, true);
 define_embedded_layout!(Layout64EmbP2And,      Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, true);
+
+// ── UFM / Gaps layouts (Lo8 tag + embedded overflow at every width) ───────
+
+/// UFM: 15-slot, embedded overflow at byte 15, compact stride 15, low-byte tag.
+pub type UfmLayout = Layout16EmbCompact<LowByte255>;
+/// Gaps: 15-slot, embedded overflow at byte 15, power-of-2 stride 16, low-byte tag.
+pub type GapsLayout = Layout16EmbP2<LowByte255>;
+/// UFM-32: 31-slot, embedded overflow at byte 31, compact stride 31.
+pub type Ufm32Layout = Layout32EmbCompact<LowByte255>;
+/// Gaps-32: 31-slot, embedded overflow at byte 31, power-of-2 stride 32.
+pub type Gaps32Layout = Layout32EmbP2<LowByte255>;
+/// UFM-64: 63-slot, embedded overflow at byte 63, compact stride 63.
+pub type Ufm64Layout = Layout64EmbCompact<LowByte255>;
+/// Gaps-64: 63-slot, embedded overflow at byte 63, power-of-2 stride 64.
+pub type Gaps64Layout = Layout64EmbP2<LowByte255>;
 
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
