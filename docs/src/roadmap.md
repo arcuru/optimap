@@ -114,6 +114,14 @@ Candidates identified during the Group32/Group64 landing:
    and trusted LLVM to fold the multiply; same change applied to
    `ipo64::bucket_ptr`. Bench signal was lost in machine noise at this
    granularity, but codegen is strictly better (1 µop saved per call).
+
+5. ~~**Non-pow2 stride cost (Ufm32/Ufm64 compact stride)**~~ **Tiny,
+   keep the design.** LLVM compiles Ufm32's `gi * 31` as `gi * 32 - gi`
+   but reuses the `gi * 32` already computed for the meta_ptr, so the
+   only actual cost is a single `sub %gi, %r9` (1 µop) per bucket access
+   vs Gaps32's pow-2 stride. Saves 1/32 bucket of memory per group. Net
+   trade is worth keeping both compact-stride (Ufm) and pow-2-stride
+   (Gaps) variants at each width.
 2. ~~**AVX-512 mask-register fusion**~~ **Verified optimal, no action.**
    Inspection of the matrix bench disassembly shows LLVM emits:
    - `vpcmpeqb (mem), %zmm0, %k0` — load fused with compare
@@ -122,6 +130,9 @@ Candidates identified during the Group32/Group64 landing:
    - `kortestq` on k-registers for "any match" tests (no kmovq round-trip)
    - Single `kmovq` to GP only when iteration (`tzcnt`/`blsr`) is needed
    - `& SLOT_MASK` elided for full-width (all-ones) SLOT_MASK
+   - **`match_byte_and_empty` reuses the load**: one `vmovdqa64 %zmm0`,
+     then `vpcmpeqb` + `vptestnmb` both on `%zmm0` producing `%k0` and
+     `%k1`. Zero spurious reloads.
    LLVM was already smarter than our source. Nothing to hand-optimize.
 3. ~~**Inline propagation audit**~~ **Verified clean.** `objdump` of the
    matrix bench binary shows zero `call` instructions targeting
