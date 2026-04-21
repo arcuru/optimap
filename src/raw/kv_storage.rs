@@ -105,7 +105,7 @@ pub struct AoS;
 impl<K, V> KvStorage<K, V> for AoS {
     type Extra = ();
 
-    fn extra_null() -> () {}
+    fn extra_null() {}
 
     fn backward_size(num_slots: usize) -> usize {
         let raw = num_slots * std::mem::size_of::<(K, V)>();
@@ -119,7 +119,7 @@ impl<K, V> KvStorage<K, V> for AoS {
         16usize.max(std::mem::align_of::<(K, V)>())
     }
 
-    unsafe fn init_extra(_ctrl: *mut u8, _values_offset: usize) -> () {}
+    unsafe fn init_extra(_ctrl: *mut u8, _values_offset: usize) {}
 
     #[inline(always)]
     unsafe fn key_ptr(ctrl: *mut u8, idx: usize) -> *mut K {

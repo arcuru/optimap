@@ -106,7 +106,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
     /// Whether the table has a real allocation (not the empty sentinel).
     #[inline(always)]
     pub(crate) fn is_allocated(&self) -> bool {
-        self.metadata != EMPTY_SENTINEL.0.as_ptr() as *mut u8
+        !std::ptr::eq(self.metadata, EMPTY_SENTINEL.0.as_ptr())
     }
 
     pub(crate) fn groups_for_capacity(capacity: usize) -> usize {

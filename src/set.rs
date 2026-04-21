@@ -289,7 +289,7 @@ where
 
     /// Clears the set, returning all elements as an iterator.
     pub fn drain(&mut self) -> SetIntoIter<T> {
-        let table = std::mem::replace(&mut self.table, RawTable::new());
+        let table = std::mem::take(&mut self.table);
         let mask = if table.metadata.is_null() {
             crate::raw::bitmask::BitMask(0)
         } else {

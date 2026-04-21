@@ -1,3 +1,6 @@
+// Index loops here are clearer than .iter().enumerate().take(n).skip(prev_n).
+#![allow(clippy::needless_range_loop)]
+
 //! Sweep benchmark harness — measures operation throughput as a function of N.
 //!
 //! Produces CSV to stdout for plotting. Not criterion — raw `Instant` timing

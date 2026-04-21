@@ -114,6 +114,10 @@
 
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
+// The SIMD group ops (GroupOps, Group{,32,64}::match_*, etc.) share a single
+// precondition (16/32/64-byte-aligned metadata pointer). Safety docs live at
+// the trait / module level rather than per-method.
+#![allow(clippy::missing_safety_doc)]
 
 // ── Hash tag extraction (feature-gated) ───────────────────────────────────
 

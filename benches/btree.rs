@@ -581,7 +581,7 @@ fn bench_churn(c: &mut Criterion) {
         let mut rng = Sfc64::new(77);
         let ops: Vec<(bool, u64)> = (0..n_ops)
             .map(|_| {
-                let is_insert = rng.next_u64() % 2 == 0;
+                let is_insert = rng.next_u64().is_multiple_of(2);
                 let key = if is_insert {
                     rng.next_u64()
                 } else {

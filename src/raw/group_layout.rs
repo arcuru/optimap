@@ -188,9 +188,9 @@ pub trait GroupLayout: 'static + Copy {
     ///
     /// Using `+` rather than `|` even for power-of-2 strides is intentional:
     /// LLVM folds `gi * const_pow2 + si` into a single `lea` (2 µops total:
-    /// shift-in-place + LEA), while `(gi << N) | si` forces a `mov` + `shl`
-    /// + `or` (3 µops) because LEA cannot fuse bitwise OR. Leave the
-    /// multiply form and trust the backend.
+    /// shift-in-place + LEA), while `(gi << N) | si` forces a `mov` + `shl` +
+    /// `or` (3 µops) because LEA cannot fuse bitwise OR. Leave the multiply
+    /// form and trust the backend.
     #[inline(always)]
     fn bucket_index(gi: usize, si: usize) -> usize {
         gi * Self::BUCKET_STRIDE + si

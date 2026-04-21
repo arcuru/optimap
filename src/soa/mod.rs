@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]  // Matrix types follow the shared Hi128_Tomb / Top128_Tomb naming convention
+
 //! SoA (Structure-of-Arrays) hash map designs.
 //!
 //! Stores keys and values in separate arrays instead of interleaved `(K, V)` tuples.

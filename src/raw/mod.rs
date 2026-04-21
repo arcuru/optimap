@@ -92,6 +92,13 @@ impl<K, V> RawTable<K, V> {
         table.allocate(num_groups);
         table
     }
+}
+
+impl<K, V> Default for RawTable<K, V> {
+    fn default() -> Self { Self::new() }
+}
+
+impl<K, V> RawTable<K, V> {
 
     #[inline(always)]
     pub fn len(&self) -> usize {
