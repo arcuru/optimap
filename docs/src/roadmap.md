@@ -40,6 +40,7 @@ thoroughly investigated and proven unproductive — see
 | Mid-pointer for 15-slot designs | Already implemented — UFM and Gaps share `overflow_table::RawTable<K,V,L>` which uses mid-pointer layout. Embedded overflow at byte 15 means exactly 2 memory regions, same as tombstone designs. |
 | Borrow indirection in insert/entry | Investigated: already eliminated. Insert hot path uses `bucket.0 == key` directly. Cold fallback closures produce identical codegen via `#[inline(always)]` monomorphization. Added `find_by_hash_eq` wrapper for clarity, no perf impact. |
 | Key-value separation (SoA layout) | `SoaRawTable<K,V,L>` + `SoaGenericMap` with separate key/value arrays. 7 matrix variants. Mid-pointer for keys, values after metadata+overflow. At 10K entries: competitive with Splitsies (32µs vs 31µs hit, 142µs vs 133µs insert for 256B values). Key-only probing may show more benefit at larger table sizes. |
+| 32-slot (AVX2) and 64-slot (AVX-512) overflow-bit groups | `Group32<u32>` (1× 256-bit cmpeq+movemask) and `Group64<u64>` (1× 512-bit cmpeq_mask) added with compile-time `cfg(target_feature)` tier selection (AVX-512 → AVX2 → SSE2 → scalar Miri). New named layouts: `Splitsies32/64`, `Splitsies{32,64}_1bit`, `Hi8_1bit{32,64}`, `Top{128,255}_{1bit,8bit}And{32,64}`. Required `META_STRIDE`/`META_ALIGN` parameterization on `GroupLayout` and `meta_stride` parameter on `OverflowStrategy::overflow_ptr`. Initial benches at 9.4K entries / 70% load: 32-slot variants match 16-slot on hit/insert and slightly improve miss (`Top128_1bitAnd32`: 698 Mel/s miss vs 629 baseline, +11%); 64-slot underperforms 16-slot on hit/remove. No clear win at this size — wider groups may shine at higher load factors or for high-collision workloads, where home-group hit rate dominates. UFM/Gaps stay at 15-slot (embedded-overflow byte-15 trick is intrinsic to 16-byte metadata). |
 
 ## Open — Hash Maps
 
@@ -60,45 +61,17 @@ thoroughly investigated and proven unproductive — see
 These explore new axes in the parameterized design matrix. Each is a new
 composition of existing traits or a small trait extension.
 
-#### Group size parameterization for overflow-bit designs
+#### Sweep benchmarks for 32/64-slot variants
 
-**Difficulty**: Medium — extend `GroupLayout` or new `RawTable` variants \
-**Expected impact**: Unknown — needs benchmarking
+**Difficulty**: Low — extend the existing sweep harness \
+**Expected impact**: Unknown — initial point-bench at 9.4K showed no win
 
-IPO64 demonstrated that 64-slot groups trade per-probe cost for fewer
-probe steps at high load. The same idea applies to the overflow-bit
-family: what if Splitsies, UFM, or Gaps used 32-slot or 64-slot groups
-instead of 15/16?
-
-Currently only the tombstone family has been explored at multiple group
-sizes (IPO16 vs IPO64). The overflow-bit designs are locked to 15-slot
-(UFM, Gaps) or 16-slot (Splitsies, matrix variants). Experimenting with
-larger groups would reveal whether the overflow-bit miss-termination
-advantage scales differently than tombstone-based probe termination at
-larger group widths.
-
-Concrete experiments:
-- 32-slot overflow-bit groups (AVX2: single `vpcmpeqb ymm` for tag match)
-- 64-slot overflow-bit groups (AVX-512, matching IPO64's approach)
-- Both with 1-bit and 8-bit overflow strategies
-- AND vs shift indexing at each size
-
-The tag × overflow × group-size × indexing matrix is large; sweep
-benchmarks would be the right tool to compare them.
-
-#### 32-slot AVX2 groups
-
-**Difficulty**: High — new Group implementation \
-**Expected impact**: Fewer probes for large tables
-
-IPO64 already does 64-slot groups with AVX-512. A 32-slot AVX2 variant
-would be a middle ground available on more hardware (AVX2 is ubiquitous,
-AVX-512 is not). 32 bytes of metadata per group, `vpcmpeqb ymm` for
-matching. Doubles the chance of a home-group hit vs 16-slot.
-
-Trade-off: larger groups = more wasted space at low load, more false
-matches to iterate through per group. Metadata is 32-byte aligned
-instead of 16-byte.
+Initial benchmarks at one size (9.4K, 70% load) showed 32-slot variants
+matching 16-slot on hit/insert with a small +11% on miss for
+`Top128_1bitAnd32`, while 64-slot underperformed on hit/remove. Wider
+groups may shine at higher load factors (>87%) or for collision-heavy
+workloads where the home-group hit rate dominates. A continuous N-sweep
+across the full size range would reveal the crossover regime.
 
 ### Structural (Speculative)
 
