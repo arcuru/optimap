@@ -11,6 +11,8 @@
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 use std::arch::x86_64::*;
 
+pub use crate::raw::bitmask::BitMask64;
+
 /// Number of element slots per group (one cache line of metadata).
 pub const GROUP_SIZE: usize = 64;
 
@@ -22,41 +24,6 @@ pub const EMPTY: u8 = 0x00;
 
 /// Metadata byte: slot was occupied but has been deleted.
 pub const TOMBSTONE: u8 = 0x01;
-
-/// 64-bit bitmask for 64-slot groups.
-#[derive(Clone, Copy, Debug)]
-pub struct BitMask64(pub u64);
-
-impl BitMask64 {
-    #[inline]
-    pub fn any_set(self) -> bool {
-        self.0 != 0
-    }
-
-    #[inline]
-    pub fn lowest_set_bit(self) -> Option<usize> {
-        if self.0 == 0 {
-            None
-        } else {
-            Some(self.0.trailing_zeros() as usize)
-        }
-    }
-}
-
-impl Iterator for BitMask64 {
-    type Item = usize;
-
-    #[inline]
-    fn next(&mut self) -> Option<usize> {
-        if self.0 == 0 {
-            None
-        } else {
-            let idx = self.0.trailing_zeros() as usize;
-            self.0 &= self.0 - 1;
-            Some(idx)
-        }
-    }
-}
 
 // ── x86_64 implementation with runtime dispatch ─────────────────────────────
 

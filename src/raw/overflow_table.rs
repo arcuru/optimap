@@ -10,7 +10,7 @@ use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::ptr;
 
-use super::bitmask::BitMask;
+use super::bitmask::BitMaskOps;
 use super::generic_group::EMPTY;
 use super::group_layout::{GroupLayout, GroupOps};
 use super::hash;
@@ -25,10 +25,13 @@ fn max_load_for_capacity(capacity: usize, num: usize, den: usize) -> usize {
     capacity * num / den
 }
 
-/// Static sentinel for empty tables. Sized for the largest layout (32 bytes).
-#[repr(align(16))]
-struct EmptySentinel([u8; 32]);
-static EMPTY_SENTINEL: EmptySentinel = EmptySentinel([0; 32]);
+/// Static sentinel for empty tables. Sized + aligned for the largest layout
+/// (64-byte AVX-512 load). 16-slot SSE2 only needs 16 bytes / 16-byte align,
+/// 32-slot AVX2 needs 32 / 32, 64-slot AVX-512 needs 64 / 64. The strictest
+/// case wins; smaller groups read the same all-zero sentinel safely.
+#[repr(align(64))]
+struct EmptySentinel([u8; 64]);
+static EMPTY_SENTINEL: EmptySentinel = EmptySentinel([0; 64]);
 
 /// The core overflow-bit hash table engine, generic over group layout.
 ///
@@ -84,7 +87,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
     #[inline(always)]
     pub(crate) unsafe fn meta_ptr(&self, gi: usize) -> *mut u8 {
-        unsafe { self.ctrl.add(gi * 16) }
+        unsafe { self.ctrl.add(gi * L::META_STRIDE) }
     }
 
     /// Overflow data is stored after metadata, so it's addressed forward from ctrl
@@ -106,7 +109,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
     #[inline(always)]
     fn bytes_to_copy_total(num_groups: usize) -> usize {
-        num_groups * 16 + L::Overflow::overflow_bytes_to_copy(num_groups)
+        num_groups * L::META_STRIDE + L::Overflow::overflow_bytes_to_copy(num_groups)
     }
 
     #[inline(always)]
@@ -125,7 +128,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
     /// Byte offset from ctrl to start of values region (after metadata + overflow, aligned).
     fn values_offset(num_groups: usize) -> usize {
-        let meta_size = num_groups * 16;
+        let meta_size = num_groups * L::META_STRIDE;
         let overflow_size = L::Overflow::extra_alloc_bytes(num_groups);
         let raw_offset = meta_size + overflow_size;
         let val_align = S::values_align();
@@ -157,7 +160,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
             self.ctrl = alloc_ptr.add(backward);
             self.extra = S::init_extra(self.ctrl, values_offset);
             // Zero metadata + overflow (both forward from ctrl)
-            ptr::write_bytes(self.ctrl, 0, num_groups * 16 + L::Overflow::overflow_bytes_to_zero(num_groups));
+            ptr::write_bytes(self.ctrl, 0, num_groups * L::META_STRIDE + L::Overflow::overflow_bytes_to_zero(num_groups));
         }
 
         self.mask = num_groups - 1;
@@ -428,7 +431,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
         unsafe {
             for gi in 0..old_num_groups {
-                let group_meta = old_ctrl.add(gi * 16);
+                let group_meta = old_ctrl.add(gi * L::META_STRIDE);
                 for si in L::Grp::match_non_empty(group_meta) {
                     let idx = L::bucket_index(gi, si);
                     let (key, value) = S::read(old_ctrl, old_extra, idx);
@@ -441,9 +444,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
         }
     }
 
-    fn first_non_empty_mask(&self) -> BitMask {
+    fn first_non_empty_mask(&self) -> <L::Grp as GroupOps>::Mask {
         if self.max_load == 0 {
-            BitMask(0)
+            <L::Grp as GroupOps>::empty_mask()
         } else {
             unsafe { L::Grp::match_non_empty(self.ctrl) }
         }
@@ -558,13 +561,13 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         unsafe {
             if S::needs_drop() {
                 for gi in 0..self.mask + 1 {
-                    let group_meta = self.ctrl.add(gi * 16);
+                    let group_meta = self.ctrl.add(gi * L::META_STRIDE);
                     for si in L::Grp::match_non_empty(group_meta) {
                         S::drop_slot(self.ctrl, self.extra, L::bucket_index(gi, si));
                     }
                 }
             }
-            ptr::write_bytes(self.ctrl, 0, (self.mask + 1) * 16 + L::Overflow::overflow_bytes_to_zero(self.mask + 1));
+            ptr::write_bytes(self.ctrl, 0, (self.mask + 1) * L::META_STRIDE + L::Overflow::overflow_bytes_to_zero(self.mask + 1));
         }
         self.len = 0;
         self.max_load = max_load_for_capacity((self.mask + 1) * L::GROUP_SIZE, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
@@ -777,7 +780,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
             ptr::copy_nonoverlapping(self.ctrl, new_table.ctrl, copy_size);
 
             for gi in 0..self.mask + 1 {
-                let group_meta = self.ctrl.add(gi * 16);
+                let group_meta = self.ctrl.add(gi * L::META_STRIDE);
                 for si in L::Grp::match_non_empty(group_meta) {
                     let idx = L::bucket_index(gi, si);
                     S::clone_slot(self.ctrl, self.extra, new_table.ctrl, new_table.extra, idx);
@@ -799,7 +802,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Drop for RawTable<K, V, L, S> {
         if S::needs_drop() {
             unsafe {
                 for gi in 0..self.mask + 1 {
-                    let group_meta = self.ctrl.add(gi * 16);
+                    let group_meta = self.ctrl.add(gi * L::META_STRIDE);
                     for si in L::Grp::match_non_empty(group_meta) {
                         S::drop_slot(self.ctrl, self.extra, L::bucket_index(gi, si));
                     }
@@ -818,7 +821,7 @@ unsafe impl<K: Sync, V: Sync, L: GroupLayout, S: KvStorage<K, V>> Sync for RawTa
 pub struct SlotIter<'a, K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
     pub(crate) table: &'a RawTable<K, V, L, S>,
     group: usize,
-    current_mask: BitMask,
+    current_mask: <L::Grp as GroupOps>::Mask,
 }
 
 impl<'a, K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for SlotIter<'a, K, V, L, S> {
@@ -848,7 +851,7 @@ impl<'a, K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for SlotIter<'a, K, 
 pub struct IntoIter<K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
     table: RawTable<K, V, L, S>,
     group: usize,
-    current_mask: BitMask,
+    current_mask: <L::Grp as GroupOps>::Mask,
 }
 
 impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for IntoIter<K, V, L, S> {
@@ -861,7 +864,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for IntoIter<K, V, L, S>
                 unsafe {
                     let idx = L::bucket_index(gi, si);
                     let kv = S::read(self.table.ctrl, self.table.extra, idx);
-                    let meta = self.table.ctrl.add(gi * 16 + si);
+                    let meta = self.table.ctrl.add(gi * L::META_STRIDE + si);
                     *meta = EMPTY;
                     self.table.len -= 1;
                     return Some(kv);
@@ -871,7 +874,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for IntoIter<K, V, L, S>
             if self.group > self.table.mask {
                 return None;
             }
-            self.current_mask = unsafe { L::Grp::match_non_empty(self.table.ctrl.add(self.group * 16)) };
+            self.current_mask = unsafe { L::Grp::match_non_empty(self.table.ctrl.add(self.group * L::META_STRIDE)) };
         }
     }
 

@@ -10,27 +10,33 @@
 
 use std::marker::PhantomData;
 
-use super::bitmask::BitMask;
+use super::bitmask::{BitMask, BitMaskOps};
 use super::generic_group::Group;
 use super::overflow_strategy::OverflowStrategy;
 use super::tag_strategy::TagStrategy;
 
 /// Unified interface for SIMD group operations.
 ///
-/// Hides the const-generic `SLOT_MASK` parameter behind a trait so that
-/// `GroupLayout` can carry it as an associated type without requiring
-/// `generic_const_exprs` (unstable).
+/// The `Mask` associated type carries the bitmask width (u16 for 16-slot,
+/// u32 for 32-slot, u64 for 64-slot) without spreading generics through
+/// the table code.
 pub trait GroupOps {
-    unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask;
-    unsafe fn match_empty(ptr: *const u8) -> BitMask;
-    unsafe fn match_non_empty(ptr: *const u8) -> BitMask;
-    unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask, BitMask);
+    /// Bitmask type — width matches the group's slot count.
+    type Mask: BitMaskOps;
+
+    unsafe fn match_byte(ptr: *const u8, value: u8) -> Self::Mask;
+    unsafe fn match_empty(ptr: *const u8) -> Self::Mask;
+    unsafe fn match_non_empty(ptr: *const u8) -> Self::Mask;
+    unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (Self::Mask, Self::Mask);
+    fn empty_mask() -> Self::Mask;
     unsafe fn prefetch_read(ptr: *const u8);
     unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8;
     unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8);
 }
 
 impl<const M: u16> GroupOps for Group<M> {
+    type Mask = BitMask;
+
     #[inline(always)]
     unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
         unsafe { Group::<M>::match_byte(ptr, value) }
@@ -47,6 +53,8 @@ impl<const M: u16> GroupOps for Group<M> {
     unsafe fn match_byte_and_empty(ptr: *const u8, value: u8) -> (BitMask, BitMask) {
         unsafe { Group::<M>::match_byte_and_empty(ptr, value) }
     }
+    #[inline(always)]
+    fn empty_mask() -> BitMask { BitMask(0) }
     #[inline(always)]
     unsafe fn prefetch_read(ptr: *const u8) {
         unsafe { Group::<M>::prefetch_read(ptr) }
@@ -74,6 +82,10 @@ pub trait GroupLayout: 'static + Copy {
     const GROUP_SIZE: usize;
     /// Bucket array stride per group.
     const BUCKET_STRIDE: usize;
+    /// Metadata bytes per group (the SIMD load width).
+    /// Defaults to 16 for backward compat with 15/16-slot SSE2 designs;
+    /// 32-slot (AVX2) uses 32, 64-slot uses 64.
+    const META_STRIDE: usize = 16;
     /// Whether overflow is in a separate array (controls extra prefetch).
     const SEPARATE_OVERFLOW: bool;
 
