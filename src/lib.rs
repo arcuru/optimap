@@ -281,213 +281,114 @@ pub mod matrix_types {
     use crate::raw::overflow_table::RawTable;
     use crate::raw::tag_strategy::{HighByte128, TopByte128};
 
-    // Overflow-bit variants
-    pub type Hi8_8bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Hi8_8bit>>;
-    pub type Lo128_8bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo128_8bit>>;
-    pub type Lo8_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo8_1bit>>;
-    pub type Hi8_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Hi8_1bit>>;
-    pub type Lo128_1bitMap<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, Lo128_1bit>>;
+    /// Define a map type alias over `overflow_table::RawTable<K, V, $layout>` and
+    /// impl the `Map` trait for it in one go. Keeps matrix entries to one line.
+    macro_rules! matrix_map {
+        ($map:ident, $layout:ty) => {
+            pub type $map<K, V, S = DefaultHashBuilder> =
+                GenericMap<K, V, S, RawTable<K, V, $layout>>;
+            crate::traits::impl_map_trait!($map);
+        };
+    }
 
-    // AND-indexed overflow variants
-    pub type Top128_1bitAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd>>;
-    pub type Top255_1bitAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd>>;
-    pub type Top128_8bitAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd>>;
-    pub type Top255_8bitAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd>>;
+    /// Same but for the tombstone RawTable variants (IPO + IPO64) which have
+    /// their own RawTable type and take a `TombstoneTag` instead of a layout.
+    macro_rules! ipo_map {
+        ($map:ident, $tag:ty) => {
+            pub type $map<K, V, S = DefaultHashBuilder> =
+                GenericMap<K, V, S, crate::in_place_overflow::raw::RawTable<K, V, $tag>>;
+            crate::traits::impl_map_trait!($map);
+        };
+    }
 
-    // 32-slot (AVX2) overflow-bit variants
-    pub type Splitsies32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Splitsies32Layout>>;
-    pub type Splitsies32_1bitMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Splitsies32_1bit>>;
-    pub type Hi8_1bit32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_1bit32>>;
-    pub type Top128_1bitAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd32>>;
-    pub type Top255_1bitAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd32>>;
-    pub type Top128_8bitAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd32>>;
-    pub type Top255_8bitAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd32>>;
-    pub type Hi8_8bit32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_8bit32>>;
-    pub type Lo128_8bit32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_8bit32>>;
-    pub type Lo128_1bit32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_1bit32>>;
+    macro_rules! ipo64_map {
+        ($map:ident, $tag:ty) => {
+            pub type $map<K, V, S = DefaultHashBuilder> =
+                GenericMap<K, V, S, crate::ipo64::raw::RawTable<K, V, $tag>>;
+            crate::traits::impl_map_trait!($map);
+        };
+    }
 
-    // 32-slot embedded-overflow variants (Ufm32 / Gaps32)
-    pub type Ufm32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Ufm32Layout>>;
-    pub type Gaps32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Gaps32Layout>>;
+    // Separate-overflow at 16-slot (shift indexed)
+    matrix_map!(Hi8_8bitMap,        Hi8_8bit);
+    matrix_map!(Lo128_8bitMap,      Lo128_8bit);
+    matrix_map!(Lo8_1bitMap,        Lo8_1bit);
+    matrix_map!(Hi8_1bitMap,        Hi8_1bit);
+    matrix_map!(Lo128_1bitMap,      Lo128_1bit);
 
-    // 64-slot (AVX-512 / tiered) overflow-bit variants
-    pub type Splitsies64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Splitsies64Layout>>;
-    pub type Splitsies64_1bitMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Splitsies64_1bit>>;
-    pub type Hi8_1bit64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_1bit64>>;
-    pub type Top128_1bitAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd64>>;
-    pub type Top255_1bitAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd64>>;
-    pub type Top128_8bitAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd64>>;
-    pub type Top255_8bitAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd64>>;
-    pub type Hi8_8bit64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_8bit64>>;
-    pub type Lo128_8bit64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_8bit64>>;
-    pub type Lo128_1bit64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_1bit64>>;
+    // Separate-overflow at 16-slot (AND indexed)
+    matrix_map!(Top128_1bitAndMap,  Top128_1bitAnd);
+    matrix_map!(Top255_1bitAndMap,  Top255_1bitAnd);
+    matrix_map!(Top128_8bitAndMap,  Top128_8bitAnd);
+    matrix_map!(Top255_8bitAndMap,  Top255_8bitAnd);
 
-    // 64-slot embedded-overflow variants (Ufm64 / Gaps64)
-    pub type Ufm64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Ufm64Layout>>;
-    pub type Gaps64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Gaps64Layout>>;
+    // Separate-overflow at 32-slot (AVX2)
+    matrix_map!(Splitsies32Map,        Splitsies32Layout);
+    matrix_map!(Splitsies32_1bitMap,   Splitsies32_1bit);
+    matrix_map!(Hi8_1bit32Map,         Hi8_1bit32);
+    matrix_map!(Hi8_8bit32Map,         Hi8_8bit32);
+    matrix_map!(Lo128_8bit32Map,       Lo128_8bit32);
+    matrix_map!(Lo128_1bit32Map,       Lo128_1bit32);
+    matrix_map!(Top128_1bitAnd32Map,   Top128_1bitAnd32);
+    matrix_map!(Top255_1bitAnd32Map,   Top255_1bitAnd32);
+    matrix_map!(Top128_8bitAnd32Map,   Top128_8bitAnd32);
+    matrix_map!(Top255_8bitAnd32Map,   Top255_8bitAnd32);
 
-    // Embedded-overflow matrix (other tags, 3 widths × 2 strides × 2 index modes)
-    // — Hi8 (decorrelated 255 tag, shift indexing)
-    pub type Hi8_EmbMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_Emb>>;
-    pub type Hi8_EmbP2Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_EmbP2>>;
-    pub type Hi8_Emb32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_Emb32>>;
-    pub type Hi8_EmbP232Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_EmbP232>>;
-    pub type Hi8_Emb64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_Emb64>>;
-    pub type Hi8_EmbP264Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Hi8_EmbP264>>;
+    // Separate-overflow at 64-slot (AVX-512 / tiered fallback)
+    matrix_map!(Splitsies64Map,        Splitsies64Layout);
+    matrix_map!(Splitsies64_1bitMap,   Splitsies64_1bit);
+    matrix_map!(Hi8_1bit64Map,         Hi8_1bit64);
+    matrix_map!(Hi8_8bit64Map,         Hi8_8bit64);
+    matrix_map!(Lo128_8bit64Map,       Lo128_8bit64);
+    matrix_map!(Lo128_1bit64Map,       Lo128_1bit64);
+    matrix_map!(Top128_1bitAnd64Map,   Top128_1bitAnd64);
+    matrix_map!(Top255_1bitAnd64Map,   Top255_1bitAnd64);
+    matrix_map!(Top128_8bitAnd64Map,   Top128_8bitAnd64);
+    matrix_map!(Top255_8bitAnd64Map,   Top255_8bitAnd64);
 
-    // — Lo128 (128-value low tag, faster hash_tag, shift indexing)
-    pub type Lo128_EmbMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_Emb>>;
-    pub type Lo128_EmbP2Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_EmbP2>>;
-    pub type Lo128_Emb32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_Emb32>>;
-    pub type Lo128_EmbP232Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_EmbP232>>;
-    pub type Lo128_Emb64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_Emb64>>;
-    pub type Lo128_EmbP264Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Lo128_EmbP264>>;
+    // Embedded-overflow (UFM/Gaps-style) — Lo8 tag, all three widths
+    matrix_map!(Ufm32Map,  Ufm32Layout);
+    matrix_map!(Gaps32Map, Gaps32Layout);
+    matrix_map!(Ufm64Map,  Ufm64Layout);
+    matrix_map!(Gaps64Map, Gaps64Layout);
 
-    // — Top128Ch + AND-indexed embedded (first AND-indexed embedded variants)
-    pub type Top128_EmbAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbAnd>>;
-    pub type Top128_EmbP2AndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbP2And>>;
-    pub type Top128_EmbAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbAnd32>>;
-    pub type Top128_EmbP2And32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbP2And32>>;
-    pub type Top128_EmbAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbAnd64>>;
-    pub type Top128_EmbP2And64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top128_EmbP2And64>>;
+    // Embedded-overflow — Hi8 (decorrelated 255 tag, shift indexing)
+    matrix_map!(Hi8_EmbMap,      Hi8_Emb);
+    matrix_map!(Hi8_EmbP2Map,    Hi8_EmbP2);
+    matrix_map!(Hi8_Emb32Map,    Hi8_Emb32);
+    matrix_map!(Hi8_EmbP232Map,  Hi8_EmbP232);
+    matrix_map!(Hi8_Emb64Map,    Hi8_Emb64);
+    matrix_map!(Hi8_EmbP264Map,  Hi8_EmbP264);
 
-    // — Top255Ch + AND-indexed embedded
-    pub type Top255_EmbAndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbAnd>>;
-    pub type Top255_EmbP2AndMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbP2And>>;
-    pub type Top255_EmbAnd32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbAnd32>>;
-    pub type Top255_EmbP2And32Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbP2And32>>;
-    pub type Top255_EmbAnd64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbAnd64>>;
-    pub type Top255_EmbP2And64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, RawTable<K, V, Top255_EmbP2And64>>;
+    // Embedded-overflow — Lo128 (128-value low tag, faster hash_tag, shift)
+    matrix_map!(Lo128_EmbMap,      Lo128_Emb);
+    matrix_map!(Lo128_EmbP2Map,    Lo128_EmbP2);
+    matrix_map!(Lo128_Emb32Map,    Lo128_Emb32);
+    matrix_map!(Lo128_EmbP232Map,  Lo128_EmbP232);
+    matrix_map!(Lo128_Emb64Map,    Lo128_Emb64);
+    matrix_map!(Lo128_EmbP264Map,  Lo128_EmbP264);
 
-    // Tombstone variants — different tag strategies on IPO infrastructure
-    pub type Hi128_TombMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, crate::in_place_overflow::raw::RawTable<K, V, HighByte128>>;
-    pub type Top128_TombMap<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, crate::in_place_overflow::raw::RawTable<K, V, TopByte128>>;
+    // Embedded-overflow — Top128Ch + AND indexing (first AND-indexed embedded)
+    matrix_map!(Top128_EmbAndMap,      Top128_EmbAnd);
+    matrix_map!(Top128_EmbP2AndMap,    Top128_EmbP2And);
+    matrix_map!(Top128_EmbAnd32Map,    Top128_EmbAnd32);
+    matrix_map!(Top128_EmbP2And32Map,  Top128_EmbP2And32);
+    matrix_map!(Top128_EmbAnd64Map,    Top128_EmbAnd64);
+    matrix_map!(Top128_EmbP2And64Map,  Top128_EmbP2And64);
 
-    // IPO64 tombstone variants — different tag strategies on 64-slot groups
-    pub type Hi128_Tomb64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, crate::ipo64::raw::RawTable<K, V, HighByte128>>;
-    pub type Top128_Tomb64Map<K, V, S = DefaultHashBuilder> =
-        GenericMap<K, V, S, crate::ipo64::raw::RawTable<K, V, TopByte128>>;
+    // Embedded-overflow — Top255Ch + AND indexing
+    matrix_map!(Top255_EmbAndMap,      Top255_EmbAnd);
+    matrix_map!(Top255_EmbP2AndMap,    Top255_EmbP2And);
+    matrix_map!(Top255_EmbAnd32Map,    Top255_EmbAnd32);
+    matrix_map!(Top255_EmbP2And32Map,  Top255_EmbP2And32);
+    matrix_map!(Top255_EmbAnd64Map,    Top255_EmbAnd64);
+    matrix_map!(Top255_EmbP2And64Map,  Top255_EmbP2And64);
 
-    crate::traits::impl_map_trait!(Hi8_8bitMap);
-    crate::traits::impl_map_trait!(Lo128_8bitMap);
-    crate::traits::impl_map_trait!(Lo8_1bitMap);
-    crate::traits::impl_map_trait!(Hi8_1bitMap);
-    crate::traits::impl_map_trait!(Lo128_1bitMap);
-    crate::traits::impl_map_trait!(Top128_1bitAndMap);
-    crate::traits::impl_map_trait!(Top255_1bitAndMap);
-    crate::traits::impl_map_trait!(Top128_8bitAndMap);
-    crate::traits::impl_map_trait!(Top255_8bitAndMap);
-    crate::traits::impl_map_trait!(Splitsies32Map);
-    crate::traits::impl_map_trait!(Splitsies32_1bitMap);
-    crate::traits::impl_map_trait!(Hi8_1bit32Map);
-    crate::traits::impl_map_trait!(Top128_1bitAnd32Map);
-    crate::traits::impl_map_trait!(Top255_1bitAnd32Map);
-    crate::traits::impl_map_trait!(Top128_8bitAnd32Map);
-    crate::traits::impl_map_trait!(Top255_8bitAnd32Map);
-    crate::traits::impl_map_trait!(Hi8_8bit32Map);
-    crate::traits::impl_map_trait!(Lo128_8bit32Map);
-    crate::traits::impl_map_trait!(Lo128_1bit32Map);
-    crate::traits::impl_map_trait!(Ufm32Map);
-    crate::traits::impl_map_trait!(Gaps32Map);
-    crate::traits::impl_map_trait!(Splitsies64Map);
-    crate::traits::impl_map_trait!(Splitsies64_1bitMap);
-    crate::traits::impl_map_trait!(Hi8_1bit64Map);
-    crate::traits::impl_map_trait!(Top128_1bitAnd64Map);
-    crate::traits::impl_map_trait!(Top255_1bitAnd64Map);
-    crate::traits::impl_map_trait!(Top128_8bitAnd64Map);
-    crate::traits::impl_map_trait!(Top255_8bitAnd64Map);
-    crate::traits::impl_map_trait!(Hi8_8bit64Map);
-    crate::traits::impl_map_trait!(Lo128_8bit64Map);
-    crate::traits::impl_map_trait!(Lo128_1bit64Map);
-    crate::traits::impl_map_trait!(Ufm64Map);
-    crate::traits::impl_map_trait!(Gaps64Map);
-    // Embedded matrix — Hi8
-    crate::traits::impl_map_trait!(Hi8_EmbMap);
-    crate::traits::impl_map_trait!(Hi8_EmbP2Map);
-    crate::traits::impl_map_trait!(Hi8_Emb32Map);
-    crate::traits::impl_map_trait!(Hi8_EmbP232Map);
-    crate::traits::impl_map_trait!(Hi8_Emb64Map);
-    crate::traits::impl_map_trait!(Hi8_EmbP264Map);
-    // Embedded matrix — Lo128
-    crate::traits::impl_map_trait!(Lo128_EmbMap);
-    crate::traits::impl_map_trait!(Lo128_EmbP2Map);
-    crate::traits::impl_map_trait!(Lo128_Emb32Map);
-    crate::traits::impl_map_trait!(Lo128_EmbP232Map);
-    crate::traits::impl_map_trait!(Lo128_Emb64Map);
-    crate::traits::impl_map_trait!(Lo128_EmbP264Map);
-    // Embedded matrix — Top128 AND
-    crate::traits::impl_map_trait!(Top128_EmbAndMap);
-    crate::traits::impl_map_trait!(Top128_EmbP2AndMap);
-    crate::traits::impl_map_trait!(Top128_EmbAnd32Map);
-    crate::traits::impl_map_trait!(Top128_EmbP2And32Map);
-    crate::traits::impl_map_trait!(Top128_EmbAnd64Map);
-    crate::traits::impl_map_trait!(Top128_EmbP2And64Map);
-    // Embedded matrix — Top255 AND
-    crate::traits::impl_map_trait!(Top255_EmbAndMap);
-    crate::traits::impl_map_trait!(Top255_EmbP2AndMap);
-    crate::traits::impl_map_trait!(Top255_EmbAnd32Map);
-    crate::traits::impl_map_trait!(Top255_EmbP2And32Map);
-    crate::traits::impl_map_trait!(Top255_EmbAnd64Map);
-    crate::traits::impl_map_trait!(Top255_EmbP2And64Map);
-    crate::traits::impl_map_trait!(Hi128_TombMap);
-    crate::traits::impl_map_trait!(Top128_TombMap);
-    crate::traits::impl_map_trait!(Hi128_Tomb64Map);
-    crate::traits::impl_map_trait!(Top128_Tomb64Map);
+    // Tombstone variants — IPO/IPO64 take TombstoneTag instead of a layout
+    ipo_map!(Hi128_TombMap,    HighByte128);
+    ipo_map!(Top128_TombMap,   TopByte128);
+    ipo64_map!(Hi128_Tomb64Map,  HighByte128);
+    ipo64_map!(Top128_Tomb64Map, TopByte128);
 }
 
 // ── Traits ──────────────────────────────────────────────────────────────────
