@@ -42,7 +42,7 @@ Hash map designs split into two families based on deletion strategy:
 - Deletion clears the slot and adjusts max_load — no tombstones
 - Generic `RawTable<K,V,L: GroupLayout>` in `src/raw/overflow_table.rs`
 
-**Tombstone family**: InPlaceOverflow (IPO), IPO64, Hi128_Tomb, Top128_Tomb, Hi128_Tomb64, Top128_Tomb64
+**Tombstone family**: InPlaceOverflow (IPO), IPO64, `Byte2_254_TombMap`, `Byte7_128_TombMap`, `Byte7_254_Tomb64Map`
 - Tombstones for deletion, EMPTY-based probe termination (like hashbrown)
 - IPO's `RawTable<K,V,T: TombstoneTag>` in `src/in_place_overflow/raw/mod.rs`
 - IPO64's `RawTable<K,V,T: TombstoneTag>` in `src/ipo64/raw/mod.rs`
@@ -59,7 +59,7 @@ The design space is parameterized by composable traits:
 
 | Axis | Trait | Implementations |
 |------|-------|-----------------|
-| **Tag extraction** | `TagStrategy` / `TombstoneTag` | LowByte255, HighByte255, LowByte128, TopTag128, TopTag255, TopTag128Ch, TopTag255Ch, LowByte254, HighByte128, TopByte128 |
+| **Tag extraction** | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte1_255`, `Byte2_254`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` (named `ByteN_VVV`: byte index + distinct-value count) |
 | **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
 | **Group indexing** | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
 | **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
@@ -69,10 +69,12 @@ New design variants are ~30 lines: a type alias composing these traits.
 The `matrix_types` module in `src/lib.rs` has experimental combinations.
 
 **AND-based indexing constraint**: uses low hash bits for group index, so tags
-must come from top bits (57+). For 8-bit overflow channels, use shifted
-channel strategies (TopTag128Ch, TopTag255Ch) that source channels from
-top bits too. Standard channel strategies (`1 << (h & 7)`) correlate with
-AND group index.
+must come from top bits (`Byte7_*`). Note that `Byte2_254` (bits 16-23)
+is *not* safe under AND indexing once `num_groups > 2¹⁶` — IPO uses
+`Byte7_254` (top byte) as default. For 8-bit overflow channels, use
+shifted channel strategies (`Byte7_128Ch`, `Byte7_255Ch`) that source
+channels from top bits too. Standard channel strategies (`1 << (h & 7)`)
+correlate with the AND group index.
 
 ## Project Structure
 
@@ -133,7 +135,7 @@ AND group index.
 All designs have been through extensive optimization passes. See `docs/` (mdbook) for
 detailed logs and `.claude/plans/abstract-churning-tome.md` for the latest investigation.
 
-Key results (107K entries, Hi128_Tomb vs hashbrown):
+Key results (107K entries, `Byte7_128_Tomb` (formerly `Hi128_Tomb`) vs hashbrown):
 - Lookup hit: 4.07 vs 4.25 ns (4% faster)
 - Insert: 503 vs 603 µs (17% faster)
 - Remove: 763 vs 1079 µs (29% faster)

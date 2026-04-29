@@ -96,16 +96,18 @@ unstable `generic_const_exprs`.
 Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose
 any `TagStrategy` with any `OverflowStrategy`:
 
-| Tag \ Overflow | 8-bit (ByteSeparate) | 1-bit (BitSeparate) | Tombstone (IPO) |
+| Tag (bits) \ Overflow | 8-bit (ByteSeparate) | 1-bit (BitSeparate) | Tombstone (IPO) |
 |---|---|---|---|
-| LowByte255 | Splitsies (baseline) | Lo8_1bit | IPO (baseline) |
-| HighByte255 | Hi8_8bit | Hi8_1bit | — |
-| LowByte128 | Lo128_8bit | Lo128_1bit | — |
-| LowByte254 | — | — | IPO (baseline) |
-| HighByte128 | — | — | Hi128_Tomb |
-| TopByte128 | — | — | Top128_Tomb |
-| TopTag128 (AND) | — | Top128_1bitAnd | — |
-| TopTag255 (AND) | — | Top255_1bitAnd | — |
+| `Byte0_255` (0-7)   | Splitsies (baseline) | `Byte0_1bit` | — |
+| `Byte0_128` (0-7)   | `Byte0_128_8bit` | `Byte0_128_1bit` | — |
+| `Byte1_255` (8-15)  | `Byte1_8bit` | `Byte1_1bit` | — |
+| `Byte2_254` (16-23) | — | — | IPO64 (default) / `Byte2_254_TombMap` |
+| `Byte7_128` (56-63) (AND) | — | `Byte7_128_1bitAnd` | `Byte7_128_TombMap` |
+| `Byte7_255` (56-63) (AND) | — | `Byte7_255_1bitAnd` | — |
+| `Byte7_254` (56-63) (AND) | — | — | IPO (default) / `Byte7_254_Tomb64Map` (collision-prone on IPO64) |
+
+Strategy names follow `ByteN_VVV`: `N` is the byte index in the 64-bit
+hash (0=lowest, 7=highest), `VVV` is the count of distinct tag values.
 
 AND-indexed variants use `Layout16And` which sets `AND_INDEX = true`. See
 the "Group indexing" section below.
@@ -115,11 +117,18 @@ the "Group indexing" section below.
 Hash tables map a hash value to a group index. Two strategies:
 
 **Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits.
-Tags can safely use low bits (LowByte255, etc.) since they're decorrelated.
-Costs 2 instructions (variable shift + AND).
+Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`, `Byte2_254`)
+since they're decorrelated. Costs 2 instructions (variable shift + AND).
 
 **AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction
-(just AND), but tags must come from top hash bits (57+) to avoid correlation.
+(just AND), but tags must come from top hash bits (`Byte7_*`) to avoid
+correlation. Note that `Byte2_254` (bits 16-23) is *not* safe under AND
+indexing once `num_groups > 2¹⁶` — at that point the mask reaches into
+bits 16+ and tag bits become correlated with the group index. IPO uses
+`Byte7_254` (bits 56-63) as its default to escape this trap; IPO64 keeps
+`Byte2_254` (shift indexing → top bits are the group index, so the middle
+of the hash is the right safe region).
+
 Additionally, 8-bit overflow channels use `1 << (h & 7)` which also uses
 low bits — every key in the same group would get the same channel, making
 8-channel overflow useless. **AND indexing is only safe with 1-bit overflow
