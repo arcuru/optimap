@@ -32,6 +32,11 @@ benches/
   distributions.rs   — Key distribution and value size sensitivity
   workloads.rs       — Realistic mixed-operation scenarios
   load_factor.rs     — Load factor sensitivity sweeps
+  matrix.rs          — Full design-space matrix (all tag × overflow combinations)
+  sets.rs            — Set throughput across all set types
+  btree.rs           — FlatBTree vs std::BTreeMap
+  tag_collision.rs   — Regression guard: IPO/IPO64 tag/group-index collision A/B
+  dispatch.rs        — Regression guard: OptiMap enum-dispatch overhead vs raw
   sweep.rs           — Continuous N-sweep (100–10M), CSV output, not criterion
 ```
 
@@ -102,6 +107,32 @@ All pre-allocated at 70% load. Tests key distribution and value size sensitivity
 
 Realistic mixed scenarios: equilibrium churn, read-heavy (95/5), write-heavy (50/30/20),
 counting/aggregation, post-delete lookup, miss ratio sweep.
+
+### tag_collision.rs
+
+Regression guard for the IPO/IPO64 tag/group-index collision fix
+(commit 8992137 + IPO64 default flip in 7815e8e). Two A/B comparisons:
+
+- **IPO** (16-slot, AND-indexed): default `Byte7_254` vs the pre-fix
+  `Byte2_254` (collides above 2¹⁶ groups, ~735K entries) and the
+  always-collides `Byte0_254` (full byte-0/AND-mask overlap at any size).
+  Sized at 100K (below threshold), 1M (at threshold), 4M (clearly above).
+- **IPO64** (64-slot, shift-indexed): default `Byte0_254` vs the
+  collision-prone `Byte7_254` (top byte = group index → immediate collision).
+
+Expected signal at 4M for IPO: `Byte2_254` ≈ 2x slower on miss; `Byte0_254`
+≈ 20x slower. Validates that the tag bytes stay disjoint from the group-index bits.
+
+### dispatch.rs
+
+Regression guard for the OptiMap inlining work (commits a66f50b, ae1e4d5).
+Pairs each raw backend (`UnorderedFlatMap`, `Splitsies`, `InPlaceOverflow`,
+`Gaps`, `IPO64`) with a corresponding `OptiMap` pinned to that backend, so
+the *only* delta is the enum-match in `OptiMap::get` / `insert` / `remove`.
+
+Expected: hot ops (hit, miss, insert, remove) within noise of the raw
+backend. The bench also includes `iter` for visibility on the known
+`Box<dyn Iterator>` overhead.
 
 ## Allocation Overhead at 1M
 

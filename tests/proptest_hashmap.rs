@@ -1,7 +1,7 @@
 use optimap::{
     Gaps, InPlaceOverflow, Map, OccupiedError, Splitsies, UnorderedFlatMap, IPO64,
 };
-use optimap::matrix_types::Byte7_254_Tomb64Map;
+use optimap::matrix_types::{Byte0_254_TombMap, Byte2_254_TombMap, Byte7_254_Tomb64Map};
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -207,5 +207,19 @@ proptest! {
     #[test]
     fn ipo64_byte7_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
         run_differential::<Byte7_254_Tomb64Map<u16, u16>>(&ops);
+    }
+
+    // Differential tests for the IPO collision-prone tag variants. Both are
+    // intentionally unsafe on IPO (AND indexing): Byte2_254 collides above
+    // 2^16 groups, Byte0_254 collides at any non-trivial size. Correctness
+    // must hold even when SIMD discrimination is degraded.
+    #[test]
+    fn ipo_byte2_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
+        run_differential::<Byte2_254_TombMap<u16, u16>>(&ops);
+    }
+
+    #[test]
+    fn ipo_byte0_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
+        run_differential::<Byte0_254_TombMap<u16, u16>>(&ops);
     }
 }

@@ -63,3 +63,11 @@ harness = false
 [[bench]]
 name = "matrix"
 harness = false
+
+[[bench]]
+name = "tag_collision"
+harness = false
+
+[[bench]]
+name = "dispatch"
+harness = false

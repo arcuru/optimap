@@ -281,7 +281,7 @@ pub mod matrix_types {
         Ufm32Layout, Ufm64Layout,
     };
     use crate::raw::overflow_table::RawTable;
-    use crate::raw::tag_strategy::{Byte2_254, Byte7_128, Byte7_254};
+    use crate::raw::tag_strategy::{Byte0_254, Byte2_254, Byte7_128, Byte7_254};
 
     /// Define a map type alias over `overflow_table::RawTable<K, V, $layout>` and
     /// impl the `Map` trait for it in one go. Keeps matrix entries to one line.
@@ -388,12 +388,16 @@ pub mod matrix_types {
     // The IPO entries form an A/B test for the tag/group-index collision fix:
     //   - InPlaceOverflow = current default (Byte7_254, top byte; safe with AND
     //     indexing at any size). Already exported above; not re-aliased here.
+    //   - Byte0_254_TombMap = bottom byte; correlates with the AND mask at
+    //     any non-trivial size → maximally collision-prone (full-byte overlap
+    //     once num_groups ≥ 2^8). Used as the "always-collides" regression case.
     //   - Byte2_254_TombMap = pre-fix default (bits 16-23; correlates with the
     //     AND mask above 2^16 groups → degraded SIMD discrimination).
     //   - Byte7_128_TombMap = consolidated 128-value top-byte alternative.
     //
     // Byte7_254_Tomb64Map is intentionally unsafe — IPO64 uses shift indexing,
     // so byte 7 IS the group index. Used to verify the symmetric collision claim.
+    ipo_map!(Byte0_254_TombMap,     Byte0_254);
     ipo_map!(Byte2_254_TombMap,     Byte2_254);
     ipo_map!(Byte7_128_TombMap,     Byte7_128);
     ipo64_map!(Byte7_254_Tomb64Map, Byte7_254);

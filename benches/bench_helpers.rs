@@ -12,20 +12,69 @@ use criterion::{BenchmarkGroup, BenchmarkId, black_box, measurement::WallTime};
 use optimap::Map;
 use optimap::optimap::MapType;
 
-// ── OptiMap wrapper pinned to IPO for benchmarking ─────────────────────────
+// ── OptiMap wrappers pinned per backend for benchmarking ───────────────────
 
-/// Thin wrapper around `OptiMap` pinned to the IPO backend.
-/// This lets us slot OptiMap into the generic `M: Map<K, V>` benchmark helpers
-/// while measuring a fixed backend (so we see enum dispatch overhead, not
-/// policy variance).
-pub struct OptiMapBench<K: Hash + Eq, V>(optimap::OptiMap<K, V>);
+/// Marker trait identifying which OptiMap backend to pin.
+///
+/// Used to slot a specific `OptiMap` configuration into the generic
+/// `M: Map<K, V>` benchmark helpers while measuring a fixed backend
+/// (so we see enum dispatch overhead, not policy variance).
+pub trait OptiBackend: 'static {
+    const MAP_TYPE: MapType;
+    const NAME: &'static str;
+}
 
-impl<K: Hash + Eq, V> Map<K, V> for OptiMapBench<K, V> {
+pub struct OptiUfm;
+pub struct OptiSplitsies;
+pub struct OptiIpo;
+pub struct OptiGaps;
+pub struct OptiIpo64;
+
+impl OptiBackend for OptiUfm {
+    const MAP_TYPE: MapType = MapType::Ufm;
+    const NAME: &'static str = "OptiMap_Ufm";
+}
+impl OptiBackend for OptiSplitsies {
+    const MAP_TYPE: MapType = MapType::Splitsies;
+    const NAME: &'static str = "OptiMap_Splitsies";
+}
+impl OptiBackend for OptiIpo {
+    const MAP_TYPE: MapType = MapType::Ipo;
+    const NAME: &'static str = "OptiMap_Ipo";
+}
+impl OptiBackend for OptiGaps {
+    const MAP_TYPE: MapType = MapType::Gaps;
+    const NAME: &'static str = "OptiMap_Gaps";
+}
+impl OptiBackend for OptiIpo64 {
+    const MAP_TYPE: MapType = MapType::Ipo64;
+    const NAME: &'static str = "OptiMap_Ipo64";
+}
+
+/// Thin wrapper around `OptiMap` pinned to a specific backend (`B`).
+/// Forwards every hot op directly to `OptiMap` so dispatch overhead — and
+/// only dispatch overhead — is what shows up vs the raw backend.
+pub struct OptiMapBenchBackend<K: Hash + Eq, V, B: OptiBackend>(
+    optimap::OptiMap<K, V>,
+    std::marker::PhantomData<B>,
+);
+
+/// Default `OptiMapBench` is pinned to IPO (the historical default for the
+/// OptiMap row in the existing all-design benches).
+pub type OptiMapBench<K, V> = OptiMapBenchBackend<K, V, OptiIpo>;
+
+impl<K: Hash + Eq, V, B: OptiBackend> Map<K, V> for OptiMapBenchBackend<K, V, B> {
     fn new() -> Self {
-        OptiMapBench(optimap::OptiMap::with_type(MapType::Ipo))
+        OptiMapBenchBackend(
+            optimap::OptiMap::with_type(B::MAP_TYPE),
+            std::marker::PhantomData,
+        )
     }
     fn with_capacity(capacity: usize) -> Self {
-        OptiMapBench(optimap::OptiMap::with_type_and_capacity(MapType::Ipo, capacity))
+        OptiMapBenchBackend(
+            optimap::OptiMap::with_type_and_capacity(B::MAP_TYPE, capacity),
+            std::marker::PhantomData,
+        )
     }
     #[inline(always)]
     fn insert(&mut self, key: K, value: V) -> Option<V> { self.0.insert(key, value) }
@@ -63,8 +112,8 @@ impl<K: Hash + Eq, V> Map<K, V> for OptiMapBench<K, V> {
     fn into_values(self) -> impl Iterator<Item = V> { self.0.into_values() }
 }
 
-impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMapBench<K, V> {
-    fn clone(&self) -> Self { OptiMapBench(self.0.clone()) }
+impl<K: Hash + Eq + Clone, V: Clone, B: OptiBackend> Clone for OptiMapBenchBackend<K, V, B> {
+    fn clone(&self) -> Self { OptiMapBenchBackend(self.0.clone(), std::marker::PhantomData) }
 }
 
 // ── OptiSet wrapper pinned to IPO for benchmarking ──────────────────────────
