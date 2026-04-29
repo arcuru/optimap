@@ -33,10 +33,6 @@ pub type SoaByte1<K, V, S = DefaultHashBuilder> =
 pub type SoaByte0_1bit<K, V, S = DefaultHashBuilder> =
     GenericMap<K, V, S, RawTable<K, V, Byte0_1bit, SoA>>;
 
-/// SoA + decorrelated tag (byte 1) + 1-bit overflow.
-pub type SoaByte1_1bit<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Byte1_1bit, SoA>>;
-
 /// SoA + 128-value fast tag + 1-bit overflow.
 pub type SoaByte0_128_1bit<K, V, S = DefaultHashBuilder> =
     GenericMap<K, V, S, RawTable<K, V, Byte0_128_1bit, SoA>>;
@@ -80,7 +76,6 @@ crate::traits::impl_map_trait!(SoaMap);
 crate::traits::impl_map_trait!(SoaByte0_128);
 crate::traits::impl_map_trait!(SoaByte1);
 crate::traits::impl_map_trait!(SoaByte0_1bit);
-crate::traits::impl_map_trait!(SoaByte1_1bit);
 crate::traits::impl_map_trait!(SoaByte0_128_1bit);
 crate::traits::impl_map_trait!(SoaByte7_128And);
 crate::traits::impl_map_trait!(SoaByte7_255And);

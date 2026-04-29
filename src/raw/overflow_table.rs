@@ -975,7 +975,7 @@ mod tests {
 
     // Matrix entries
     use crate::raw::group_layout::{
-        Byte1_8bit, Byte1_1bit, Byte1_Emb, Byte1_EmbP2,
+        Byte1_8bit, Byte1_Emb, Byte1_EmbP2,
         Byte0_128_8bit, Byte0_128_1bit, Byte0_128_Emb, Byte0_128_EmbP2,
         Byte0_1bit,
         Byte7_128_1bitAnd, Byte7_128_8bitAnd, Byte7_128Ch_EmbAnd, Byte7_128Ch_EmbP2And,
@@ -987,10 +987,6 @@ mod tests {
     #[test] fn hi8_8bit_grow() { test_grow::<Byte1_8bit>(); }
     #[test] fn hi8_8bit_clone() { test_clone::<Byte1_8bit>(); }
     #[test] fn hi8_8bit_into_iter() { test_into_iter::<Byte1_8bit>(); }
-    #[test] fn hi8_1bit_basic() { test_basic::<Byte1_1bit>(); }
-    #[test] fn hi8_1bit_grow() { test_grow::<Byte1_1bit>(); }
-    #[test] fn hi8_1bit_clone() { test_clone::<Byte1_1bit>(); }
-    #[test] fn hi8_1bit_into_iter() { test_into_iter::<Byte1_1bit>(); }
     #[test] fn lo128_8bit_basic() { test_basic::<Byte0_128_8bit>(); }
     #[test] fn lo128_8bit_grow() { test_grow::<Byte0_128_8bit>(); }
     #[test] fn lo128_8bit_clone() { test_clone::<Byte0_128_8bit>(); }
@@ -1044,7 +1040,7 @@ mod tests {
 
     // 32-slot (AVX2) layouts
     use crate::raw::group_layout::{
-        Gaps32Layout, Byte1_1bit32, Byte1_8bit32, Byte1_Emb32, Byte1_EmbP232,
+        Gaps32Layout, Byte1_8bit32, Byte1_Emb32, Byte1_EmbP232,
         Byte0_128_1bit32, Byte0_128_8bit32, Byte0_128_Emb32, Byte0_128_EmbP232,
         Splitsies32Layout, Splitsies32_1bit,
         Byte7_128_1bitAnd32, Byte7_128_8bitAnd32, Byte7_128Ch_EmbAnd32, Byte7_128Ch_EmbP2And32,
@@ -1060,10 +1056,6 @@ mod tests {
     #[test] fn splitsies32_1bit_grow() { test_grow::<Splitsies32_1bit>(); }
     #[test] fn splitsies32_1bit_clone() { test_clone::<Splitsies32_1bit>(); }
     #[test] fn splitsies32_1bit_into_iter() { test_into_iter::<Splitsies32_1bit>(); }
-    #[test] fn hi8_1bit32_basic() { test_basic::<Byte1_1bit32>(); }
-    #[test] fn hi8_1bit32_grow() { test_grow::<Byte1_1bit32>(); }
-    #[test] fn hi8_1bit32_clone() { test_clone::<Byte1_1bit32>(); }
-    #[test] fn hi8_1bit32_into_iter() { test_into_iter::<Byte1_1bit32>(); }
     #[test] fn hi8_8bit32_basic() { test_basic::<Byte1_8bit32>(); }
     #[test] fn hi8_8bit32_grow() { test_grow::<Byte1_8bit32>(); }
     #[test] fn hi8_8bit32_clone() { test_clone::<Byte1_8bit32>(); }
@@ -1121,7 +1113,7 @@ mod tests {
 
     // 64-slot (AVX-512 / tiered) layouts
     use crate::raw::group_layout::{
-        Gaps64Layout, Byte1_1bit64, Byte1_8bit64, Byte1_Emb64, Byte1_EmbP264,
+        Gaps64Layout, Byte1_8bit64, Byte1_Emb64, Byte1_EmbP264,
         Byte0_128_1bit64, Byte0_128_8bit64, Byte0_128_Emb64, Byte0_128_EmbP264,
         Splitsies64Layout, Splitsies64_1bit,
         Byte7_128_1bitAnd64, Byte7_128_8bitAnd64, Byte7_128Ch_EmbAnd64, Byte7_128Ch_EmbP2And64,
@@ -1137,10 +1129,6 @@ mod tests {
     #[test] fn splitsies64_1bit_grow() { test_grow::<Splitsies64_1bit>(); }
     #[test] fn splitsies64_1bit_clone() { test_clone::<Splitsies64_1bit>(); }
     #[test] fn splitsies64_1bit_into_iter() { test_into_iter::<Splitsies64_1bit>(); }
-    #[test] fn hi8_1bit64_basic() { test_basic::<Byte1_1bit64>(); }
-    #[test] fn hi8_1bit64_grow() { test_grow::<Byte1_1bit64>(); }
-    #[test] fn hi8_1bit64_clone() { test_clone::<Byte1_1bit64>(); }
-    #[test] fn hi8_1bit64_into_iter() { test_into_iter::<Byte1_1bit64>(); }
     #[test] fn hi8_8bit64_basic() { test_basic::<Byte1_8bit64>(); }
     #[test] fn hi8_8bit64_grow() { test_grow::<Byte1_8bit64>(); }
     #[test] fn hi8_8bit64_clone() { test_clone::<Byte1_8bit64>(); }

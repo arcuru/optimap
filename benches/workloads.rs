@@ -35,7 +35,6 @@ macro_rules! main_maps {
         $helper::<optimap::soa::SoaByte0_128<u64, u64>>($group, "SoaByte0_128", $($args),*);
         $helper::<optimap::soa::SoaByte1<u64, u64>>($group, "SoaByte1", $($args),*);
         $helper::<optimap::soa::SoaByte0_1bit<u64, u64>>($group, "SoaByte0_1bit", $($args),*);
-        $helper::<optimap::soa::SoaByte1_1bit<u64, u64>>($group, "SoaByte1_1bit", $($args),*);
         $helper::<optimap::soa::SoaByte0_128_1bit<u64, u64>>($group, "SoaByte0_128_1bit", $($args),*);
         $helper::<optimap::soa::SoaByte7_128And<u64, u64>>($group, "SoaByte7_128And", $($args),*);
         $helper::<optimap::soa::SoaByte7_255And<u64, u64>>($group, "SoaByte7_255And", $($args),*);

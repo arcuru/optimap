@@ -62,7 +62,6 @@ macro_rules! matrix_maps {
         $helper::<Byte0_128_8bitMap<u64, u64>>($group, "Byte0_128_8bit", $($args),*);
         // 1-bit overflow variants
         $helper::<Byte0_1bitMap<u64, u64>>($group, "Byte0_1bit", $($args),*);
-        $helper::<Byte1_1bitMap<u64, u64>>($group, "Byte1_1bit", $($args),*);
         $helper::<Byte0_128_1bitMap<u64, u64>>($group, "Byte0_128_1bit", $($args),*);
         // AND-indexed variants
         $helper::<Byte7_128_1bitAndMap<u64, u64>>($group, "Byte7_128_1bitAnd", $($args),*);
@@ -72,7 +71,6 @@ macro_rules! matrix_maps {
         // 32-slot (AVX2) overflow-bit variants
         $helper::<Splitsies32Map<u64, u64>>($group, "Splitsies32", $($args),*);
         $helper::<Splitsies32_1bitMap<u64, u64>>($group, "Splitsies32_1bit", $($args),*);
-        $helper::<Byte1_1bit32Map<u64, u64>>($group, "Byte1_1bit32", $($args),*);
         $helper::<Byte1_8bit32Map<u64, u64>>($group, "Byte1_8bit32", $($args),*);
         $helper::<Byte0_128_8bit32Map<u64, u64>>($group, "Byte0_128_8bit32", $($args),*);
         $helper::<Byte0_128_1bit32Map<u64, u64>>($group, "Byte0_128_1bit32", $($args),*);
@@ -94,7 +92,6 @@ macro_rules! matrix_maps {
         // 64-slot (AVX-512) overflow-bit variants
         $helper::<Splitsies64Map<u64, u64>>($group, "Splitsies64", $($args),*);
         $helper::<Splitsies64_1bitMap<u64, u64>>($group, "Splitsies64_1bit", $($args),*);
-        $helper::<Byte1_1bit64Map<u64, u64>>($group, "Byte1_1bit64", $($args),*);
         $helper::<Byte1_8bit64Map<u64, u64>>($group, "Byte1_8bit64", $($args),*);
         $helper::<Byte0_128_8bit64Map<u64, u64>>($group, "Byte0_128_8bit64", $($args),*);
         $helper::<Byte0_128_1bit64Map<u64, u64>>($group, "Byte0_128_1bit64", $($args),*);
@@ -124,7 +121,6 @@ macro_rules! matrix_maps {
         $helper::<optimap::soa::SoaByte0_128<u64, u64>>($group, "SoaByte0_128", $($args),*);
         $helper::<optimap::soa::SoaByte1<u64, u64>>($group, "SoaByte1", $($args),*);
         $helper::<optimap::soa::SoaByte0_1bit<u64, u64>>($group, "SoaByte0_1bit", $($args),*);
-        $helper::<optimap::soa::SoaByte1_1bit<u64, u64>>($group, "SoaByte1_1bit", $($args),*);
         $helper::<optimap::soa::SoaByte0_128_1bit<u64, u64>>($group, "SoaByte0_128_1bit", $($args),*);
         $helper::<optimap::soa::SoaByte7_128And<u64, u64>>($group, "SoaByte7_128And", $($args),*);
         $helper::<optimap::soa::SoaByte7_255And<u64, u64>>($group, "SoaByte7_255And", $($args),*);

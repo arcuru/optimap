@@ -59,7 +59,7 @@ The design space is parameterized by composable traits:
 
 | Axis | Trait | Implementations |
 |------|-------|-----------------|
-| **Tag extraction** | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte1_255`, `Byte2_254`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` (named `ByteN_VVV`: byte index + distinct-value count) |
+| **Tag extraction** | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte2_254`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` (named `ByteN_VVV`: byte index + distinct-value count) |
 | **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
 | **Group indexing** | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
 | **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
@@ -69,9 +69,12 @@ New design variants are ~30 lines: a type alias composing these traits.
 The `matrix_types` module in `src/lib.rs` has experimental combinations.
 
 **AND-based indexing constraint**: uses low hash bits for group index, so tags
-must come from top bits (`Byte7_*`). Note that `Byte2_254` (bits 16-23)
-is *not* safe under AND indexing once `num_groups > 2¹⁶` — IPO uses
-`Byte7_254` (top byte) as default. For 8-bit overflow channels, use
+must come from top bits (`Byte7_*`). `Byte0_254` / `Byte2_254` are *not* safe
+under AND indexing — bits 0–7 / 16–23 overlap with the AND mask. IPO uses
+`Byte7_254` (top byte) as default; IPO64 (shift-indexed) uses `Byte0_254`
+(bottom byte, one shift cheaper than `Byte2_254`). `Byte2_254` is kept only
+as a labelled benchmark variant for the IPO collision A/B test
+(`Byte2_254_TombMap`). For 8-bit overflow channels under AND indexing, use
 shifted channel strategies (`Byte7_128Ch`, `Byte7_255Ch`) that source
 channels from top bits too. Standard channel strategies (`1 << (h & 7)`)
 correlate with the AND group index.

@@ -338,7 +338,6 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Byte1_8bitMap<u64,u64>, "Byte1_8bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_8bitMap<u64,u64>, "Byte0_128_8bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_1bitMap<u64,u64>, "Byte0_1bit" $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_1bitMap<u64,u64>, "Byte1_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_1bitMap<u64,u64>, "Byte0_128_1bit" $(, $arg)*);
         // AND-indexed variants
         for_each_design!(@run $config, $callback, Byte7_128_1bitAndMap<u64,u64>, "Byte7_128_1bitAnd" $(, $arg)*);
@@ -357,7 +356,6 @@ macro_rules! for_each_design {
         // 32-slot (AVX2) separate-overflow variants
         for_each_design!(@run $config, $callback, Splitsies32Map<u64,u64>, "Splitsies32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Splitsies32_1bitMap<u64,u64>, "Splitsies32_1bit" $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_1bit32Map<u64,u64>, "Byte1_1bit32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte1_8bit32Map<u64,u64>, "Byte1_8bit32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_1bit32Map<u64,u64>, "Byte0_128_1bit32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_8bit32Map<u64,u64>, "Byte0_128_8bit32" $(, $arg)*);
@@ -379,7 +377,6 @@ macro_rules! for_each_design {
         // 64-slot (AVX-512) separate-overflow variants
         for_each_design!(@run $config, $callback, Splitsies64Map<u64,u64>, "Splitsies64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Splitsies64_1bitMap<u64,u64>, "Splitsies64_1bit" $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_1bit64Map<u64,u64>, "Byte1_1bit64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte1_8bit64Map<u64,u64>, "Byte1_8bit64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_1bit64Map<u64,u64>, "Byte0_128_1bit64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte0_128_8bit64Map<u64,u64>, "Byte0_128_8bit64" $(, $arg)*);
@@ -408,7 +405,6 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_128<u64,u64>, "SoaByte0_128" $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte1<u64,u64>, "SoaByte1" $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_1bit<u64,u64>, "SoaByte0_1bit" $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte1_1bit<u64,u64>, "SoaByte1_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_128_1bit<u64,u64>, "SoaByte0_128_1bit" $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_128And<u64,u64>, "SoaByte7_128And" $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_255And<u64,u64>, "SoaByte7_255And" $(, $arg)*);

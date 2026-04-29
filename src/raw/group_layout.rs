@@ -431,9 +431,6 @@ pub type Byte0_128_8bit = Layout16<Byte0_128, ByteSeparate>;
 /// Byte0_1bit: low-byte 255 tag + 1-bit binary overflow.
 pub type Byte0_1bit = Layout16<Byte0_255, BitSeparate>;
 
-/// Byte1_1bit: decorrelated tag (byte 1) + 1-bit binary overflow.
-pub type Byte1_1bit = Layout16<Byte1_255, BitSeparate>;
-
 /// Byte0_128_1bit: 128-value fast tag + 1-bit binary overflow.
 pub type Byte0_128_1bit = Layout16<Byte0_128, BitSeparate>;
 
@@ -459,9 +456,6 @@ pub type Splitsies32Layout = Layout32<Byte0_255, ByteSeparate>;
 
 /// Splitsies32-1bit: 32-slot, 1-bit binary overflow, low-byte tag.
 pub type Splitsies32_1bit = Layout32<Byte0_255, BitSeparate>;
-
-/// Byte1_1bit32: 32-slot, decorrelated tag + 1-bit overflow.
-pub type Byte1_1bit32 = Layout32<Byte1_255, BitSeparate>;
 
 /// Byte1_8bit32: 32-slot, decorrelated tag + 8-channel byte overflow.
 pub type Byte1_8bit32 = Layout32<Byte1_255, ByteSeparate>;
@@ -491,9 +485,6 @@ pub type Splitsies64Layout = Layout64<Byte0_255, ByteSeparate>;
 
 /// Splitsies64-1bit: 64-slot, 1-bit binary overflow, low-byte tag.
 pub type Splitsies64_1bit = Layout64<Byte0_255, BitSeparate>;
-
-/// Byte1_1bit64: 64-slot, decorrelated tag + 1-bit overflow.
-pub type Byte1_1bit64 = Layout64<Byte1_255, BitSeparate>;
 
 /// Byte1_8bit64: 64-slot, decorrelated tag + 8-channel byte overflow.
 pub type Byte1_8bit64 = Layout64<Byte1_255, ByteSeparate>;

@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use crate::raw::hash;
-use crate::raw::tag_strategy::{Byte2_254, TombstoneTag};
+use crate::raw::tag_strategy::{Byte0_254, TombstoneTag};
 use group::{BitMask64, EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE};
 
 /// 64-byte all-zeros sentinel for unallocated tables.
@@ -43,10 +43,10 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 ///   - (padding to bucket alignment)
 ///   - buckets: `num_groups * 64 * sizeof((K,V))`
 ///
-/// Default tag is `Byte2_254` (bits 16-23) — IPO64 uses shift indexing
-/// (`h >> shift`), so the safe tag region is the middle of the hash, not
+/// Default tag is `Byte0_254` (bits 0-7) — IPO64 uses shift indexing
+/// (`h >> shift`), so the safe tag region is the bottom of the hash, not
 /// the top byte. This is the opposite of IPO (AND-indexed → top byte).
-pub struct RawTable<K, V, T: TombstoneTag = Byte2_254> {
+pub struct RawTable<K, V, T: TombstoneTag = Byte0_254> {
     /// num_groups - 1. Used directly for probe wraparound and group_index masking.
     pub(crate) mask: usize,
     pub(crate) metadata: *mut u8,
@@ -763,7 +763,7 @@ impl<K: Clone, V: Clone, T: TombstoneTag> Clone for RawTable<K, V, T> {
 }
 
 /// SIMD-accelerated iterator over occupied slot positions.
-pub struct SlotIter<'a, K, V, T: TombstoneTag = Byte2_254> {
+pub struct SlotIter<'a, K, V, T: TombstoneTag = Byte0_254> {
     pub(crate) table: &'a RawTable<K, V, T>,
     group: usize,
     current_mask: BitMask64,
@@ -793,7 +793,7 @@ impl<'a, K, V, T: TombstoneTag> Iterator for SlotIter<'a, K, V, T> {
 
 // ── IntoIter ───────────────────────────────────────────────────────────────
 
-pub struct IntoIter<K, V, T: TombstoneTag = Byte2_254> {
+pub struct IntoIter<K, V, T: TombstoneTag = Byte0_254> {
     table: RawTable<K, V, T>,
     group: usize,
     current_mask: BitMask64,

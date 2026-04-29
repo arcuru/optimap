@@ -1,9 +1,10 @@
 //! IPO64 — tombstone-based Swiss-table design with 64-slot groups.
 //!
 //! This is a type alias for `GenericMap` with the IPO64 raw table.
-//! The default tag strategy is `Byte2_254` (254 distinct values from
-//! bits 16-23 — safe for shift-based group indexing at any size).
-//! Alternative strategies are available as matrix types in `matrix_types`.
+//! The default tag strategy is `Byte0_254` (254 distinct values from
+//! bits 0-7 — safe for shift-based group indexing at any size, one shift
+//! cheaper than `Byte2_254`). Alternative strategies are available as
+//! matrix types in `matrix_types`.
 
 use crate::generic_map::{self, GenericMap};
 use super::raw::RawTable;

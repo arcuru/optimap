@@ -266,7 +266,6 @@ pub mod matrix_types {
         Byte0_128_Emb, Byte0_128_Emb32, Byte0_128_Emb64,
         Byte0_128_EmbP2, Byte0_128_EmbP232, Byte0_128_EmbP264,
         Byte0_1bit,
-        Byte1_1bit, Byte1_1bit32, Byte1_1bit64,
         Byte1_8bit, Byte1_8bit32, Byte1_8bit64,
         Byte1_Emb, Byte1_Emb32, Byte1_Emb64, Byte1_EmbP2, Byte1_EmbP232, Byte1_EmbP264,
         Byte7_128_1bitAnd, Byte7_128_1bitAnd32, Byte7_128_1bitAnd64,
@@ -316,7 +315,6 @@ pub mod matrix_types {
     matrix_map!(Byte1_8bitMap,        Byte1_8bit);
     matrix_map!(Byte0_128_8bitMap,    Byte0_128_8bit);
     matrix_map!(Byte0_1bitMap,        Byte0_1bit);
-    matrix_map!(Byte1_1bitMap,        Byte1_1bit);
     matrix_map!(Byte0_128_1bitMap,    Byte0_128_1bit);
 
     // Separate-overflow at 16-slot (AND indexed)
@@ -328,7 +326,6 @@ pub mod matrix_types {
     // Separate-overflow at 32-slot (AVX2)
     matrix_map!(Splitsies32Map,           Splitsies32Layout);
     matrix_map!(Splitsies32_1bitMap,      Splitsies32_1bit);
-    matrix_map!(Byte1_1bit32Map,          Byte1_1bit32);
     matrix_map!(Byte1_8bit32Map,          Byte1_8bit32);
     matrix_map!(Byte0_128_8bit32Map,      Byte0_128_8bit32);
     matrix_map!(Byte0_128_1bit32Map,      Byte0_128_1bit32);
@@ -340,7 +337,6 @@ pub mod matrix_types {
     // Separate-overflow at 64-slot (AVX-512 / tiered fallback)
     matrix_map!(Splitsies64Map,           Splitsies64Layout);
     matrix_map!(Splitsies64_1bitMap,      Splitsies64_1bit);
-    matrix_map!(Byte1_1bit64Map,          Byte1_1bit64);
     matrix_map!(Byte1_8bit64Map,          Byte1_8bit64);
     matrix_map!(Byte0_128_8bit64Map,      Byte0_128_8bit64);
     matrix_map!(Byte0_128_1bit64Map,      Byte0_128_1bit64);
