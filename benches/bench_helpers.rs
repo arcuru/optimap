@@ -27,19 +27,27 @@ impl<K: Hash + Eq, V> Map<K, V> for OptiMapBench<K, V> {
     fn with_capacity(capacity: usize) -> Self {
         OptiMapBench(optimap::OptiMap::with_type_and_capacity(MapType::Ipo, capacity))
     }
+    #[inline(always)]
     fn insert(&mut self, key: K, value: V) -> Option<V> { self.0.insert(key, value) }
+    #[inline(always)]
     fn get<Q>(&self, key: &Q) -> Option<&V>
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get(key) }
+    #[inline(always)]
     fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get_key_value(key) }
+    #[inline(always)]
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get_mut(key) }
+    #[inline(always)]
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove(key) }
+    #[inline(always)]
     fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove_entry(key) }
+    #[inline(always)]
     fn contains_key<Q>(&self, key: &Q) -> bool
     where K: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.contains_key(key) }
+    #[inline(always)]
     fn len(&self) -> usize { self.0.len() }
     fn capacity(&self) -> usize { self.0.capacity() }
     fn clear(&mut self) { self.0.clear() }
@@ -71,15 +79,21 @@ impl<T: Hash + Eq> optimap::Set<T> for OptiSetBench<T> {
     fn with_capacity(capacity: usize) -> Self {
         OptiSetBench(optimap::OptiSet::with_type_and_capacity(MapType::Ipo, capacity))
     }
+    #[inline(always)]
     fn insert(&mut self, value: T) -> bool { self.0.insert(value) }
+    #[inline(always)]
     fn contains<Q>(&self, value: &Q) -> bool
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.contains(value) }
+    #[inline(always)]
     fn get<Q>(&self, value: &Q) -> Option<&T>
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.get(value) }
+    #[inline(always)]
     fn remove<Q>(&mut self, value: &Q) -> bool
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.remove(value) }
+    #[inline(always)]
     fn take<Q>(&mut self, value: &Q) -> Option<T>
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized { self.0.take(value) }
+    #[inline(always)]
     fn len(&self) -> usize { self.0.len() }
     fn capacity(&self) -> usize { self.0.capacity() }
     fn clear(&mut self) { self.0.clear() }

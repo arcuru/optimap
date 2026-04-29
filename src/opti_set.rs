@@ -103,11 +103,13 @@ impl<T: Hash + Eq> OptiSet<T> {
 
 impl<T: Hash + Eq> OptiSet<T> {
     /// Adds a value to the set. Returns `true` if newly inserted.
+    #[inline(always)]
     pub fn insert(&mut self, value: T) -> bool {
         self.inner.insert(value, ()).is_none()
     }
 
     /// Returns `true` if the set contains the given value.
+    #[inline(always)]
     pub fn contains<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
@@ -117,6 +119,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     }
 
     /// Returns a reference to the value in the set matching the given value.
+    #[inline(always)]
     pub fn get<Q>(&self, value: &Q) -> Option<&T>
     where
         T: Borrow<Q>,
@@ -126,6 +129,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     }
 
     /// Removes a value from the set. Returns `true` if it was present.
+    #[inline(always)]
     pub fn remove<Q>(&mut self, value: &Q) -> bool
     where
         T: Borrow<Q>,
@@ -135,6 +139,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     }
 
     /// Removes and returns the value in the set matching the given value.
+    #[inline(always)]
     pub fn take<Q>(&mut self, value: &Q) -> Option<T>
     where
         T: Borrow<Q>,
@@ -144,11 +149,13 @@ impl<T: Hash + Eq> OptiSet<T> {
     }
 
     /// Number of elements in the set.
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Whether the set is empty.
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -343,25 +350,32 @@ impl<T: Hash + Eq> IntoIterator for OptiSet<T> {
 impl<T: Hash + Eq> crate::Set<T> for OptiSet<T> {
     fn new() -> Self { OptiSet::new() }
     fn with_capacity(capacity: usize) -> Self { OptiSet::with_capacity(capacity) }
+    #[inline]
     fn insert(&mut self, value: T) -> bool { OptiSet::insert(self, value) }
 
+    #[inline]
     fn contains<Q>(&self, value: &Q) -> bool
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
     { OptiSet::contains(self, value) }
 
+    #[inline]
     fn get<Q>(&self, value: &Q) -> Option<&T>
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
     { OptiSet::get(self, value) }
 
+    #[inline]
     fn remove<Q>(&mut self, value: &Q) -> bool
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
     { OptiSet::remove(self, value) }
 
+    #[inline]
     fn take<Q>(&mut self, value: &Q) -> Option<T>
     where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
     { OptiSet::take(self, value) }
 
+    #[inline]
     fn len(&self) -> usize { OptiSet::len(self) }
+    #[inline]
     fn capacity(&self) -> usize { OptiSet::capacity(self) }
     fn clear(&mut self) { OptiSet::clear(self) }
     fn reserve(&mut self, additional: usize) { OptiSet::reserve(self, additional) }

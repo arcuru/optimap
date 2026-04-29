@@ -480,11 +480,13 @@ fn build_inner<K: Hash + Eq, V>(
 
 impl<K: Hash + Eq, V> OptiMap<K, V> {
     /// Insert a key-value pair. Returns the previous value if the key existed.
+    #[inline(always)]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         dispatch_mut!(self, insert, key, value)
     }
 
     /// Look up a value by key.
+    #[inline(always)]
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -494,6 +496,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Returns the key-value pair corresponding to the key.
+    #[inline(always)]
     pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
     where
         K: Borrow<Q>,
@@ -503,6 +506,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Look up a value by key, returning a mutable reference.
+    #[inline(always)]
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -512,6 +516,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Remove a key, returning its value if present.
+    #[inline(always)]
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
@@ -521,6 +526,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Removes a key, returning the key and value if present.
+    #[inline(always)]
     pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
@@ -530,6 +536,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Whether the map contains the given key.
+    #[inline(always)]
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -539,16 +546,19 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Number of elements in the map.
+    #[inline]
     pub fn len(&self) -> usize {
         dispatch!(self, len)
     }
 
     /// Whether the map is empty.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Number of elements the map can hold without rehashing.
+    #[inline]
     pub fn capacity(&self) -> usize {
         dispatch!(self, capacity)
     }
@@ -842,10 +852,12 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::with_capacity(capacity)
     }
 
+    #[inline]
     fn insert(&mut self, key: K, value: V) -> Option<V> {
         OptiMap::insert(self, key, value)
     }
 
+    #[inline]
     fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -854,6 +866,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::get(self, key)
     }
 
+    #[inline]
     fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
     where
         K: Borrow<Q>,
@@ -862,6 +875,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::get_key_value(self, key)
     }
 
+    #[inline]
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
@@ -870,6 +884,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::get_mut(self, key)
     }
 
+    #[inline]
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
@@ -878,6 +893,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::remove(self, key)
     }
 
+    #[inline]
     fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
@@ -886,6 +902,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::remove_entry(self, key)
     }
 
+    #[inline]
     fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -894,10 +911,12 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::contains_key(self, key)
     }
 
+    #[inline]
     fn len(&self) -> usize {
         OptiMap::len(self)
     }
 
+    #[inline]
     fn capacity(&self) -> usize {
         OptiMap::capacity(self)
     }
