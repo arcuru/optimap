@@ -8,8 +8,8 @@
 //! The `Layout16<T, O>` generic struct makes new matrix entries trivial:
 //! just pick a tag strategy and overflow strategy.
 
-// Matrix entry type aliases use mixed-case conventions (e.g. Hi8_Emb,
-// Top128_EmbAnd) that combine tag/overflow/index shorthand. Suppress the
+// Matrix entry type aliases use mixed-case conventions (e.g. Byte1_Emb,
+// Byte7_128_EmbAnd) that combine tag/overflow/index shorthand. Suppress the
 // camel-case lint for this file.
 #![allow(non_camel_case_types)]
 
@@ -304,10 +304,10 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout64And<T, O> {
 // ── Named layouts for existing designs ─────────────────────────────────────
 
 use super::overflow_strategy::ByteSeparate;
-use super::tag_strategy::LowByte255;
+use super::tag_strategy::Byte0_255;
 
 /// Splitsies: 16-slot, separate byte overflow, low-byte tag.
-pub type SplitsiesLayout = Layout16<LowByte255, ByteSeparate>;
+pub type SplitsiesLayout = Layout16<Byte0_255, ByteSeparate>;
 
 // UfmLayout / GapsLayout / Ufm{32,64}Layout / Gaps{32,64}Layout are now
 // type aliases over the generic embedded-overflow layouts defined below
@@ -365,9 +365,8 @@ pub type GapsEmbeddedOverflow = EmbeddedOverflow;
 // Parametric over tag strategy. `EmbCompact` uses compact bucket stride
 // (GROUP_SIZE), `EmbP2` uses power-of-2 stride (META_STRIDE, wasting 1 bucket
 // per group). `*And` variants use AND-based group indexing — requires a tag
-// whose `overflow_channel` also comes from top bits (TopTag128Ch /
-// TopTag255Ch) to avoid correlation with the low-bit group index.
-
+// whose `overflow_channel` also comes from top bits (Byte7_128Ch /
+// Byte7_255Ch) to avoid correlation with the low-bit group index.
 macro_rules! define_embedded_layout {
     ($name:ident, $grp:ty, $gs:expr, $bs:expr, $ms:expr, $and:expr) => {
         #[derive(Clone, Copy)]
@@ -403,154 +402,154 @@ define_embedded_layout!(Layout64EmbP2,         Group64<0x7FFF_FFFF_FFFF_FFFF>, 6
 define_embedded_layout!(Layout64EmbCompactAnd, Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, true);
 define_embedded_layout!(Layout64EmbP2And,      Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, true);
 
-// ── UFM / Gaps layouts (Lo8 tag + embedded overflow at every width) ───────
+// ── UFM / Gaps layouts (byte-0 tag + embedded overflow at every width) ────
 
 /// UFM: 15-slot, embedded overflow at byte 15, compact stride 15, low-byte tag.
-pub type UfmLayout = Layout16EmbCompact<LowByte255>;
+pub type UfmLayout = Layout16EmbCompact<Byte0_255>;
 /// Gaps: 15-slot, embedded overflow at byte 15, power-of-2 stride 16, low-byte tag.
-pub type GapsLayout = Layout16EmbP2<LowByte255>;
+pub type GapsLayout = Layout16EmbP2<Byte0_255>;
 /// UFM-32: 31-slot, embedded overflow at byte 31, compact stride 31.
-pub type Ufm32Layout = Layout32EmbCompact<LowByte255>;
+pub type Ufm32Layout = Layout32EmbCompact<Byte0_255>;
 /// Gaps-32: 31-slot, embedded overflow at byte 31, power-of-2 stride 32.
-pub type Gaps32Layout = Layout32EmbP2<LowByte255>;
+pub type Gaps32Layout = Layout32EmbP2<Byte0_255>;
 /// UFM-64: 63-slot, embedded overflow at byte 63, compact stride 63.
-pub type Ufm64Layout = Layout64EmbCompact<LowByte255>;
+pub type Ufm64Layout = Layout64EmbCompact<Byte0_255>;
 /// Gaps-64: 63-slot, embedded overflow at byte 63, power-of-2 stride 64.
-pub type Gaps64Layout = Layout64EmbP2<LowByte255>;
+pub type Gaps64Layout = Layout64EmbP2<Byte0_255>;
 
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
 use super::overflow_strategy::BitSeparate;
-use super::tag_strategy::{HighByte255, LowByte128, TopTag128, TopTag128Ch, TopTag255, TopTag255Ch};
+use super::tag_strategy::{Byte0_128, Byte1_255, Byte7_128, Byte7_128Ch, Byte7_255, Byte7_255Ch};
 
-/// Hi8_8bit: decorrelated tag (byte 1) + 8-channel byte overflow.
-pub type Hi8_8bit = Layout16<HighByte255, ByteSeparate>;
+/// Byte1_8bit: decorrelated tag (byte 1) + 8-channel byte overflow.
+pub type Byte1_8bit = Layout16<Byte1_255, ByteSeparate>;
 
-/// Lo128_8bit: 128-value fast tag + 8-channel byte overflow.
-pub type Lo128_8bit = Layout16<LowByte128, ByteSeparate>;
+/// Byte0_128_8bit: 128-value fast tag + 8-channel byte overflow.
+pub type Byte0_128_8bit = Layout16<Byte0_128, ByteSeparate>;
 
-/// Lo8_1bit: low-byte 255 tag + 1-bit binary overflow.
-pub type Lo8_1bit = Layout16<LowByte255, BitSeparate>;
+/// Byte0_1bit: low-byte 255 tag + 1-bit binary overflow.
+pub type Byte0_1bit = Layout16<Byte0_255, BitSeparate>;
 
-/// Hi8_1bit: decorrelated tag (byte 1) + 1-bit binary overflow.
-pub type Hi8_1bit = Layout16<HighByte255, BitSeparate>;
+/// Byte1_1bit: decorrelated tag (byte 1) + 1-bit binary overflow.
+pub type Byte1_1bit = Layout16<Byte1_255, BitSeparate>;
 
-/// Lo128_1bit: 128-value fast tag + 1-bit binary overflow.
-pub type Lo128_1bit = Layout16<LowByte128, BitSeparate>;
+/// Byte0_128_1bit: 128-value fast tag + 1-bit binary overflow.
+pub type Byte0_128_1bit = Layout16<Byte0_128, BitSeparate>;
 
 // ── AND-indexed matrix entries ────────────────────────────────────────────
 
-/// Top128_1bitAnd: 128-value top-bit tag + 1-bit overflow + AND group indexing.
-pub type Top128_1bitAnd = Layout16And<TopTag128, BitSeparate>;
+/// Byte7_128_1bitAnd: 128-value top-bit tag + 1-bit overflow + AND group indexing.
+pub type Byte7_128_1bitAnd = Layout16And<Byte7_128, BitSeparate>;
 
-/// Top255_1bitAnd: 255-value top-bit tag + 1-bit overflow + AND group indexing.
-pub type Top255_1bitAnd = Layout16And<TopTag255, BitSeparate>;
+/// Byte7_255_1bitAnd: 255-value top-bit tag + 1-bit overflow + AND group indexing.
+pub type Byte7_255_1bitAnd = Layout16And<Byte7_255, BitSeparate>;
 
-/// Top128_8bitAnd: 128-value top-bit tag + 8-channel byte overflow + AND indexing.
+/// Byte7_128_8bitAnd: 128-value top-bit tag + 8-channel byte overflow + AND indexing.
 /// First 8-bit overflow design compatible with AND indexing (shifted channels).
-pub type Top128_8bitAnd = Layout16And<TopTag128Ch, ByteSeparate>;
+pub type Byte7_128_8bitAnd = Layout16And<Byte7_128Ch, ByteSeparate>;
 
-/// Top255_8bitAnd: 255-value top-bit tag + 8-channel byte overflow + AND indexing.
-pub type Top255_8bitAnd = Layout16And<TopTag255Ch, ByteSeparate>;
+/// Byte7_255_8bitAnd: 255-value top-bit tag + 8-channel byte overflow + AND indexing.
+pub type Byte7_255_8bitAnd = Layout16And<Byte7_255Ch, ByteSeparate>;
 
 // ── 32-slot (AVX2) matrix entries ─────────────────────────────────────────
 
 /// Splitsies32: 32-slot, separate byte overflow, low-byte tag.
-pub type Splitsies32Layout = Layout32<LowByte255, ByteSeparate>;
+pub type Splitsies32Layout = Layout32<Byte0_255, ByteSeparate>;
 
 /// Splitsies32-1bit: 32-slot, 1-bit binary overflow, low-byte tag.
-pub type Splitsies32_1bit = Layout32<LowByte255, BitSeparate>;
+pub type Splitsies32_1bit = Layout32<Byte0_255, BitSeparate>;
 
-/// Hi8_1bit32: 32-slot, decorrelated tag + 1-bit overflow.
-pub type Hi8_1bit32 = Layout32<HighByte255, BitSeparate>;
+/// Byte1_1bit32: 32-slot, decorrelated tag + 1-bit overflow.
+pub type Byte1_1bit32 = Layout32<Byte1_255, BitSeparate>;
 
-/// Hi8_8bit32: 32-slot, decorrelated tag + 8-channel byte overflow.
-pub type Hi8_8bit32 = Layout32<HighByte255, ByteSeparate>;
+/// Byte1_8bit32: 32-slot, decorrelated tag + 8-channel byte overflow.
+pub type Byte1_8bit32 = Layout32<Byte1_255, ByteSeparate>;
 
-/// Lo128_8bit32: 32-slot, 128-value low-byte tag + 8-channel overflow.
-pub type Lo128_8bit32 = Layout32<LowByte128, ByteSeparate>;
+/// Byte0_128_8bit32: 32-slot, 128-value low-byte tag + 8-channel overflow.
+pub type Byte0_128_8bit32 = Layout32<Byte0_128, ByteSeparate>;
 
-/// Lo128_1bit32: 32-slot, 128-value low-byte tag + 1-bit overflow.
-pub type Lo128_1bit32 = Layout32<LowByte128, BitSeparate>;
+/// Byte0_128_1bit32: 32-slot, 128-value low-byte tag + 1-bit overflow.
+pub type Byte0_128_1bit32 = Layout32<Byte0_128, BitSeparate>;
 
-/// Top128_1bitAnd32: 32-slot AND-indexed, top-bit tag + 1-bit overflow.
-pub type Top128_1bitAnd32 = Layout32And<TopTag128, BitSeparate>;
+/// Byte7_128_1bitAnd32: 32-slot AND-indexed, top-bit tag + 1-bit overflow.
+pub type Byte7_128_1bitAnd32 = Layout32And<Byte7_128, BitSeparate>;
 
-/// Top255_1bitAnd32: 32-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
-pub type Top255_1bitAnd32 = Layout32And<TopTag255, BitSeparate>;
+/// Byte7_255_1bitAnd32: 32-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
+pub type Byte7_255_1bitAnd32 = Layout32And<Byte7_255, BitSeparate>;
 
-/// Top128_8bitAnd32: 32-slot AND-indexed, top-bit tag + 8-channel overflow.
-pub type Top128_8bitAnd32 = Layout32And<TopTag128Ch, ByteSeparate>;
+/// Byte7_128_8bitAnd32: 32-slot AND-indexed, top-bit tag + 8-channel overflow.
+pub type Byte7_128_8bitAnd32 = Layout32And<Byte7_128Ch, ByteSeparate>;
 
-/// Top255_8bitAnd32: 32-slot AND-indexed, 255-value top tag + 8-channel overflow.
-pub type Top255_8bitAnd32 = Layout32And<TopTag255Ch, ByteSeparate>;
+/// Byte7_255_8bitAnd32: 32-slot AND-indexed, 255-value top tag + 8-channel overflow.
+pub type Byte7_255_8bitAnd32 = Layout32And<Byte7_255Ch, ByteSeparate>;
 
 // ── 64-slot (AVX-512) matrix entries ──────────────────────────────────────
 
 /// Splitsies64: 64-slot, separate byte overflow, low-byte tag.
-pub type Splitsies64Layout = Layout64<LowByte255, ByteSeparate>;
+pub type Splitsies64Layout = Layout64<Byte0_255, ByteSeparate>;
 
 /// Splitsies64-1bit: 64-slot, 1-bit binary overflow, low-byte tag.
-pub type Splitsies64_1bit = Layout64<LowByte255, BitSeparate>;
+pub type Splitsies64_1bit = Layout64<Byte0_255, BitSeparate>;
 
-/// Hi8_1bit64: 64-slot, decorrelated tag + 1-bit overflow.
-pub type Hi8_1bit64 = Layout64<HighByte255, BitSeparate>;
+/// Byte1_1bit64: 64-slot, decorrelated tag + 1-bit overflow.
+pub type Byte1_1bit64 = Layout64<Byte1_255, BitSeparate>;
 
-/// Hi8_8bit64: 64-slot, decorrelated tag + 8-channel byte overflow.
-pub type Hi8_8bit64 = Layout64<HighByte255, ByteSeparate>;
+/// Byte1_8bit64: 64-slot, decorrelated tag + 8-channel byte overflow.
+pub type Byte1_8bit64 = Layout64<Byte1_255, ByteSeparate>;
 
-/// Lo128_8bit64: 64-slot, 128-value low-byte tag + 8-channel overflow.
-pub type Lo128_8bit64 = Layout64<LowByte128, ByteSeparate>;
+/// Byte0_128_8bit64: 64-slot, 128-value low-byte tag + 8-channel overflow.
+pub type Byte0_128_8bit64 = Layout64<Byte0_128, ByteSeparate>;
 
-/// Lo128_1bit64: 64-slot, 128-value low-byte tag + 1-bit overflow.
-pub type Lo128_1bit64 = Layout64<LowByte128, BitSeparate>;
+/// Byte0_128_1bit64: 64-slot, 128-value low-byte tag + 1-bit overflow.
+pub type Byte0_128_1bit64 = Layout64<Byte0_128, BitSeparate>;
 
-/// Top128_1bitAnd64: 64-slot AND-indexed, top-bit tag + 1-bit overflow.
-pub type Top128_1bitAnd64 = Layout64And<TopTag128, BitSeparate>;
+/// Byte7_128_1bitAnd64: 64-slot AND-indexed, top-bit tag + 1-bit overflow.
+pub type Byte7_128_1bitAnd64 = Layout64And<Byte7_128, BitSeparate>;
 
-/// Top255_1bitAnd64: 64-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
-pub type Top255_1bitAnd64 = Layout64And<TopTag255, BitSeparate>;
+/// Byte7_255_1bitAnd64: 64-slot AND-indexed, 255-value top-bit tag + 1-bit overflow.
+pub type Byte7_255_1bitAnd64 = Layout64And<Byte7_255, BitSeparate>;
 
-/// Top128_8bitAnd64: 64-slot AND-indexed, top-bit tag + 8-channel overflow.
-pub type Top128_8bitAnd64 = Layout64And<TopTag128Ch, ByteSeparate>;
+/// Byte7_128_8bitAnd64: 64-slot AND-indexed, top-bit tag + 8-channel overflow.
+pub type Byte7_128_8bitAnd64 = Layout64And<Byte7_128Ch, ByteSeparate>;
 
-/// Top255_8bitAnd64: 64-slot AND-indexed, 255-value top tag + 8-channel overflow.
-pub type Top255_8bitAnd64 = Layout64And<TopTag255Ch, ByteSeparate>;
+/// Byte7_255_8bitAnd64: 64-slot AND-indexed, 255-value top tag + 8-channel overflow.
+pub type Byte7_255_8bitAnd64 = Layout64And<Byte7_255Ch, ByteSeparate>;
 
 // ── Embedded-overflow matrix entries ──────────────────────────────────────
 // Covers all tag × stride × indexing combinations at 15/31/63-slot widths
 // (the "embedded" family — one overflow byte at position meta_stride-1).
-// LowByte255 variants (UfmLayout/GapsLayout/Ufm32Layout/Gaps32Layout/
+// Byte0_255 variants (UfmLayout/GapsLayout/Ufm32Layout/Gaps32Layout/
 // Ufm64Layout/Gaps64Layout) already exist above.
 
-// Hi8 (decorrelated 255-tag, shift indexing)
-pub type Hi8_Emb    = Layout16EmbCompact<HighByte255>;
-pub type Hi8_EmbP2  = Layout16EmbP2<HighByte255>;
-pub type Hi8_Emb32   = Layout32EmbCompact<HighByte255>;
-pub type Hi8_EmbP232 = Layout32EmbP2<HighByte255>;
-pub type Hi8_Emb64   = Layout64EmbCompact<HighByte255>;
-pub type Hi8_EmbP264 = Layout64EmbP2<HighByte255>;
+// Byte1 (decorrelated 255-tag, shift indexing)
+pub type Byte1_Emb    = Layout16EmbCompact<Byte1_255>;
+pub type Byte1_EmbP2  = Layout16EmbP2<Byte1_255>;
+pub type Byte1_Emb32   = Layout32EmbCompact<Byte1_255>;
+pub type Byte1_EmbP232 = Layout32EmbP2<Byte1_255>;
+pub type Byte1_Emb64   = Layout64EmbCompact<Byte1_255>;
+pub type Byte1_EmbP264 = Layout64EmbP2<Byte1_255>;
 
-// Lo128 (128-value low-byte tag, shift indexing; faster hash_tag)
-pub type Lo128_Emb    = Layout16EmbCompact<LowByte128>;
-pub type Lo128_EmbP2  = Layout16EmbP2<LowByte128>;
-pub type Lo128_Emb32   = Layout32EmbCompact<LowByte128>;
-pub type Lo128_EmbP232 = Layout32EmbP2<LowByte128>;
-pub type Lo128_Emb64   = Layout64EmbCompact<LowByte128>;
-pub type Lo128_EmbP264 = Layout64EmbP2<LowByte128>;
+// Byte0_128 (128-value low-byte tag, shift indexing; faster hash_tag)
+pub type Byte0_128_Emb    = Layout16EmbCompact<Byte0_128>;
+pub type Byte0_128_EmbP2  = Layout16EmbP2<Byte0_128>;
+pub type Byte0_128_Emb32   = Layout32EmbCompact<Byte0_128>;
+pub type Byte0_128_EmbP232 = Layout32EmbP2<Byte0_128>;
+pub type Byte0_128_Emb64   = Layout64EmbCompact<Byte0_128>;
+pub type Byte0_128_EmbP264 = Layout64EmbP2<Byte0_128>;
 
-// Top128Ch + AND indexing (tag AND channel from top bits — decorrelated from AND group index)
-pub type Top128_EmbAnd    = Layout16EmbCompactAnd<TopTag128Ch>;
-pub type Top128_EmbP2And  = Layout16EmbP2And<TopTag128Ch>;
-pub type Top128_EmbAnd32   = Layout32EmbCompactAnd<TopTag128Ch>;
-pub type Top128_EmbP2And32 = Layout32EmbP2And<TopTag128Ch>;
-pub type Top128_EmbAnd64   = Layout64EmbCompactAnd<TopTag128Ch>;
-pub type Top128_EmbP2And64 = Layout64EmbP2And<TopTag128Ch>;
+// Byte7_128Ch + AND indexing (tag AND channel from top bits — decorrelated from AND group index)
+pub type Byte7_128Ch_EmbAnd    = Layout16EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbP2And  = Layout16EmbP2And<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbAnd32   = Layout32EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbP2And32 = Layout32EmbP2And<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbAnd64   = Layout64EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbP2And64 = Layout64EmbP2And<Byte7_128Ch>;
 
-// Top255Ch + AND indexing (255-value top-bit tag, shifted channels)
-pub type Top255_EmbAnd    = Layout16EmbCompactAnd<TopTag255Ch>;
-pub type Top255_EmbP2And  = Layout16EmbP2And<TopTag255Ch>;
-pub type Top255_EmbAnd32   = Layout32EmbCompactAnd<TopTag255Ch>;
-pub type Top255_EmbP2And32 = Layout32EmbP2And<TopTag255Ch>;
-pub type Top255_EmbAnd64   = Layout64EmbCompactAnd<TopTag255Ch>;
-pub type Top255_EmbP2And64 = Layout64EmbP2And<TopTag255Ch>;
+// Byte7_255Ch + AND indexing (255-value top-bit tag, shifted channels)
+pub type Byte7_255Ch_EmbAnd    = Layout16EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbP2And  = Layout16EmbP2And<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbAnd32   = Layout32EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbP2And32 = Layout32EmbP2And<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbAnd64   = Layout64EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbP2And64 = Layout64EmbP2And<Byte7_255Ch>;

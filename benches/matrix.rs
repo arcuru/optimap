@@ -48,93 +48,91 @@ macro_rules! matrix_maps {
         $helper::<UnorderedFlatMap<u64, u64>>($group, "Ufm", $($args),*);
         $helper::<Gaps<u64, u64>>($group, "Gaps", $($args),*);
         // 16-slot embedded-overflow matrix entries (other tags)
-        $helper::<Hi8_EmbMap<u64, u64>>($group, "Hi8_Emb", $($args),*);
-        $helper::<Hi8_EmbP2Map<u64, u64>>($group, "Hi8_EmbP2", $($args),*);
-        $helper::<Lo128_EmbMap<u64, u64>>($group, "Lo128_Emb", $($args),*);
-        $helper::<Lo128_EmbP2Map<u64, u64>>($group, "Lo128_EmbP2", $($args),*);
-        $helper::<Top128_EmbAndMap<u64, u64>>($group, "Top128_EmbAnd", $($args),*);
-        $helper::<Top128_EmbP2AndMap<u64, u64>>($group, "Top128_EmbP2And", $($args),*);
-        $helper::<Top255_EmbAndMap<u64, u64>>($group, "Top255_EmbAnd", $($args),*);
-        $helper::<Top255_EmbP2AndMap<u64, u64>>($group, "Top255_EmbP2And", $($args),*);
+        $helper::<Byte1_EmbMap<u64, u64>>($group, "Byte1_Emb", $($args),*);
+        $helper::<Byte1_EmbP2Map<u64, u64>>($group, "Byte1_EmbP2", $($args),*);
+        $helper::<Byte0_128_EmbMap<u64, u64>>($group, "Byte0_128_Emb", $($args),*);
+        $helper::<Byte0_128_EmbP2Map<u64, u64>>($group, "Byte0_128_EmbP2", $($args),*);
+        $helper::<Byte7_128Ch_EmbAndMap<u64, u64>>($group, "Byte7_128Ch_EmbAnd", $($args),*);
+        $helper::<Byte7_128Ch_EmbP2AndMap<u64, u64>>($group, "Byte7_128Ch_EmbP2And", $($args),*);
+        $helper::<Byte7_255Ch_EmbAndMap<u64, u64>>($group, "Byte7_255Ch_EmbAnd", $($args),*);
+        $helper::<Byte7_255Ch_EmbP2AndMap<u64, u64>>($group, "Byte7_255Ch_EmbP2And", $($args),*);
         $helper::<InPlaceOverflow<u64, u64>>($group, "Tombstone", $($args),*);
         // 8-bit overflow variants
-        $helper::<Hi8_8bitMap<u64, u64>>($group, "Hi8_8bit", $($args),*);
-        $helper::<Lo128_8bitMap<u64, u64>>($group, "Lo128_8bit", $($args),*);
+        $helper::<Byte1_8bitMap<u64, u64>>($group, "Byte1_8bit", $($args),*);
+        $helper::<Byte0_128_8bitMap<u64, u64>>($group, "Byte0_128_8bit", $($args),*);
         // 1-bit overflow variants
-        $helper::<Lo8_1bitMap<u64, u64>>($group, "Lo8_1bit", $($args),*);
-        $helper::<Hi8_1bitMap<u64, u64>>($group, "Hi8_1bit", $($args),*);
-        $helper::<Lo128_1bitMap<u64, u64>>($group, "Lo128_1bit", $($args),*);
+        $helper::<Byte0_1bitMap<u64, u64>>($group, "Byte0_1bit", $($args),*);
+        $helper::<Byte1_1bitMap<u64, u64>>($group, "Byte1_1bit", $($args),*);
+        $helper::<Byte0_128_1bitMap<u64, u64>>($group, "Byte0_128_1bit", $($args),*);
         // AND-indexed variants
-        $helper::<Top128_1bitAndMap<u64, u64>>($group, "Top128_1bitAnd", $($args),*);
-        $helper::<Top255_1bitAndMap<u64, u64>>($group, "Top255_1bitAnd", $($args),*);
-        $helper::<Top128_8bitAndMap<u64, u64>>($group, "Top128_8bitAnd", $($args),*);
-        $helper::<Top255_8bitAndMap<u64, u64>>($group, "Top255_8bitAnd", $($args),*);
+        $helper::<Byte7_128_1bitAndMap<u64, u64>>($group, "Byte7_128_1bitAnd", $($args),*);
+        $helper::<Byte7_255_1bitAndMap<u64, u64>>($group, "Byte7_255_1bitAnd", $($args),*);
+        $helper::<Byte7_128_8bitAndMap<u64, u64>>($group, "Byte7_128_8bitAnd", $($args),*);
+        $helper::<Byte7_255_8bitAndMap<u64, u64>>($group, "Byte7_255_8bitAnd", $($args),*);
         // 32-slot (AVX2) overflow-bit variants
         $helper::<Splitsies32Map<u64, u64>>($group, "Splitsies32", $($args),*);
         $helper::<Splitsies32_1bitMap<u64, u64>>($group, "Splitsies32_1bit", $($args),*);
-        $helper::<Hi8_1bit32Map<u64, u64>>($group, "Hi8_1bit32", $($args),*);
-        $helper::<Hi8_8bit32Map<u64, u64>>($group, "Hi8_8bit32", $($args),*);
-        $helper::<Lo128_8bit32Map<u64, u64>>($group, "Lo128_8bit32", $($args),*);
-        $helper::<Lo128_1bit32Map<u64, u64>>($group, "Lo128_1bit32", $($args),*);
+        $helper::<Byte1_1bit32Map<u64, u64>>($group, "Byte1_1bit32", $($args),*);
+        $helper::<Byte1_8bit32Map<u64, u64>>($group, "Byte1_8bit32", $($args),*);
+        $helper::<Byte0_128_8bit32Map<u64, u64>>($group, "Byte0_128_8bit32", $($args),*);
+        $helper::<Byte0_128_1bit32Map<u64, u64>>($group, "Byte0_128_1bit32", $($args),*);
         $helper::<Ufm32Map<u64, u64>>($group, "Ufm32", $($args),*);
         $helper::<Gaps32Map<u64, u64>>($group, "Gaps32", $($args),*);
         // Embedded-overflow matrix entries (other tags)
-        $helper::<Hi8_Emb32Map<u64, u64>>($group, "Hi8_Emb32", $($args),*);
-        $helper::<Hi8_EmbP232Map<u64, u64>>($group, "Hi8_EmbP232", $($args),*);
-        $helper::<Lo128_Emb32Map<u64, u64>>($group, "Lo128_Emb32", $($args),*);
-        $helper::<Lo128_EmbP232Map<u64, u64>>($group, "Lo128_EmbP232", $($args),*);
-        $helper::<Top128_EmbAnd32Map<u64, u64>>($group, "Top128_EmbAnd32", $($args),*);
-        $helper::<Top128_EmbP2And32Map<u64, u64>>($group, "Top128_EmbP2And32", $($args),*);
-        $helper::<Top255_EmbAnd32Map<u64, u64>>($group, "Top255_EmbAnd32", $($args),*);
-        $helper::<Top255_EmbP2And32Map<u64, u64>>($group, "Top255_EmbP2And32", $($args),*);
-        $helper::<Top128_1bitAnd32Map<u64, u64>>($group, "Top128_1bitAnd32", $($args),*);
-        $helper::<Top255_1bitAnd32Map<u64, u64>>($group, "Top255_1bitAnd32", $($args),*);
-        $helper::<Top128_8bitAnd32Map<u64, u64>>($group, "Top128_8bitAnd32", $($args),*);
-        $helper::<Top255_8bitAnd32Map<u64, u64>>($group, "Top255_8bitAnd32", $($args),*);
+        $helper::<Byte1_Emb32Map<u64, u64>>($group, "Byte1_Emb32", $($args),*);
+        $helper::<Byte1_EmbP232Map<u64, u64>>($group, "Byte1_EmbP232", $($args),*);
+        $helper::<Byte0_128_Emb32Map<u64, u64>>($group, "Byte0_128_Emb32", $($args),*);
+        $helper::<Byte0_128_EmbP232Map<u64, u64>>($group, "Byte0_128_EmbP232", $($args),*);
+        $helper::<Byte7_128Ch_EmbAnd32Map<u64, u64>>($group, "Byte7_128Ch_EmbAnd32", $($args),*);
+        $helper::<Byte7_128Ch_EmbP2And32Map<u64, u64>>($group, "Byte7_128Ch_EmbP2And32", $($args),*);
+        $helper::<Byte7_255Ch_EmbAnd32Map<u64, u64>>($group, "Byte7_255Ch_EmbAnd32", $($args),*);
+        $helper::<Byte7_255Ch_EmbP2And32Map<u64, u64>>($group, "Byte7_255Ch_EmbP2And32", $($args),*);
+        $helper::<Byte7_128_1bitAnd32Map<u64, u64>>($group, "Byte7_128_1bitAnd32", $($args),*);
+        $helper::<Byte7_255_1bitAnd32Map<u64, u64>>($group, "Byte7_255_1bitAnd32", $($args),*);
+        $helper::<Byte7_128_8bitAnd32Map<u64, u64>>($group, "Byte7_128_8bitAnd32", $($args),*);
+        $helper::<Byte7_255_8bitAnd32Map<u64, u64>>($group, "Byte7_255_8bitAnd32", $($args),*);
         // 64-slot (AVX-512) overflow-bit variants
         $helper::<Splitsies64Map<u64, u64>>($group, "Splitsies64", $($args),*);
         $helper::<Splitsies64_1bitMap<u64, u64>>($group, "Splitsies64_1bit", $($args),*);
-        $helper::<Hi8_1bit64Map<u64, u64>>($group, "Hi8_1bit64", $($args),*);
-        $helper::<Hi8_8bit64Map<u64, u64>>($group, "Hi8_8bit64", $($args),*);
-        $helper::<Lo128_8bit64Map<u64, u64>>($group, "Lo128_8bit64", $($args),*);
-        $helper::<Lo128_1bit64Map<u64, u64>>($group, "Lo128_1bit64", $($args),*);
+        $helper::<Byte1_1bit64Map<u64, u64>>($group, "Byte1_1bit64", $($args),*);
+        $helper::<Byte1_8bit64Map<u64, u64>>($group, "Byte1_8bit64", $($args),*);
+        $helper::<Byte0_128_8bit64Map<u64, u64>>($group, "Byte0_128_8bit64", $($args),*);
+        $helper::<Byte0_128_1bit64Map<u64, u64>>($group, "Byte0_128_1bit64", $($args),*);
         $helper::<Ufm64Map<u64, u64>>($group, "Ufm64", $($args),*);
         $helper::<Gaps64Map<u64, u64>>($group, "Gaps64", $($args),*);
-        $helper::<Hi8_Emb64Map<u64, u64>>($group, "Hi8_Emb64", $($args),*);
-        $helper::<Hi8_EmbP264Map<u64, u64>>($group, "Hi8_EmbP264", $($args),*);
-        $helper::<Lo128_Emb64Map<u64, u64>>($group, "Lo128_Emb64", $($args),*);
-        $helper::<Lo128_EmbP264Map<u64, u64>>($group, "Lo128_EmbP264", $($args),*);
-        $helper::<Top128_EmbAnd64Map<u64, u64>>($group, "Top128_EmbAnd64", $($args),*);
-        $helper::<Top128_EmbP2And64Map<u64, u64>>($group, "Top128_EmbP2And64", $($args),*);
-        $helper::<Top255_EmbAnd64Map<u64, u64>>($group, "Top255_EmbAnd64", $($args),*);
-        $helper::<Top255_EmbP2And64Map<u64, u64>>($group, "Top255_EmbP2And64", $($args),*);
-        $helper::<Top128_1bitAnd64Map<u64, u64>>($group, "Top128_1bitAnd64", $($args),*);
-        $helper::<Top255_1bitAnd64Map<u64, u64>>($group, "Top255_1bitAnd64", $($args),*);
-        $helper::<Top128_8bitAnd64Map<u64, u64>>($group, "Top128_8bitAnd64", $($args),*);
-        $helper::<Top255_8bitAnd64Map<u64, u64>>($group, "Top255_8bitAnd64", $($args),*);
+        $helper::<Byte1_Emb64Map<u64, u64>>($group, "Byte1_Emb64", $($args),*);
+        $helper::<Byte1_EmbP264Map<u64, u64>>($group, "Byte1_EmbP264", $($args),*);
+        $helper::<Byte0_128_Emb64Map<u64, u64>>($group, "Byte0_128_Emb64", $($args),*);
+        $helper::<Byte0_128_EmbP264Map<u64, u64>>($group, "Byte0_128_EmbP264", $($args),*);
+        $helper::<Byte7_128Ch_EmbAnd64Map<u64, u64>>($group, "Byte7_128Ch_EmbAnd64", $($args),*);
+        $helper::<Byte7_128Ch_EmbP2And64Map<u64, u64>>($group, "Byte7_128Ch_EmbP2And64", $($args),*);
+        $helper::<Byte7_255Ch_EmbAnd64Map<u64, u64>>($group, "Byte7_255Ch_EmbAnd64", $($args),*);
+        $helper::<Byte7_255Ch_EmbP2And64Map<u64, u64>>($group, "Byte7_255Ch_EmbP2And64", $($args),*);
+        $helper::<Byte7_128_1bitAnd64Map<u64, u64>>($group, "Byte7_128_1bitAnd64", $($args),*);
+        $helper::<Byte7_255_1bitAnd64Map<u64, u64>>($group, "Byte7_255_1bitAnd64", $($args),*);
+        $helper::<Byte7_128_8bitAnd64Map<u64, u64>>($group, "Byte7_128_8bitAnd64", $($args),*);
+        $helper::<Byte7_255_8bitAnd64Map<u64, u64>>($group, "Byte7_255_8bitAnd64", $($args),*);
         // Tombstone variants
-        $helper::<Hi128_TombMap<u64, u64>>($group, "Hi128_Tomb", $($args),*);
-        $helper::<Top128_TombMap<u64, u64>>($group, "Top128_Tomb", $($args),*);
+        $helper::<Byte2_254_TombMap<u64, u64>>($group, "Byte2_254_Tomb", $($args),*);
+        $helper::<Byte7_128_TombMap<u64, u64>>($group, "Byte7_128_Tomb", $($args),*);
         // IPO64 tombstone variants
-        $helper::<Hi128_Tomb64Map<u64, u64>>($group, "Hi128_Tomb64", $($args),*);
-        $helper::<Top128_Tomb64Map<u64, u64>>($group, "Top128_Tomb64", $($args),*);
+        $helper::<Byte7_254_Tomb64Map<u64, u64>>($group, "Byte7_254_Tomb64", $($args),*);
         // External control
         $helper::<hashbrown::HashMap<u64, u64>>($group, "hashbrown", $($args),*);
         // SoA variants
         $helper::<optimap::SoaMap<u64, u64>>($group, "SoaMap", $($args),*);
-        $helper::<optimap::soa::SoaLo128<u64, u64>>($group, "SoaLo128", $($args),*);
-        $helper::<optimap::soa::SoaHi8<u64, u64>>($group, "SoaHi8", $($args),*);
-        $helper::<optimap::soa::SoaLo8_1bit<u64, u64>>($group, "SoaLo8_1bit", $($args),*);
-        $helper::<optimap::soa::SoaHi8_1bit<u64, u64>>($group, "SoaHi8_1bit", $($args),*);
-        $helper::<optimap::soa::SoaLo128_1bit<u64, u64>>($group, "SoaLo128_1bit", $($args),*);
-        $helper::<optimap::soa::SoaTop128And<u64, u64>>($group, "SoaTop128And", $($args),*);
-        $helper::<optimap::soa::SoaTop255And<u64, u64>>($group, "SoaTop255And", $($args),*);
-        $helper::<optimap::soa::SoaTop128_8bitAnd<u64, u64>>($group, "SoaTop128_8bitAnd", $($args),*);
-        $helper::<optimap::soa::SoaTop255_8bitAnd<u64, u64>>($group, "SoaTop255_8bitAnd", $($args),*);
+        $helper::<optimap::soa::SoaByte0_128<u64, u64>>($group, "SoaByte0_128", $($args),*);
+        $helper::<optimap::soa::SoaByte1<u64, u64>>($group, "SoaByte1", $($args),*);
+        $helper::<optimap::soa::SoaByte0_1bit<u64, u64>>($group, "SoaByte0_1bit", $($args),*);
+        $helper::<optimap::soa::SoaByte1_1bit<u64, u64>>($group, "SoaByte1_1bit", $($args),*);
+        $helper::<optimap::soa::SoaByte0_128_1bit<u64, u64>>($group, "SoaByte0_128_1bit", $($args),*);
+        $helper::<optimap::soa::SoaByte7_128And<u64, u64>>($group, "SoaByte7_128And", $($args),*);
+        $helper::<optimap::soa::SoaByte7_255And<u64, u64>>($group, "SoaByte7_255And", $($args),*);
+        $helper::<optimap::soa::SoaByte7_128_8bitAnd<u64, u64>>($group, "SoaByte7_128_8bitAnd", $($args),*);
+        $helper::<optimap::soa::SoaByte7_255_8bitAnd<u64, u64>>($group, "SoaByte7_255_8bitAnd", $($args),*);
         // SoA tombstone variants
         $helper::<optimap::soa::SoaIpo<u64, u64>>($group, "SoaIpo", $($args),*);
-        $helper::<optimap::soa::SoaHi128_Tomb<u64, u64>>($group, "SoaHi128_Tomb", $($args),*);
-        $helper::<optimap::soa::SoaTop128_Tomb<u64, u64>>($group, "SoaTop128_Tomb", $($args),*);
+        $helper::<optimap::soa::SoaByte7_128_Tomb<u64, u64>>($group, "SoaByte7_128_Tomb", $($args),*);
     };
 }
 

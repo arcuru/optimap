@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types)]  // Matrix types follow the shared Hi128_Tomb / Top128_Tomb naming convention
+#![allow(non_camel_case_types)]  // Matrix types follow the shared ByteN_VVV naming convention
 
 //! SoA (Structure-of-Arrays) hash map designs.
 //!
@@ -22,72 +22,69 @@ pub type SoaMap<K, V, S = DefaultHashBuilder> =
     GenericMap<K, V, S, RawTable<K, V, SplitsiesLayout, SoA>>;
 
 /// SoA + 128-value fast tag + 8-channel byte overflow.
-pub type SoaLo128<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Lo128_8bit, SoA>>;
+pub type SoaByte0_128<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte0_128_8bit, SoA>>;
 
 /// SoA + decorrelated tag (byte 1) + 8-channel byte overflow.
-pub type SoaHi8<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Hi8_8bit, SoA>>;
+pub type SoaByte1<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte1_8bit, SoA>>;
 
 /// SoA + low-byte 255 tag + 1-bit overflow.
-pub type SoaLo8_1bit<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Lo8_1bit, SoA>>;
+pub type SoaByte0_1bit<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte0_1bit, SoA>>;
 
 /// SoA + decorrelated tag (byte 1) + 1-bit overflow.
-pub type SoaHi8_1bit<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Hi8_1bit, SoA>>;
+pub type SoaByte1_1bit<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte1_1bit, SoA>>;
 
 /// SoA + 128-value fast tag + 1-bit overflow.
-pub type SoaLo128_1bit<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Lo128_1bit, SoA>>;
+pub type SoaByte0_128_1bit<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte0_128_1bit, SoA>>;
 
 /// SoA + 128-value top-bit tag + 1-bit overflow + AND indexing.
-pub type SoaTop128And<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Top128_1bitAnd, SoA>>;
+pub type SoaByte7_128And<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte7_128_1bitAnd, SoA>>;
 
 /// SoA + 255-value top-bit tag + 1-bit overflow + AND indexing.
-pub type SoaTop255And<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Top255_1bitAnd, SoA>>;
+pub type SoaByte7_255And<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte7_255_1bitAnd, SoA>>;
 
 /// SoA + 128-value top-bit tag + 8-bit overflow + AND indexing (shifted channels).
-pub type SoaTop128_8bitAnd<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Top128_8bitAnd, SoA>>;
+pub type SoaByte7_128_8bitAnd<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte7_128_8bitAnd, SoA>>;
 
 /// SoA + 255-value top-bit tag + 8-bit overflow + AND indexing (shifted channels).
-pub type SoaTop255_8bitAnd<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, Top255_8bitAnd, SoA>>;
+pub type SoaByte7_255_8bitAnd<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, RawTable<K, V, Byte7_255_8bitAnd, SoA>>;
 
 // ── Tombstone SoA variants (IPO family) ───────────────────────────────────
 
 use crate::in_place_overflow::raw::RawTable as IpoRawTable;
-use crate::raw::tag_strategy::{LowByte254, HighByte128, TopByte128};
+use crate::raw::tag_strategy::Byte7_128;
 
-/// SoA + IPO tombstone (default LowByte254 tag).
+/// SoA + IPO tombstone (default `Byte7_254` tag — top byte, decorrelated
+/// from AND group index at any size).
 pub type SoaIpo<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, IpoRawTable<K, V, LowByte254, SoA>>;
+    GenericMap<K, V, S, IpoRawTable<K, V, crate::raw::tag_strategy::Byte7_254, SoA>>;
 
-/// SoA + IPO tombstone, HighByte128 tag.
-pub type SoaHi128_Tomb<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, IpoRawTable<K, V, HighByte128, SoA>>;
-
-/// SoA + IPO tombstone, TopByte128 tag.
-pub type SoaTop128_Tomb<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, IpoRawTable<K, V, TopByte128, SoA>>;
+/// SoA + IPO tombstone, `Byte7_128` tag (consolidated 128-value top-byte
+/// strategy — replaces the old `SoaHi128_Tomb`/`SoaTop128_Tomb` pair).
+pub type SoaByte7_128_Tomb<K, V, S = DefaultHashBuilder> =
+    GenericMap<K, V, S, IpoRawTable<K, V, Byte7_128, SoA>>;
 
 // ── Map trait impls ───────────────────────────────────────────────────────
 // GenericMap already implements Map via impl_map_trait!, so SoA type aliases
 // automatically get Map trait support — no extra code needed.
 
 crate::traits::impl_map_trait!(SoaMap);
-crate::traits::impl_map_trait!(SoaLo128);
-crate::traits::impl_map_trait!(SoaHi8);
-crate::traits::impl_map_trait!(SoaLo8_1bit);
-crate::traits::impl_map_trait!(SoaHi8_1bit);
-crate::traits::impl_map_trait!(SoaLo128_1bit);
-crate::traits::impl_map_trait!(SoaTop128And);
-crate::traits::impl_map_trait!(SoaTop255And);
-crate::traits::impl_map_trait!(SoaTop128_8bitAnd);
-crate::traits::impl_map_trait!(SoaTop255_8bitAnd);
+crate::traits::impl_map_trait!(SoaByte0_128);
+crate::traits::impl_map_trait!(SoaByte1);
+crate::traits::impl_map_trait!(SoaByte0_1bit);
+crate::traits::impl_map_trait!(SoaByte1_1bit);
+crate::traits::impl_map_trait!(SoaByte0_128_1bit);
+crate::traits::impl_map_trait!(SoaByte7_128And);
+crate::traits::impl_map_trait!(SoaByte7_255And);
+crate::traits::impl_map_trait!(SoaByte7_128_8bitAnd);
+crate::traits::impl_map_trait!(SoaByte7_255_8bitAnd);
 crate::traits::impl_map_trait!(SoaIpo);
-crate::traits::impl_map_trait!(SoaHi128_Tomb);
-crate::traits::impl_map_trait!(SoaTop128_Tomb);
+crate::traits::impl_map_trait!(SoaByte7_128_Tomb);

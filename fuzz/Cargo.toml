@@ -43,15 +43,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_hashmap_ipo64_hi128"
-path = "fuzz_targets/fuzz_hashmap_ipo64_hi128.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_hashmap_ipo64_top128"
-path = "fuzz_targets/fuzz_hashmap_ipo64_top128.rs"
+name = "fuzz_hashmap_ipo64_byte7"
+path = "fuzz_targets/fuzz_hashmap_ipo64_byte7.rs"
 test = false
 doc = false
 bench = false
