@@ -21,6 +21,7 @@ thoroughly investigated and proven unproductive — see
 | `pop_first()` / `pop_last()` | FlatBTree, `SortedMap` trait |
 | `SortedMap` for `std::BTreeMap` | `pop_first` / `pop_last` added |
 | Enum iterators for OptiMap | Replaced `Box<dyn Iterator>` — zero-cost dispatch for `Iter`, `IterMut`, `IntoIter` |
+| OptiMap/OptiSet dispatch inlining | `#[inline(always)]` on hot inherent methods (get/insert/remove/contains_key/len/…) and `#[inline]` on `Map`/`Set` trait impls. Disassembly showed `<wrapper as Map>::get` was a 1.1 KB function called once per loop iteration: the 5-arm enum dispatch + inlined backend probe was too large for LLVM's heuristic to inline through a wrapping function-call boundary, so any layer above OptiMap (a user struct, the bench's `OptiMapBench`) forced a real `call` per lookup. Closes the gap vs raw IPO at 107 K entries: lookup_hit +70% → −1%, lookup_miss +116% → −6%, remove +19% → ~0%. Cost: +3 KB (+0.04%) in the throughput bench binary; `liboptimap.rlib` unchanged (inline is downstream-only metadata). Same caveat as hashbrown — callers wrapping OptiMap in their own struct should mark their accessors `#[inline]` too. |
 | OptiSet / OptiSortedMap / OptiSortedSet | Smart wrappers with dynamic backend selection and sorted ops |
 | Set benchmarks | Insert, contains, remove, iter, churn across all 8 set types |
 | OptiMap Entry API | Enum `Entry`/`OccupiedEntry`/`VacantEntry` wrapping all 5 backends with `entry_match!` macro dispatch. Also added `OccupiedEntry::key()` to all backends. |
