@@ -61,43 +61,30 @@ thoroughly investigated and proven unproductive — see
 These explore new axes in the parameterized design matrix. Each is a new
 composition of existing traits or a small trait extension.
 
-#### Sweep benchmarks for 32/64-slot variants
+#### ~~Sweep benchmarks for 32/64-slot variants~~ **CLOSED — full investigation completed**
 
-**Difficulty**: Low — extend the existing sweep harness \
-**Expected impact**: Unknown — initial point-bench at 9.4K showed no win
+See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md) for
+the complete analysis. Headline findings:
 
-Initial benchmarks at one size (9.4K, 70% load) showed 32-slot variants
-matching 16-slot on hit/insert with a small +11% on miss for
-`Top128_1bitAnd32`, while 64-slot underperformed on hit/remove. Wider
-groups may shine at higher load factors (>87%) or for collision-heavy
-workloads where the home-group hit rate dominates. A continuous N-sweep
-across the full size range would reveal the crossover regime.
-
-Promising observation from point-bench: **255-tag wins miss on wider groups**.
-Going Top128 → Top255 on lookup_miss: 16-slot −4.7%, 32-slot **+19.8%**,
-64-slot **+10.7%**. Consistent with the hypothesis that wider groups probe
-more slots per home match, so the tag's false-positive rate matters more.
-Sweep should confirm this holds across N.
-
-**Embedded-overflow at 32/64-slot is a standout.** Ufm32/Ufm64/Gaps32/Gaps64
-(added 2026-04-20) put the overflow byte at the last byte of the wider
-metadata group, same trick as the original 15-slot UFM. At medium size
-`--quick`: Gaps64 insert 209 Mel/s (vs Splitsies64 126, **+66%**); Gaps32
-insert 164 (vs Splitsies32 122, **+34%**). Saves the separate overflow
-array's allocation, prefetch, and second-cache-line fetch — the cost of
-which is proportionally larger at wider groups. Worth a full sweep run.
-
-**Embedded matrix completed** (2026-04-21) with the remaining combinations:
-`Hi8_Emb{,32,64}`, `Hi8_EmbP2{,32,64}`, `Lo128_Emb{,32,64}`, `Lo128_EmbP2{,32,64}`,
-and the novel AND-indexed embedded variants `Top128_EmbAnd{,32,64}` /
-`Top128_EmbP2And{,32,64}` / `Top255_EmbAnd{,32,64}` / `Top255_EmbP2And{,32,64}`.
-The AND-indexed embedded variants use `TopTag128Ch` / `TopTag255Ch`
-(top-bit tag + top-bit-shifted channels) to keep the overflow channel
-decorrelated from the low-bit AND group index. Standout from initial
-`--quick` bench: `Top255_EmbP2And64` insert 201 Mel/s, tying the overall
-64-slot insert leader. AND-indexed embedded still trails separate 1-bit
-on hit (~460 vs ~500 Mel/s) — the SLOT_MASK top-bit AND and one fewer
-usable slot per group both cost a little.
+- **32-slot is not a net win for general use.** Slight insert advantage (5-15%
+  at 1M+ entries) is offset by a permanent ~10% lookup_miss penalty from
+  wider false-positive group checks. Lookup_hit is statistically tied (±3%).
+- **64-slot is structurally slower** across all ops up to 2M entries (10-20%
+  hit/insert, 40-60% miss). AVX-512 pays for itself only with pathological
+  load factors outside realistic ranges.
+- **Top255 is critical for wider groups**, confirming the hypothesis: base
+  false-match rate of 1/255 vs 1/127 cuts spurious cache misses on miss
+  paths by ~50% when probing 32-64 slots per step.
+- **Embedded-overflow works well** at 32-slot: `Ufm32` (embedded, compact
+  stride, low-byte 255-tag) is the best insert engine across all designs.
+- **Full sweep harness updated**: the `for_each_design!` macro in
+  `benches/sweep.rs` now includes all 32/64-slot separate, embedded,
+  and AND-indexed variants (27 new designs). These will be available for
+  future benchmark sweeps.
+- **Data preserved**: raw CSV and gnuplot PNGs in `bench-results/`.
+- **The shadow SIMD load (#6 below) remains open** but likely not worth
+  fixing — both loads hit L1 (same cache line), saving one µOP would be
+  invisible outside microbenchmarks.
 
 #### Hot-path optimizations for 32/64-slot designs
 
@@ -141,20 +128,11 @@ Candidates identified during the Group32/Group64 landing:
    Group64), 83 × `vpcmpeqb %ymm` (AVX2 Group32), 359 × `vpcmpeqb %xmm`
    (SSE2 Group<>, VEX-encoded). Trait dispatch through `GroupOps` fully
    monomorphizes and inlines.
-6. **Embedded-overflow byte read adds a shadow SIMD load** (not yet
-   closed). At 32-slot with AVX2, the hot path emits:
-     ```
-     vmovdqa   (%rcx,%r9,1), %ymm0     ; meta load (32 bytes) for match_byte
-     vmovdqa   0x10(%rcx,%r9,1),%xmm1  ; reload upper half for the overflow byte
-     ...
-     vpextrb   $0xf, %xmm1, %r15d       ; extract byte 31 (overflow)
-     ```
-   LLVM doesn't reuse the upper half of `%ymm0` — it issues a separate
-   16-byte load. Both hit L1 (same cache line), so the cost is likely
-   just one extra load-port µop. Options to eliminate it: `vextracti128`
-   from `%ymm0` into `%xmm1`, or plumb an overflow-byte-extract API
-   through `GroupOps` so we can fuse at the call site. Unclear if the
-   saving is measurable.
+6. ~~**Embedded-overflow byte read adds a shadow SIMD load**~~ \
+   **CLOSED — not worth fixing.** The 32/64-slot sweep investigation confirmed
+   that even if we saved this one load-port µop, 32-slot designs still carry
+   a structural ~10% lookup_miss penalty over 16-slot. The load-duplication
+   is a symptom, not the cause. See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md).
 
 4. ~~**Top255 insert regression at 32/64-slot**~~ **Closed — not reproducible.**
    The initial `--quick` numbers showed Top255_1bitAnd{32,64} regressing

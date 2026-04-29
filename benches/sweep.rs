@@ -343,6 +343,61 @@ macro_rules! for_each_design {
         // AND-indexed variants
         for_each_design!(@run $config, $callback, Top128_1bitAndMap<u64,u64>, "Top128_1bitAnd" $(, $arg)*);
         for_each_design!(@run $config, $callback, Top128_8bitAndMap<u64,u64>, "Top128_8bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_1bitAndMap<u64,u64>, "Top255_1bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_8bitAndMap<u64,u64>, "Top255_8bitAnd" $(, $arg)*);
+        // 16-slot embedded-overflow variants (non-Ufm/Gaps tags)
+        for_each_design!(@run $config, $callback, Hi8_EmbMap<u64,u64>, "Hi8_Emb" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_EmbP2Map<u64,u64>, "Hi8_EmbP2" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_EmbMap<u64,u64>, "Lo128_Emb" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_EmbP2Map<u64,u64>, "Lo128_EmbP2" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbAndMap<u64,u64>, "Top128_EmbAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbP2AndMap<u64,u64>, "Top128_EmbP2And" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbAndMap<u64,u64>, "Top255_EmbAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbP2AndMap<u64,u64>, "Top255_EmbP2And" $(, $arg)*);
+        // 32-slot (AVX2) separate-overflow variants
+        for_each_design!(@run $config, $callback, Splitsies32Map<u64,u64>, "Splitsies32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Splitsies32_1bitMap<u64,u64>, "Splitsies32_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_1bit32Map<u64,u64>, "Hi8_1bit32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_8bit32Map<u64,u64>, "Hi8_8bit32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_1bit32Map<u64,u64>, "Lo128_1bit32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_8bit32Map<u64,u64>, "Lo128_8bit32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_1bitAnd32Map<u64,u64>, "Top128_1bitAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_1bitAnd32Map<u64,u64>, "Top255_1bitAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_8bitAnd32Map<u64,u64>, "Top128_8bitAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_8bitAnd32Map<u64,u64>, "Top255_8bitAnd32" $(, $arg)*);
+        // 32-slot embedded-overflow variants
+        for_each_design!(@run $config, $callback, Ufm32Map<u64,u64>, "Ufm32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Gaps32Map<u64,u64>, "Gaps32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_Emb32Map<u64,u64>, "Hi8_Emb32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_EmbP232Map<u64,u64>, "Hi8_EmbP232" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_Emb32Map<u64,u64>, "Lo128_Emb32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_EmbP232Map<u64,u64>, "Lo128_EmbP232" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbAnd32Map<u64,u64>, "Top128_EmbAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbP2And32Map<u64,u64>, "Top128_EmbP2And32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbAnd32Map<u64,u64>, "Top255_EmbAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbP2And32Map<u64,u64>, "Top255_EmbP2And32" $(, $arg)*);
+        // 64-slot (AVX-512) separate-overflow variants
+        for_each_design!(@run $config, $callback, Splitsies64Map<u64,u64>, "Splitsies64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Splitsies64_1bitMap<u64,u64>, "Splitsies64_1bit" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_1bit64Map<u64,u64>, "Hi8_1bit64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_8bit64Map<u64,u64>, "Hi8_8bit64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_1bit64Map<u64,u64>, "Lo128_1bit64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_8bit64Map<u64,u64>, "Lo128_8bit64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_1bitAnd64Map<u64,u64>, "Top128_1bitAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_1bitAnd64Map<u64,u64>, "Top255_1bitAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_8bitAnd64Map<u64,u64>, "Top128_8bitAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_8bitAnd64Map<u64,u64>, "Top255_8bitAnd64" $(, $arg)*);
+        // 64-slot embedded-overflow variants
+        for_each_design!(@run $config, $callback, Ufm64Map<u64,u64>, "Ufm64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Gaps64Map<u64,u64>, "Gaps64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_Emb64Map<u64,u64>, "Hi8_Emb64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Hi8_EmbP264Map<u64,u64>, "Hi8_EmbP264" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_Emb64Map<u64,u64>, "Lo128_Emb64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Lo128_EmbP264Map<u64,u64>, "Lo128_EmbP264" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbAnd64Map<u64,u64>, "Top128_EmbAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top128_EmbP2And64Map<u64,u64>, "Top128_EmbP2And64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbAnd64Map<u64,u64>, "Top255_EmbAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Top255_EmbP2And64Map<u64,u64>, "Top255_EmbP2And64" $(, $arg)*);
         // Tombstone variant
         for_each_design!(@run $config, $callback, Hi128_TombMap<u64,u64>, "Hi128_Tomb" $(, $arg)*);
         for_each_design!(@run $config, $callback, Top128_TombMap<u64,u64>, "Top128_Tomb" $(, $arg)*);

@@ -28,6 +28,7 @@
 - [Splitsies](optimization/splitsies.md)
 - [IPO64](optimization/ipo64.md)
 - [Closed Investigations](optimization/closed.md)
+- [32/64-Slot Investigation](optimization/32-64-slot-investigation.md)
 
 # Testing
 
