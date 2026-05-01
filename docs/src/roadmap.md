@@ -6,6 +6,18 @@ thoroughly investigated and proven unproductive — see
 
 ## Recently Completed
 
+### May 2026
+
+| Item | Scope |
+|------|-------|
+| OptiMap policy: data-driven backend bands | Switch to Splitsies above the tombstone-DRAM cliff (~1M entries). IPO/IPO64 suffer 5-13× lookup_miss regression at ≥1M due to tombstone accumulation. New thresholds: `< 1024` Splitsies, `1024..1M` IPO, `≥1M` Splitsies. ReadHeavy / WriteHeavy hints fall back to Splitsies above the cliff. Boundary tests added. |
+| `OptiSet` / `OptiSortedSet` operator parity | Added `BitOr`/`BitAnd`/`BitXor`/`Sub` operators on `&Set` (matching std::HashSet / std::BTreeSet). |
+| `GenericSet::intersection` swap fix | Prior impl iterated `self` in *both* branches — when `self` was larger we still iterated the larger set. Fixed to iterate the smaller. |
+| `FlatBTree::range_mut()` | Mutable variant of `range()`. New `RawBTree::resolve_range_bounds` shared between `range` and `range_mut`. Iterator stores tree as `*mut` for non-aliasing 'a-tied yields. Closes the `range_mut()` roadmap item. |
+| `FlatBTree::from_sorted_iter()` | Bulk-load for already-sorted input. Skips the sort+dedup pass `FromIterator` does. |
+| `bulk_load` separator-key bug fix | For trees with height ≥ 2, the separator key promoted into an internal parent at position j was read from the right child's `internal_key_ptr(0)` (the child's *own* first internal separator), not the leftmost leaf-key in the right subtree. Effect: `get` returned `None` for some keys on any `FromIterator` input ≳ 300 entries (u64/u64). The 100-entry `from_iterator` test produced only a single-level tree and couldn't catch it. Fix tracks parallel `min_keys: Vec<K>` across build levels. New 100K-entry `FromIterator` + `from_sorted_iter` multi-level tests pin down the regression. |
+| `FlatBTree::shrink_to_fit` (was no-op) | Drains the tree in sorted order into a `Vec`, bulk-loads a fresh tree, swaps. Releases unused arena slots *and* compacts leaves from ~50% utilization (split-on-insert legacy) up to `LEAF_CAP`. |
+
 ### API Completeness (April 2025)
 
 | Item | Scope |
@@ -179,14 +191,14 @@ difference — the memory savings are pure upside.
 | Item | Difficulty | Notes |
 |------|-----------|-------|
 | Remove rebalancing (steal/merge) | Medium | Currently lazy (no rebalancing on remove). Tree stays valid but wastes memory under heavy churn. Low-watermark nodes are never reclaimed. |
-| Child node prefetching | Low | Prefetch next child's cache lines during internal node scan. Already faster than BTreeMap — diminishing returns. |
+| ~~Child node prefetching~~ | ~~Low~~ | **Closed (May 2026).** No useful work between reading the child pointer and reading the next node — nothing to overlap. Speculative prefetch during the linear scan would mis-predict roughly half its prefetches for u64 keys (random access). HW prefetcher already covers the 4-cache-line node walk. |
 
 ### API Completeness
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| `range_mut()` | Low-Medium | Mutable range iteration. |
-| Arena `shrink_to_fit()` | Medium | Current impl is a no-op. Compaction requires rebuilding the tree to eliminate free-list gaps. Bulk-load from drain could work. |
+| ~~`range_mut()`~~ | ~~Low-Medium~~ | **Done (May 2026).** |
+| ~~Arena `shrink_to_fit()`~~ | ~~Medium~~ | **Done (May 2026)** via drain + bulk_load rebuild. |
 
 ## Closed
 

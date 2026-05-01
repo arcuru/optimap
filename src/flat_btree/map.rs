@@ -527,16 +527,37 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
     }
 }
 
-impl<K, V, S> FlatBTree<K, V, S> {
+impl<K: Ord + Clone, V, S: Default> FlatBTree<K, V, S> {
     /// Shrinks the capacity as much as possible.
     ///
-    /// For FlatBTree this is a no-op since the arena allocator does not
-    /// support shrinking individual node blocks.
+    /// Rebuilds the tree by draining all entries (in sorted order) into a
+    /// fresh arena via `bulk_load`. This both releases unused arena nodes
+    /// from the free list *and* compacts leaves to `LEAF_CAP` (vs the
+    /// ~50% leaf utilization left behind by repeated split-on-insert).
     pub fn shrink_to_fit(&mut self) {
-        // Arena-based allocation doesn't support shrinking in-place.
-        // A full rebuild would be possible but is left as future work.
+        if self.tree.is_empty() {
+            // Empty: drop the arena entirely.
+            self.tree = RawBTree::new();
+            return;
+        }
+        // Move the old tree out (replacing with an empty one), drain it
+        // in sorted order, bulk-load a fresh tree from the pairs.
+        let old_tree = std::mem::replace(&mut self.tree, RawBTree::new());
+        let first = old_tree.first_leaf;
+        let len = old_tree.len();
+        let into_iter = IntoIter {
+            tree: old_tree,
+            current_leaf: first,
+            current_idx: 0,
+            consumed_start: 0,
+            remaining: len,
+        };
+        let pairs: Vec<(K, V)> = into_iter.collect();
+        self.tree = RawBTree::bulk_load(pairs);
     }
+}
 
+impl<K, V, S> FlatBTree<K, V, S> {
     /// Retains only the elements specified by the predicate.
     /// Elements are visited in sorted key order.
     pub fn retain<F>(&mut self, mut f: F)
@@ -1483,6 +1504,42 @@ mod tests {
         let map: FlatBTree<i32, i32> = (0..100).map(|i| (i, i * 2)).collect();
         assert_eq!(map.len(), 100);
         assert_eq!(map.get(&50), Some(&100));
+    }
+
+    #[test]
+    fn shrink_to_fit_rebuilds() {
+        // Insert lots, remove half, shrink. After shrink: capacity should
+        // shrink, and lookups should still work.
+        let mut map: FlatBTree<i32, i32> =
+            (0i32..5_000).map(|i| (i, i * 3)).collect();
+        for i in 0i32..2_500 {
+            assert_eq!(map.remove(&i), Some(i * 3));
+        }
+        let cap_before = map.capacity();
+        map.shrink_to_fit();
+        let cap_after = map.capacity();
+        assert!(
+            cap_after <= cap_before,
+            "shrink should not grow ({cap_after} > {cap_before})"
+        );
+        assert_eq!(map.len(), 2_500);
+        for i in 2_500i32..5_000 {
+            assert_eq!(map.get(&i), Some(&(i * 3)), "missing key {i} after shrink");
+        }
+        for i in 0i32..2_500 {
+            assert_eq!(map.get(&i), None, "stale key {i} after shrink");
+        }
+    }
+
+    #[test]
+    fn shrink_to_fit_empty() {
+        let mut map: FlatBTree<i32, i32> = (0..100).map(|i| (i, i)).collect();
+        for i in 0..100 {
+            map.remove(&i);
+        }
+        map.shrink_to_fit();
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.capacity(), 0);
     }
 
     #[test]
