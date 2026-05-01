@@ -410,6 +410,18 @@ fn bench_sorted_insert(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree_from_sorted", n),
+            &keys,
+            |b, keys| {
+                b.iter(|| {
+                    let map: FlatBTree<u64, u64> =
+                        FlatBTree::from_sorted_iter(keys.iter().map(|&k| (k, k)));
+                    black_box(map);
+                });
+            },
+        );
+
         group.bench_with_input(BenchmarkId::new("BTreeMap", n), &keys, |b, keys| {
             b.iter(|| {
                 let mut map = BTreeMap::new();
