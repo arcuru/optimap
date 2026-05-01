@@ -341,24 +341,61 @@ enum Inner<K, V, S = DefaultHashBuilder> {
 
 // ── Policy engine ──────────────────────────────────────────────────────────
 
+/// Capacity threshold above which tombstone designs (IPO, IPO64) start
+/// suffering from the "tombstone-at-DRAM" cliff: lookup_miss probe chains
+/// elongate as deletions accumulate and the table no longer fits in cache.
+///
+/// Sweep data (sweep-2026-04-20) shows IPO miss latency spiking from ~6 ns
+/// at 100K entries to ~104 ns at 100M (vs ~5 ns for overflow-bit designs at
+/// the same size). Above this threshold, default to a tombstone-free design.
+const TOMBSTONE_DRAM_CLIFF: usize = 1_000_000;
+
+/// Capacity threshold below which dispatch overhead and rehash sawtooth
+/// dominate; pick the lowest-overhead design (Splitsies — tombstone-free,
+/// no probe-length penalty).
+const SMALL_CAPACITY: usize = 1024;
+
 /// Choose a backend for the given conditions.
+///
+/// Selection rationale (from sweep-2026-04-20.csv at 100K-100M entries):
+///
+/// | Op          | Best at small/med  | Best at ≥1M                  |
+/// |-------------|--------------------|------------------------------|
+/// | lookup_hit  | IPO/Hi128_Tomb     | hashbrown / UFM (overflow)   |
+/// | lookup_miss | Splitsies / SoaMap | Splitsies / Gaps             |
+/// | insert      | hashbrown / IPO    | UFM / Lo8_1bit (overflow)    |
+/// | remove      | Hi128_Tomb / IPO   | Hi128_Tomb (still wins)      |
+///
+/// Tombstone designs (IPO, IPO64) win remove + hit at small/medium but hit
+/// a 5-13× cliff on lookup_miss at ≥1M entries due to tombstone accumulation.
+/// Auto policy avoids that cliff by switching to Splitsies (tombstone-free,
+/// balanced, no DRAM-scale regression).
 fn select_backend<K, V>(hint: Hint, capacity: usize) -> MapType {
-    let kv_size = mem::size_of::<K>() + mem::size_of::<V>();
+    let _ = mem::size_of::<K>() + mem::size_of::<V>();
 
     match hint {
-        Hint::ReadHeavy => MapType::Ipo,
-        Hint::WriteHeavy => MapType::Ipo,
-        Hint::Churn => MapType::Splitsies,
+        Hint::ReadHeavy => {
+            // Hit-heavy: IPO wins up to ~1M, then UFM/overflow wins at DRAM scale.
+            // Splitsies is the closest drop-in tombstone-free design.
+            if capacity >= TOMBSTONE_DRAM_CLIFF { MapType::Splitsies } else { MapType::Ipo }
+        }
+        Hint::WriteHeavy => {
+            // Inserts: IPO is competitive at cache-resident sizes; tombstone
+            // accumulation eats it at large N. Splitsies stays flat.
+            if capacity >= TOMBSTONE_DRAM_CLIFF { MapType::Splitsies } else { MapType::Ipo }
+        }
+        Hint::Churn => MapType::Splitsies, // tombstone-free, flat at high load
         Hint::Iteration => MapType::Gaps,
         Hint::Auto => {
-            if kv_size <= 16 && capacity >= 4096 {
-                // Small KV at scale — IPO64's 64-slot groups shine
-                MapType::Ipo64
-            } else if capacity >= 1024 {
-                // General large — IPO is the best all-rounder
+            if capacity >= TOMBSTONE_DRAM_CLIFF {
+                // Avoid the tombstone-at-DRAM cliff (5-13× miss regression).
+                MapType::Splitsies
+            } else if capacity >= SMALL_CAPACITY {
+                // Cache-resident: IPO wins hit + remove decisively.
                 MapType::Ipo
             } else {
-                // Small/medium — Splitsies: good balance, tombstone-free
+                // Small: rehash sawtooth dominates; pick the lowest-overhead
+                // tombstone-free design.
                 MapType::Splitsies
             }
         }
@@ -1118,12 +1155,52 @@ mod tests {
         for i in 0..10u8 {
             map.insert(i, i);
         }
-        // Reserve a lot — policy may switch to IPO64 (small KV, large capacity)
+        // Reserve into the medium band — policy switches to IPO.
         map.reserve(10_000);
+        assert_eq!(map.map_type(), MapType::Ipo);
         // Verify data survived the transition
         for i in 0..10u8 {
             assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
         }
+    }
+
+    #[test]
+    fn auto_transition_into_dram_band() {
+        // Medium band: IPO. Resize beyond TOMBSTONE_DRAM_CLIFF → Splitsies.
+        let mut map = OptiMap::<u64, u64>::with_capacity(10_000);
+        assert_eq!(map.map_type(), MapType::Ipo);
+        for i in 0..100u64 {
+            map.insert(i, i);
+        }
+        map.reserve(2_000_000);
+        assert_eq!(map.map_type(), MapType::Splitsies, "should fall back to Splitsies above DRAM cliff");
+        for i in 0..100u64 {
+            assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
+        }
+    }
+
+    #[test]
+    fn auto_band_thresholds() {
+        // Boundary check: SMALL → Splitsies, MEDIUM → IPO, LARGE → Splitsies.
+        let m = OptiMap::<u64, u64>::with_capacity(0);
+        assert_eq!(m.map_type(), MapType::Splitsies);
+        let m = OptiMap::<u64, u64>::with_capacity(100);
+        assert_eq!(m.map_type(), MapType::Splitsies);
+        let m = OptiMap::<u64, u64>::with_capacity(10_000);
+        assert_eq!(m.map_type(), MapType::Ipo);
+        let m = OptiMap::<u64, u64>::with_capacity(500_000);
+        assert_eq!(m.map_type(), MapType::Ipo);
+        let m = OptiMap::<u64, u64>::with_capacity(2_000_000);
+        assert_eq!(m.map_type(), MapType::Splitsies);
+    }
+
+    #[test]
+    fn read_heavy_hint_band() {
+        // ReadHeavy: IPO at small/medium, Splitsies at DRAM scale.
+        let m = OptiMap::<u64, u64>::with_capacity_and_hint(10_000, Hint::ReadHeavy);
+        assert_eq!(m.map_type(), MapType::Ipo);
+        let m = OptiMap::<u64, u64>::with_capacity_and_hint(5_000_000, Hint::ReadHeavy);
+        assert_eq!(m.map_type(), MapType::Splitsies);
     }
 
     #[test]

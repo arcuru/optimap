@@ -345,6 +345,40 @@ impl<T: Hash + Eq> IntoIterator for OptiSet<T> {
     }
 }
 
+// ── Bitwise operators (std::HashSet parity) ─────────────────────────────────
+
+impl<T: Hash + Eq + Clone> std::ops::BitOr<&OptiSet<T>> for &OptiSet<T> {
+    type Output = OptiSet<T>;
+    /// Union: `a | b`.
+    fn bitor(self, rhs: &OptiSet<T>) -> OptiSet<T> {
+        self.union(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone> std::ops::BitAnd<&OptiSet<T>> for &OptiSet<T> {
+    type Output = OptiSet<T>;
+    /// Intersection: `a & b`.
+    fn bitand(self, rhs: &OptiSet<T>) -> OptiSet<T> {
+        self.intersection(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone> std::ops::BitXor<&OptiSet<T>> for &OptiSet<T> {
+    type Output = OptiSet<T>;
+    /// Symmetric difference: `a ^ b`.
+    fn bitxor(self, rhs: &OptiSet<T>) -> OptiSet<T> {
+        self.symmetric_difference(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone> std::ops::Sub<&OptiSet<T>> for &OptiSet<T> {
+    type Output = OptiSet<T>;
+    /// Difference: `a - b`.
+    fn sub(self, rhs: &OptiSet<T>) -> OptiSet<T> {
+        self.difference(rhs)
+    }
+}
+
 // ── Set trait impl ─────────────────────────────────────────────────────────
 
 impl<T: Hash + Eq> crate::Set<T> for OptiSet<T> {
@@ -570,5 +604,18 @@ mod tests {
             sum += v;
         }
         assert_eq!(sum, 6);
+    }
+
+    #[test]
+    fn set_operators() {
+        let a: OptiSet<i32> = vec![1, 2, 3].into_iter().collect();
+        let b: OptiSet<i32> = vec![2, 3, 4].into_iter().collect();
+        assert_eq!((&a | &b).len(), 4);
+        let inter = &a & &b;
+        assert!(inter.contains(&2) && inter.contains(&3) && inter.len() == 2);
+        let xor = &a ^ &b;
+        assert!(xor.contains(&1) && xor.contains(&4) && xor.len() == 2);
+        let diff = &a - &b;
+        assert!(diff.contains(&1) && diff.len() == 1);
     }
 }

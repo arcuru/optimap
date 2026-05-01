@@ -212,25 +212,21 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     }
 
     /// Returns the intersection of `self` and `other` as a new set.
+    ///
+    /// Iterates whichever set is smaller and checks against the larger.
     pub fn intersection<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
         let mut result = Self::new();
-        let (smaller, check) = if self.len() <= other.len() {
-            (self as &Self, other as &GenericSet<T, M2>)
-        } else {
-            // Can't easily swap types, iterate self and check other
-            return {
-                let mut r = Self::new();
-                for item in self.iter() {
-                    if other.contains(item) {
-                        r.insert(item.clone());
-                    }
+        if self.len() <= other.len() {
+            for item in self.iter() {
+                if other.contains(item) {
+                    result.insert(item.clone());
                 }
-                r
-            };
-        };
-        for item in smaller.iter() {
-            if check.contains(item) {
-                result.insert(item.clone());
+            }
+        } else {
+            for item in other.iter() {
+                if self.contains(item) {
+                    result.insert(item.clone());
+                }
             }
         }
         result
@@ -324,6 +320,40 @@ impl<T: Hash + Eq, M: Map<T, ()>> IntoIterator for GenericSet<T, M> {
 
     fn into_iter(mut self) -> Self::IntoIter {
         self.map.drain().map(|(k, _)| k).collect::<Vec<_>>().into_iter()
+    }
+}
+
+// ── Bitwise operators (std::HashSet parity) ─────────────────────────────────
+
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitOr<&GenericSet<T, M>> for &GenericSet<T, M> {
+    type Output = GenericSet<T, M>;
+    /// Union: `a | b`.
+    fn bitor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
+        self.union(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitAnd<&GenericSet<T, M>> for &GenericSet<T, M> {
+    type Output = GenericSet<T, M>;
+    /// Intersection: `a & b`.
+    fn bitand(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
+        self.intersection(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitXor<&GenericSet<T, M>> for &GenericSet<T, M> {
+    type Output = GenericSet<T, M>;
+    /// Symmetric difference: `a ^ b`.
+    fn bitxor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
+        self.symmetric_difference(rhs)
+    }
+}
+
+impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::Sub<&GenericSet<T, M>> for &GenericSet<T, M> {
+    type Output = GenericSet<T, M>;
+    /// Difference: `a - b`.
+    fn sub(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
+        self.difference(rhs)
     }
 }
 
@@ -576,6 +606,31 @@ mod tests {
     }
 
     // ── Map trait iter test ─────────────────────────────────────────────
+
+    #[test]
+    fn intersection_uses_smaller() {
+        // Regression: prior impl iterated `self` in both branches.
+        let large: SplitsiesSet<i32> = (0..1000).collect();
+        let small: SplitsiesSet<i32> = (995..1010).collect();
+        let i1 = large.intersection(&small);
+        let i2 = small.intersection(&large);
+        assert_eq!(i1.len(), 5);
+        assert_eq!(i2.len(), 5);
+        for k in 995..1000 {
+            assert!(i1.contains(&k));
+            assert!(i2.contains(&k));
+        }
+    }
+
+    #[test]
+    fn set_operators() {
+        let a: SplitsiesSet<i32> = vec![1, 2, 3].into_iter().collect();
+        let b: SplitsiesSet<i32> = vec![2, 3, 4].into_iter().collect();
+        assert_eq!((&a | &b).len(), 4);
+        assert_eq!((&a & &b).len(), 2);
+        assert_eq!((&a ^ &b).len(), 2);
+        assert_eq!((&a - &b).len(), 1);
+    }
 
     #[test]
     fn map_trait_iter_generic() {
