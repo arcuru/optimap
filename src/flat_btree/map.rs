@@ -468,65 +468,7 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
         Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
-        use std::ops::Bound;
-
-        // Find start position
-        let (start_leaf, start_idx) = match range.start_bound() {
-            Bound::Included(key) => self.tree.lower_bound(key).unwrap_or((NO_NODE, 0)),
-            Bound::Excluded(key) => {
-                if let Some((leaf, idx)) = self.tree.lower_bound(key) {
-                    let node = self.tree.arena.node_ptr(leaf);
-                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
-                    if k.borrow() == key {
-                        let header = unsafe { NodeLayout::<K, V>::header(node) };
-                        if idx + 1 < header.len as usize {
-                            (leaf, idx + 1)
-                        } else {
-                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
-                            (next, 0)
-                        }
-                    } else {
-                        (leaf, idx)
-                    }
-                } else {
-                    (NO_NODE, 0)
-                }
-            }
-            Bound::Unbounded => (self.tree.first_leaf, 0),
-        };
-
-        // Find end position: (leaf, idx) of the last element in range, exclusive
-        let (end_leaf, end_idx) = match range.end_bound() {
-            Bound::Included(key) => {
-                // Find the position AFTER the last included key
-                if let Some((leaf, idx)) = self.tree.lower_bound(key) {
-                    let node = self.tree.arena.node_ptr(leaf);
-                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
-                    if k.borrow() == key {
-                        // Include this element: end is one past
-                        let header = unsafe { NodeLayout::<K, V>::header(node) };
-                        if idx + 1 < header.len as usize {
-                            (leaf, idx + 1)
-                        } else {
-                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
-                            (next, 0)
-                        }
-                    } else {
-                        // key not in tree; lower_bound points to first key > key
-                        // so end is this position
-                        (leaf, idx)
-                    }
-                } else {
-                    // All keys <= target, so include everything
-                    (NO_NODE, 0)
-                }
-            }
-            Bound::Excluded(key) => {
-                // End at first key >= target
-                self.tree.lower_bound(key).unwrap_or((NO_NODE, 0))
-            }
-            Bound::Unbounded => (NO_NODE, 0),
-        };
+        let (start_leaf, start_idx, end_leaf, end_idx) = self.tree.resolve_range_bounds(range);
 
         RangeIter {
             tree: &self.tree,
@@ -534,6 +476,26 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
             current_idx: start_idx,
             end_leaf,
             end_idx,
+        }
+    }
+
+    /// Iterate over key-value pairs within the given range, yielding mutable
+    /// values, in sorted order.
+    pub fn range_mut<Q, R>(&mut self, range: R) -> RangeIterMut<'_, K, V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        let (start_leaf, start_idx, end_leaf, end_idx) =
+            self.tree.resolve_range_bounds(range);
+        RangeIterMut {
+            tree: &mut self.tree as *mut RawBTree<K, V>,
+            current_leaf: start_leaf,
+            current_idx: start_idx,
+            end_leaf,
+            end_idx,
+            _marker: PhantomData,
         }
     }
 }
@@ -1133,6 +1095,64 @@ impl<'a, K, V> Iterator for RangeIter<'a, K, V> {
 
 impl<K, V> std::iter::FusedIterator for RangeIter<'_, K, V> {}
 
+/// Iterator over `(&K, &mut V)` pairs within a key range.
+///
+/// `tree` is held as a raw pointer so we can hand out independent `&mut V`
+/// borrows for each yielded item without aliasing across yields. End is
+/// tracked the same way as [`RangeIter`].
+pub struct RangeIterMut<'a, K, V> {
+    tree: *mut RawBTree<K, V>,
+    current_leaf: NodeIdx,
+    current_idx: usize,
+    end_leaf: NodeIdx,
+    end_idx: usize,
+    _marker: PhantomData<&'a mut RawBTree<K, V>>,
+}
+
+// SAFETY: behaves like &mut RawBTree wrt thread safety.
+unsafe impl<K: Send, V: Send> Send for RangeIterMut<'_, K, V> {}
+unsafe impl<K: Sync, V: Sync> Sync for RangeIterMut<'_, K, V> {}
+
+impl<'a, K, V> Iterator for RangeIterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current_leaf == NO_NODE {
+                return None;
+            }
+
+            if self.current_leaf == self.end_leaf && self.current_idx >= self.end_idx {
+                self.current_leaf = NO_NODE;
+                return None;
+            }
+
+            // SAFETY: tree pointer is valid for 'a; each yield borrows a distinct slot.
+            let arena_ptr = unsafe { (*self.tree).arena.node_ptr(self.current_leaf) };
+            let header = unsafe { NodeLayout::<K, V>::header(arena_ptr) };
+            let len = header.len as usize;
+
+            if self.current_idx < len {
+                let k = unsafe {
+                    &*NodeLayout::<K, V>::leaf_key_ptr(arena_ptr, self.current_idx)
+                };
+                let v = unsafe {
+                    &mut *NodeLayout::<K, V>::leaf_val_ptr(arena_ptr, self.current_idx)
+                };
+                self.current_idx += 1;
+                return Some((k, v));
+            }
+
+            self.current_leaf = unsafe {
+                NodeLayout::<K, V>::leaf_next_ptr(arena_ptr).read()
+            };
+            self.current_idx = 0;
+        }
+    }
+}
+
+impl<K, V> std::iter::FusedIterator for RangeIterMut<'_, K, V> {}
+
 // ── SortedMap trait impl ────────────────────────────────────────────────
 
 impl<K: Ord + Clone, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
@@ -1550,6 +1570,42 @@ mod tests {
         for i in 0..10 {
             assert_eq!(map.get(&i), Some(&(i * 2)));
         }
+    }
+
+    #[test]
+    fn range_mut_basic() {
+        let mut map = FlatBTree::new();
+        for i in 0..200 {
+            map.insert(i, i);
+        }
+        for (_, v) in map.range_mut(50..150) {
+            *v += 1000;
+        }
+        for i in 0..200 {
+            let expected = if (50..150).contains(&i) { i + 1000 } else { i };
+            assert_eq!(map.get(&i), Some(&expected), "key {i}");
+        }
+    }
+
+    #[test]
+    fn range_mut_inclusive_excluded() {
+        let mut map: FlatBTree<i32, i32> = (0..20).map(|i| (i, i)).collect();
+        // (5..=10) → 5, 6, 7, 8, 9, 10
+        let keys: Vec<i32> = map.range_mut(5..=10).map(|(&k, _)| k).collect();
+        assert_eq!(keys, vec![5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn range_mut_unbounded() {
+        let mut map: FlatBTree<i32, i32> = (0..30).map(|i| (i, i)).collect();
+        let mut count = 0;
+        for (_, v) in map.range_mut(..) {
+            *v += 100;
+            count += 1;
+        }
+        assert_eq!(count, 30);
+        assert_eq!(map.get(&0), Some(&100));
+        assert_eq!(map.get(&29), Some(&129));
     }
 
     #[test]

@@ -229,6 +229,67 @@ impl<K, V> RawBTree<K, V> {
 }
 
 impl<K: Ord, V> RawBTree<K, V> {
+    /// Resolve a range to `(start_leaf, start_idx, end_leaf, end_idx)` where
+    /// `end_*` is the exclusive sentinel (NO_NODE = unbounded).
+    pub fn resolve_range_bounds<Q, R>(&self, range: R) -> (NodeIdx, usize, NodeIdx, usize)
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q>,
+    {
+        use std::ops::Bound;
+
+        let (start_leaf, start_idx) = match range.start_bound() {
+            Bound::Included(key) => self.lower_bound(key).unwrap_or((NO_NODE, 0)),
+            Bound::Excluded(key) => {
+                if let Some((leaf, idx)) = self.lower_bound(key) {
+                    let node = self.arena.node_ptr(leaf);
+                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
+                    if k.borrow() == key {
+                        let header = unsafe { NodeLayout::<K, V>::header(node) };
+                        if idx + 1 < header.len as usize {
+                            (leaf, idx + 1)
+                        } else {
+                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+                            (next, 0)
+                        }
+                    } else {
+                        (leaf, idx)
+                    }
+                } else {
+                    (NO_NODE, 0)
+                }
+            }
+            Bound::Unbounded => (self.first_leaf, 0),
+        };
+
+        let (end_leaf, end_idx) = match range.end_bound() {
+            Bound::Included(key) => {
+                if let Some((leaf, idx)) = self.lower_bound(key) {
+                    let node = self.arena.node_ptr(leaf);
+                    let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, idx) };
+                    if k.borrow() == key {
+                        let header = unsafe { NodeLayout::<K, V>::header(node) };
+                        if idx + 1 < header.len as usize {
+                            (leaf, idx + 1)
+                        } else {
+                            let next = unsafe { NodeLayout::<K, V>::leaf_next_ptr(node).read() };
+                            (next, 0)
+                        }
+                    } else {
+                        (leaf, idx)
+                    }
+                } else {
+                    (NO_NODE, 0)
+                }
+            }
+            Bound::Excluded(key) => self.lower_bound(key).unwrap_or((NO_NODE, 0)),
+            Bound::Unbounded => (NO_NODE, 0),
+        };
+
+        (start_leaf, start_idx, end_leaf, end_idx)
+    }
+
     /// Search for a key, returning the leaf node index and slot index if found.
     pub fn search<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
     where

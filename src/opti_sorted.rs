@@ -247,6 +247,19 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
     {
         self.inner.range(range)
     }
+
+    /// Iterate over key-value pairs within the given range, yielding mutable
+    /// values, in sorted order.
+    pub fn range_mut<'a, Q, R>(&'a mut self, range: R)
+        -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: Borrow<Q> + 'a,
+        V: 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        self.inner.range_mut(range)
+    }
 }
 
 // ── Trait implementations ──────────────────────────────────────────────────
@@ -769,6 +782,32 @@ impl<T: Ord + Clone, S: BuildHasher + Default> IntoIterator for OptiSortedSet<T,
     }
 }
 
+// ── Bitwise operators (std::BTreeSet parity) ────────────────────────────────
+
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitOr<&OptiSortedSet<T>> for &OptiSortedSet<T> {
+    type Output = OptiSortedSet<T>;
+    /// Union: `a | b`.
+    fn bitor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.union(rhs) }
+}
+
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitAnd<&OptiSortedSet<T>> for &OptiSortedSet<T> {
+    type Output = OptiSortedSet<T>;
+    /// Intersection: `a & b`.
+    fn bitand(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.intersection(rhs) }
+}
+
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitXor<&OptiSortedSet<T>> for &OptiSortedSet<T> {
+    type Output = OptiSortedSet<T>;
+    /// Symmetric difference: `a ^ b`.
+    fn bitxor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.symmetric_difference(rhs) }
+}
+
+impl<T: Hash + Eq + Ord + Clone> std::ops::Sub<&OptiSortedSet<T>> for &OptiSortedSet<T> {
+    type Output = OptiSortedSet<T>;
+    /// Difference: `a - b`.
+    fn sub(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.difference(rhs) }
+}
+
 // ── Set trait impl ─────────────────────────────────────────────────────────
 
 impl<T: Hash + Eq + Ord + Clone> crate::Set<T> for OptiSortedSet<T> {
@@ -985,6 +1024,19 @@ mod tests {
         }
 
         #[test]
+        fn range_mut() {
+            let mut map: OptiSortedMap<i32, i32> =
+                (0..30).map(|i| (i, i)).collect();
+            for (_, v) in map.range_mut(10..20) {
+                *v += 1000;
+            }
+            for i in 0..30 {
+                let want = if (10..20).contains(&i) { i + 1000 } else { i };
+                assert_eq!(map.get(&i), Some(&want));
+            }
+        }
+
+        #[test]
         fn sorted_map_trait_usage() {
             use crate::SortedMap;
 
@@ -1134,6 +1186,16 @@ mod tests {
                 sum += v;
             }
             assert_eq!(sum, 6);
+        }
+
+        #[test]
+        fn set_operators() {
+            let a: OptiSortedSet<i32> = vec![1, 2, 3].into_iter().collect();
+            let b: OptiSortedSet<i32> = vec![2, 3, 4].into_iter().collect();
+            assert_eq!((&a | &b).len(), 4);
+            assert_eq!((&a & &b).len(), 2);
+            assert_eq!((&a ^ &b).len(), 2);
+            assert_eq!((&a - &b).len(), 1);
         }
     }
 }
