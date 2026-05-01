@@ -1881,13 +1881,27 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             }
         }
 
-        // Phase 3: Build internal nodes bottom-up
+        // Phase 3: Build internal nodes bottom-up.
+        //
+        // Each level keeps a parallel `min_keys` vector: the leftmost leaf-key
+        // in every subtree at the current level. The separator promoted into
+        // a parent at position j is `min_keys[i + j + 1]` — the leftmost leaf
+        // key of the subtree to the right of that separator. Pulling the key
+        // from the child's first internal-key is wrong at level ≥ 2 because
+        // that key splits the child's *own* subtrees, not the boundary
+        // between siblings.
         let mut children = leaf_indices;
+        // For leaves: leftmost key = first key of the leaf.
+        let mut min_keys: Vec<K> = children.iter().map(|&leaf_idx| {
+            let node = arena.node_ptr(leaf_idx);
+            unsafe { (*NodeLayout::<K, V>::leaf_key_ptr(node, 0)).clone() }
+        }).collect();
         let mut height = 0u32;
 
         while children.len() > 1 {
             let internal_cap = NodeLayout::<K, V>::INTERNAL_CAP;
             let mut parents: Vec<NodeIdx> = Vec::new();
+            let mut parent_min_keys: Vec<K> = Vec::new();
             let mut i = 0;
 
             while i < children.len() {
@@ -1910,19 +1924,14 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
 
                     // Write keys and remaining children
                     for j in 0..n_keys {
-                        // Separator key = first key of child[i + j + 1]
-                        let child_idx = children[i + j + 1];
-                        let child_node = arena.node_ptr(child_idx);
-                        let child_header = NodeLayout::<K, V>::header(child_node);
-
-                        let sep_key = if child_header.is_leaf() {
-                            (*NodeLayout::<K, V>::leaf_key_ptr(child_node, 0)).clone()
-                        } else {
-                            (*NodeLayout::<K, V>::internal_key_ptr(child_node, 0)).clone()
-                        };
+                        let child_pos = i + j + 1;
+                        // Separator = leftmost leaf-key in the subtree right of this
+                        // separator (i.e. the subtree rooted at children[child_pos]).
+                        let sep_key = min_keys[child_pos].clone();
 
                         NodeLayout::<K, V>::internal_key_ptr(parent_node, j).write(sep_key);
-                        NodeLayout::<K, V>::internal_child_ptr(parent_node, j + 1).write(child_idx);
+                        NodeLayout::<K, V>::internal_child_ptr(parent_node, j + 1)
+                            .write(children[child_pos]);
                     }
 
                     // Set parent pointers on children
@@ -1932,11 +1941,14 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
                     }
                 }
 
+                // The new parent's leftmost key = leftmost key of its first child.
+                parent_min_keys.push(min_keys[i].clone());
                 parents.push(parent_idx);
                 i += n_children;
             }
 
             children = parents;
+            min_keys = parent_min_keys;
             height += 1;
         }
 

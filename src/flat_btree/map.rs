@@ -56,6 +56,33 @@ impl<K: Ord, V> FlatBTree<K, V> {
     }
 }
 
+impl<K: Ord + Clone, V> FlatBTree<K, V> {
+    /// Build a FlatBTree from input that is already sorted by key, with no
+    /// duplicate keys.
+    ///
+    /// Faster than `from_iter` for already-sorted input because it skips
+    /// the sort+dedup pass. Leaves are filled to `LEAF_CAP`, internal levels
+    /// built bottom-up — the resulting tree is denser (fewer half-full
+    /// leaves) and shallower than one built by repeated insertion.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if the input is not strictly ascending. In
+    /// release builds, the tree may be invalid if the precondition is
+    /// violated.
+    pub fn from_sorted_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let pairs: Vec<(K, V)> = iter.into_iter().collect();
+        debug_assert!(
+            pairs.windows(2).all(|w| w[0].0 < w[1].0),
+            "from_sorted_iter requires strictly ascending keys"
+        );
+        FlatBTree {
+            tree: super::raw::RawBTree::bulk_load(pairs),
+            _hasher: PhantomData,
+        }
+    }
+}
+
 impl<K: Ord, V, S> FlatBTree<K, V, S> {
     /// Create an empty FlatBTree with a specific hasher (for Map trait compatibility).
     pub fn with_hasher(_hash_builder: S) -> Self {
@@ -1459,6 +1486,19 @@ mod tests {
     }
 
     #[test]
+    fn from_iterator_multi_level() {
+        // 100K entries forces a 3-level tree, exercising bulk_load's
+        // recursive separator-key promotion (which previously read the
+        // wrong key for height ≥ 2 internal nodes).
+        let map: FlatBTree<i32, i32> =
+            (0i32..100_000).map(|i| (i, i.wrapping_mul(13))).collect();
+        assert_eq!(map.len(), 100_000);
+        for i in 0i32..100_000 {
+            assert_eq!(map.get(&i), Some(&i.wrapping_mul(13)), "missing key {i}");
+        }
+    }
+
+    #[test]
     fn clone_map() {
         let mut map = FlatBTree::new();
         for i in 0..50 {
@@ -1593,6 +1633,59 @@ mod tests {
         // (5..=10) → 5, 6, 7, 8, 9, 10
         let keys: Vec<i32> = map.range_mut(5..=10).map(|(&k, _)| k).collect();
         assert_eq!(keys, vec![5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn from_sorted_iter_basic() {
+        let map = FlatBTree::from_sorted_iter((0..1000).map(|i| (i, i * 10)));
+        assert_eq!(map.len(), 1000);
+        for i in 0..1000 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+        }
+        // Sorted iteration should match original order
+        let pairs: Vec<_> = map.iter().map(|(&k, _)| k).collect();
+        assert_eq!(pairs, (0..1000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn from_sorted_iter_multi_level() {
+        // 100K elements: with LEAF_CAP=15 (u64/u64) we get ~6700 leaves,
+        // INTERNAL_CAP=20 gives ~320 level-1 internals, ~16 level-2, 1 root.
+        // Forces a 3-level tree which exercises the recursive separator fix.
+        let n = 100_000u64;
+        let map = FlatBTree::from_sorted_iter((0..n).map(|i| (i, i.wrapping_mul(7))));
+        assert_eq!(map.len() as u64, n);
+        for i in 0..n {
+            assert_eq!(map.get(&i), Some(&i.wrapping_mul(7)), "missing key {i}");
+        }
+        for i in n..(n + 100) {
+            assert_eq!(map.get(&i), None, "spurious key {i}");
+        }
+    }
+
+    #[test]
+    fn from_sorted_iter_empty() {
+        let map: FlatBTree<i32, i32> = FlatBTree::from_sorted_iter(std::iter::empty());
+        assert_eq!(map.len(), 0);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn from_sorted_iter_single_leaf() {
+        // Fewer than LEAF_CAP elements (15 for u64/u64) → single root leaf.
+        let map = FlatBTree::from_sorted_iter((0..5).map(|i| (i, i)));
+        assert_eq!(map.len(), 5);
+        for i in 0..5 {
+            assert_eq!(map.get(&i), Some(&i));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "strictly ascending")]
+    fn from_sorted_iter_unsorted_panics_in_debug() {
+        // Only debug builds panic. The test runs under cfg(test) which is debug.
+        let _: FlatBTree<i32, i32> =
+            FlatBTree::from_sorted_iter([(2, 0), (1, 0), (3, 0)]);
     }
 
     #[test]
