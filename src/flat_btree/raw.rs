@@ -1058,79 +1058,71 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         let right_count = leaf_cap + 1 - mid;
 
         if pos < mid {
-            // New element goes to the left half
-            // Move keys[mid-1..leaf_cap) to right[0..right_count)
-            // (we lose one from left because the insert will add one)
+            // New element goes to the left half. Move keys[mid-1..leaf_cap)
+            // to right[0..move_count) — left loses one because the insert
+            // adds one back.
             let move_start = mid - 1;
             let move_count = leaf_cap - move_start;
             let left_node = self.arena.node_ptr(left_idx);
             let right_node = self.arena.node_ptr(right_idx);
             unsafe {
-                for i in 0..move_count {
-                    let src_k = NodeLayout::<K, V>::leaf_key_ptr(left_node, move_start + i);
-                    let dst_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i);
-                    std::ptr::copy_nonoverlapping(src_k, dst_k, 1);
+                std::ptr::copy_nonoverlapping(
+                    NodeLayout::<K, V>::leaf_key_ptr(left_node, move_start),
+                    NodeLayout::<K, V>::leaf_key_ptr(right_node, 0),
+                    move_count,
+                );
+                std::ptr::copy_nonoverlapping(
+                    NodeLayout::<K, V>::leaf_val_ptr(left_node, move_start),
+                    NodeLayout::<K, V>::leaf_val_ptr(right_node, 0),
+                    move_count,
+                );
 
-                    let src_v = NodeLayout::<K, V>::leaf_val_ptr(left_node, move_start + i);
-                    let dst_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i);
-                    std::ptr::copy_nonoverlapping(src_v, dst_v, 1);
-                }
-            }
-
-            // Update lengths
-            let left_node = self.arena.node_ptr(left_idx);
-            unsafe {
                 NodeLayout::<K, V>::header_mut(left_node).len = (mid - 1) as u16;
-            }
-            let right_node = self.arena.node_ptr(right_idx);
-            unsafe {
                 NodeLayout::<K, V>::header_mut(right_node).len = move_count as u16;
             }
 
             // Now insert into left leaf (which has mid-1 elements, room for one more)
             self.leaf_insert_at(left_idx, pos, key, value);
         } else {
-            // New element goes to the right half
-            // Move keys[mid..leaf_cap) to right, inserting the new element at the right position
+            // New element goes to the right half. Move keys[mid..leaf_cap)
+            // to right, with the new element inserted at right_pos.
             let right_pos = pos - mid;
+            let move_count = leaf_cap - mid;
             let left_node = self.arena.node_ptr(left_idx);
             let right_node = self.arena.node_ptr(right_idx);
 
             unsafe {
-                // Copy elements before the insertion point
-                for i in 0..right_pos {
-                    let src_k = NodeLayout::<K, V>::leaf_key_ptr(left_node, mid + i);
-                    let dst_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i);
-                    std::ptr::copy_nonoverlapping(src_k, dst_k, 1);
-
-                    let src_v = NodeLayout::<K, V>::leaf_val_ptr(left_node, mid + i);
-                    let dst_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i);
-                    std::ptr::copy_nonoverlapping(src_v, dst_v, 1);
+                if right_pos > 0 {
+                    std::ptr::copy_nonoverlapping(
+                        NodeLayout::<K, V>::leaf_key_ptr(left_node, mid),
+                        NodeLayout::<K, V>::leaf_key_ptr(right_node, 0),
+                        right_pos,
+                    );
+                    std::ptr::copy_nonoverlapping(
+                        NodeLayout::<K, V>::leaf_val_ptr(left_node, mid),
+                        NodeLayout::<K, V>::leaf_val_ptr(right_node, 0),
+                        right_pos,
+                    );
                 }
 
-                // Write the new element
                 NodeLayout::<K, V>::leaf_key_ptr(right_node, right_pos).write(key);
                 NodeLayout::<K, V>::leaf_val_ptr(right_node, right_pos).write(value);
 
-                // Copy elements after the insertion point
-                for i in right_pos..(leaf_cap - mid) {
-                    let src_k = NodeLayout::<K, V>::leaf_key_ptr(left_node, mid + i);
-                    let dst_k = NodeLayout::<K, V>::leaf_key_ptr(right_node, i + 1);
-                    std::ptr::copy_nonoverlapping(src_k, dst_k, 1);
-
-                    let src_v = NodeLayout::<K, V>::leaf_val_ptr(left_node, mid + i);
-                    let dst_v = NodeLayout::<K, V>::leaf_val_ptr(right_node, i + 1);
-                    std::ptr::copy_nonoverlapping(src_v, dst_v, 1);
+                let tail = move_count - right_pos;
+                if tail > 0 {
+                    std::ptr::copy_nonoverlapping(
+                        NodeLayout::<K, V>::leaf_key_ptr(left_node, mid + right_pos),
+                        NodeLayout::<K, V>::leaf_key_ptr(right_node, right_pos + 1),
+                        tail,
+                    );
+                    std::ptr::copy_nonoverlapping(
+                        NodeLayout::<K, V>::leaf_val_ptr(left_node, mid + right_pos),
+                        NodeLayout::<K, V>::leaf_val_ptr(right_node, right_pos + 1),
+                        tail,
+                    );
                 }
-            }
 
-            // Update lengths
-            let left_node = self.arena.node_ptr(left_idx);
-            unsafe {
                 NodeLayout::<K, V>::header_mut(left_node).len = mid as u16;
-            }
-            let right_node = self.arena.node_ptr(right_idx);
-            unsafe {
                 NodeLayout::<K, V>::header_mut(right_node).len = right_count as u16;
             }
         }
