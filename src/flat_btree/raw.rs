@@ -2141,6 +2141,220 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
     }
 }
 
+// ── Tree-surgery append (disjoint adjacent graft) ───────────────────────
+
+impl<K: Ord + Clone, V> RawBTree<K, V> {
+    /// Recursively copy a subtree from `src_arena` (rooted at `src`) into
+    /// `dst_arena`, returning the new root index in `dst_arena`. Wires copied
+    /// leaves into the running chain `(dst_first_leaf, dst_chain_tail)` in
+    /// sorted order — caller pre-seeds `dst_chain_tail` with the splice point
+    /// in dst (e.g. `self.last_leaf` for an "append at the tail" graft).
+    /// `src_arena` is NOT modified — values are byte-copied; the caller is
+    /// responsible for preventing double-drop by deallocating src's arena
+    /// without traversing nodes (e.g. `*src = Self::new()`).
+    fn clone_subtree_into(
+        src_arena: &Arena,
+        src: NodeIdx,
+        dst_arena: &mut Arena,
+        dst_first_leaf: &mut NodeIdx,
+        dst_chain_tail: &mut NodeIdx,
+    ) -> NodeIdx {
+        let (is_leaf, len) = unsafe {
+            let header = NodeLayout::<K, V>::header(src_arena.node_ptr(src));
+            (header.is_leaf(), header.len as usize)
+        };
+
+        let dst = dst_arena.alloc_node();
+
+        if is_leaf {
+            // Bitwise-copy header+keys+values; do NOT copy prev/next links.
+            let copy_size = NODE_SIZE - 2 * std::mem::size_of::<NodeIdx>();
+            unsafe {
+                let src_ptr = src_arena.node_ptr(src);
+                let dst_ptr = dst_arena.node_ptr(dst);
+                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, copy_size);
+                let dst_header = NodeLayout::<K, V>::header_mut(dst_ptr);
+                dst_header.parent = NO_NODE;
+
+                NodeLayout::<K, V>::leaf_prev_ptr(dst_ptr).write(*dst_chain_tail);
+                NodeLayout::<K, V>::leaf_next_ptr(dst_ptr).write(NO_NODE);
+                if *dst_chain_tail != NO_NODE {
+                    let prev_ptr = dst_arena.node_ptr(*dst_chain_tail);
+                    NodeLayout::<K, V>::leaf_next_ptr(prev_ptr).write(dst);
+                }
+                // First *new* leaf in this clone op — distinct from the splice
+                // anchor `dst_chain_tail` may have been pre-seeded with.
+                if *dst_first_leaf == NO_NODE {
+                    *dst_first_leaf = dst;
+                }
+                *dst_chain_tail = dst;
+            }
+        } else {
+            // Internal: copy bytes (with stale child indices) then re-write
+            // child indices after recursive copies.
+            unsafe {
+                let src_ptr = src_arena.node_ptr(src);
+                let dst_ptr = dst_arena.node_ptr(dst);
+                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, NODE_SIZE);
+                NodeLayout::<K, V>::header_mut(dst_ptr).parent = NO_NODE;
+            }
+
+            let mut children: Vec<NodeIdx> = Vec::with_capacity(len + 1);
+            for i in 0..=len {
+                children.push(unsafe {
+                    NodeLayout::<K, V>::internal_child_ptr(src_arena.node_ptr(src), i).read()
+                });
+            }
+
+            for (i, c) in children.iter().enumerate() {
+                let new_c = Self::clone_subtree_into(
+                    src_arena,
+                    *c,
+                    dst_arena,
+                    dst_first_leaf,
+                    dst_chain_tail,
+                );
+                unsafe {
+                    let dst_ptr = dst_arena.node_ptr(dst);
+                    NodeLayout::<K, V>::internal_child_ptr(dst_ptr, i).write(new_c);
+                    NodeLayout::<K, V>::header_mut(dst_arena.node_ptr(new_c)).parent = dst;
+                }
+            }
+        }
+        dst
+    }
+
+    /// Tree-surgery graft: precondition `self.last_key < other.first_key`,
+    /// and both are non-empty. Copies `other`'s tree into `self.arena`,
+    /// splices the leaf chain at `self.last_leaf`, and bridges the spines.
+    ///
+    /// Returns `true` on success, `false` if the height delta isn't currently
+    /// supported (caller should fall back to drain). For now we support
+    /// `self.height >= other.height`. The asymmetric case (other taller than
+    /// self) is rare in practice and falls through to drain.
+    ///
+    /// O(other_arena_nodes + log self.height). When other is significantly
+    /// smaller than self, this avoids touching most of self's existing nodes.
+    pub(crate) fn append_graft_disjoint(&mut self, other: &mut Self) -> bool {
+        debug_assert!(!self.is_empty() && !other.is_empty());
+        if self.height < other.height {
+            return false;
+        }
+
+        // Step 1: copy other's tree into self.arena; splice the chain at self.last_leaf.
+        let mut dst_first_leaf: NodeIdx = NO_NODE;
+        let mut dst_chain_tail: NodeIdx = self.last_leaf;
+        let other_root_in_self = Self::clone_subtree_into(
+            &other.arena,
+            other.root,
+            &mut self.arena,
+            &mut dst_first_leaf,
+            &mut dst_chain_tail,
+        );
+
+        // Step 2: link self.last_leaf.next -> dst_first_leaf
+        // (clone_subtree_into already wired the *prev* of dst_first_leaf to dst_chain_tail's
+        //  initial value, which was self.last_leaf — so the leaf chain is now bidirectional).
+        unsafe {
+            let prev_ptr = self.arena.node_ptr(self.last_leaf);
+            NodeLayout::<K, V>::leaf_next_ptr(prev_ptr).write(dst_first_leaf);
+        }
+        let new_last_leaf = dst_chain_tail;
+
+        // Step 3: bridge spines. Separator = first key of dst_first_leaf
+        //         (= other's smallest key).
+        let separator: K = unsafe {
+            let n = self.arena.node_ptr(dst_first_leaf);
+            (*NodeLayout::<K, V>::leaf_key_ptr(n, 0)).clone()
+        };
+        let other_height = other.height;
+        self.graft_combine_roots(other_root_in_self, separator, other_height);
+
+        // Step 4: finalize state.
+        self.last_leaf = new_last_leaf;
+        self.len += other.len;
+        // Reset other to empty. Its arena's bytes are dropped by Arena::drop
+        // (no per-node walk), so the K/V values that were byte-copied into
+        // self.arena are NOT double-dropped.
+        other.arena = Arena::new();
+        other.root = NO_NODE;
+        other.first_leaf = NO_NODE;
+        other.last_leaf = NO_NODE;
+        other.len = 0;
+        other.height = 0;
+
+        true
+    }
+
+    /// Bridge two roots after grafting `other_root` (now in self.arena) onto
+    /// the right side of `self.root`. Handles the cap-cascade if internal
+    /// nodes overflow during the splice.
+    /// Precondition: `self.height >= other_height`.
+    fn graft_combine_roots(&mut self, other_root: NodeIdx, separator: K, other_height: u32) {
+        debug_assert!(self.height >= other_height);
+
+        if self.height == other_height {
+            // New root above both children.
+            let new_root = self.arena.alloc_node();
+            unsafe {
+                let new_root_node = self.arena.node_ptr(new_root);
+                let header = NodeLayout::<K, V>::header_mut(new_root_node);
+                header.len = 1;
+                header.flags = 0; // internal
+                header.parent = NO_NODE;
+                NodeLayout::<K, V>::internal_key_ptr(new_root_node, 0).write(separator);
+                NodeLayout::<K, V>::internal_child_ptr(new_root_node, 0).write(self.root);
+                NodeLayout::<K, V>::internal_child_ptr(new_root_node, 1).write(other_root);
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(self.root)).parent = new_root;
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(other_root)).parent = new_root;
+            }
+            self.root = new_root;
+            self.height += 1;
+            return;
+        }
+
+        // self.height > other_height: descend self's right spine to depth
+        // (self.height - other_height - 1). The node we land on (`cur`) is at
+        // level (other_height + 1) — exactly one level above other_root.
+        // We then add `(separator, other_root)` as cur's new last child;
+        // if cur is full, cascade splits up via propagate_split.
+        let descend = self.height - other_height - 1;
+        let mut cur = self.root;
+        let mut path: Vec<(NodeIdx, usize)> = Vec::with_capacity(descend as usize);
+        for _ in 0..descend {
+            let cur_len = unsafe {
+                NodeLayout::<K, V>::header(self.arena.node_ptr(cur)).len as usize
+            };
+            // cur's slot in its parent IS the next-pos+1 (rightmost child).
+            // For propagate_split semantics, child_pos == cur's slot in parent
+            // (= len position, where the new right-sibling's separator key
+            //  will go).
+            path.push((cur, cur_len));
+            // Descend into rightmost child.
+            cur = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(self.arena.node_ptr(cur), cur_len).read()
+            };
+        }
+        let cur_len = unsafe {
+            NodeLayout::<K, V>::header(self.arena.node_ptr(cur)).len as usize
+        };
+
+        if cur_len < NodeLayout::<K, V>::INTERNAL_CAP {
+            // Room: append separator + other_root at cur's tail.
+            self.internal_insert_at(cur, cur_len, separator, other_root);
+            unsafe {
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(other_root)).parent = cur;
+            }
+            return;
+        }
+
+        // cur is full: split, then cascade up.
+        let (promoted, new_internal) =
+            self.internal_split_and_insert(cur, cur_len, separator, other_root);
+        self.propagate_split(path, promoted, new_internal);
+    }
+}
+
 // ── Tree-surgery split_off ──────────────────────────────────────────────
 
 #[derive(Clone, Copy)]

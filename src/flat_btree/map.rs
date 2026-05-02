@@ -632,9 +632,57 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
     ///
     /// On key collision, the value from `other` wins (matches `std::BTreeMap::append`).
     ///
-    /// Currently O(n + m): drains both into sorted vectors, merges, bulk-loads.
-    /// The merge takes advantage of both sources already being sorted.
+    /// Dispatches between three strategies based on a cheap O(1) disjointness
+    /// check on `self.last_key` vs `other.first_key`:
+    ///
+    /// - **Disjoint adjacent** (`self.last < other.first`): tree-surgery graft
+    ///   via [`append_graft`]. O(other_arena_nodes + log self.height) — does
+    ///   NOT touch self's existing leaves at all. Falls back internally to
+    ///   [`append_drain`] when `self.height < other.height` (rare).
+    /// - **Reverse adjacent** (`other.last < self.first`): swap and graft
+    ///   in the opposite direction.
+    /// - **Overlapping**: drain both into sorted vectors, merge, bulk-load via
+    ///   [`append_drain`]. O(n + m).
+    ///
+    /// [`append_graft`]: Self::append_graft
+    /// [`append_drain`]: Self::append_drain
     pub fn append(&mut self, other: &mut Self) {
+        if other.tree.is_empty() {
+            return;
+        }
+        if self.tree.is_empty() {
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            return;
+        }
+
+        // O(1) disjointness check via min/max keys.
+        // SAFETY: both trees non-empty per the early-return above.
+        let self_max = self.last_key_value().map(|(k, _)| k).unwrap();
+        let other_min = other.first_key_value().map(|(k, _)| k).unwrap();
+        if self_max < other_min {
+            // Common case: adjacent disjoint, self's range first.
+            self.append_graft(other);
+            return;
+        }
+        let self_min = self.first_key_value().map(|(k, _)| k).unwrap();
+        let other_max = other.last_key_value().map(|(k, _)| k).unwrap();
+        if other_max < self_min {
+            // Reverse adjacent: swap so self holds the smaller-key tree, then graft.
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            self.append_graft(other);
+            return;
+        }
+
+        // Overlapping ranges: fall back to drain+merge+bulk_load.
+        self.append_drain(other);
+    }
+
+    /// Drain-and-rebuild append: drains both trees in sorted order, merges
+    /// them with key-collision resolution (other wins on equal keys), and
+    /// bulk-loads the result. O(n + m). Always correct regardless of whether
+    /// the trees' key ranges overlap.
+    #[doc(hidden)]
+    pub fn append_drain(&mut self, other: &mut Self) {
         if other.tree.is_empty() {
             return;
         }
@@ -680,6 +728,94 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
             }
         }
         self.tree = RawBTree::bulk_load(out);
+    }
+
+    /// Concat append: when `self.last_key < other.first_key`, the merge step
+    /// in [`append_drain`] is unnecessary — drained sequences are already
+    /// disjoint and ordered. This variant chains them and bulk-loads. O(n + m)
+    /// but with lower constant factor than `append_drain`.
+    ///
+    /// **Precondition**: `self.last_key < other.first_key` (or one is empty).
+    /// If violated, the result tree may have unsorted keys.
+    ///
+    /// [`append_drain`]: Self::append_drain
+    #[doc(hidden)]
+    pub fn append_concat(&mut self, other: &mut Self) {
+        if other.tree.is_empty() {
+            return;
+        }
+        if self.tree.is_empty() {
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            return;
+        }
+        debug_assert!(
+            self.last_key_value().map(|(k, _)| k) < other.first_key_value().map(|(k, _)| k),
+            "append_concat requires self.last_key < other.first_key"
+        );
+
+        let mut a: Vec<(K, V)> = self.drain().collect();
+        let b: Vec<(K, V)> = other.drain().collect();
+        a.reserve(b.len());
+        a.extend(b);
+        self.tree = RawBTree::bulk_load(a);
+    }
+
+    /// Tail-extend append: drains `other` into a sorted vector and inserts each
+    /// pair into `self`. When `self.last_key < other.first_key`, every insert
+    /// hits the tail fast path → O(m). Compared to `append_drain` this avoids
+    /// rebuilding `self` from scratch — leaves up to `self.last_leaf` keep
+    /// their physical layout.
+    ///
+    /// Falls back to per-key insert (still correct) when ranges overlap, but
+    /// is slower than `append_drain` in that case because it loses the
+    /// bulk-load constant factor.
+    #[doc(hidden)]
+    pub fn append_extend(&mut self, other: &mut Self) {
+        if other.tree.is_empty() {
+            return;
+        }
+        if self.tree.is_empty() {
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            return;
+        }
+        let pairs: Vec<(K, V)> = other.drain().collect();
+        for (k, v) in pairs {
+            self.tree.insert(k, v);
+        }
+    }
+
+    /// Tree-surgery graft: for the disjoint adjacent case
+    /// (`self.last_key < other.first_key`), avoid touching self's existing
+    /// leaves entirely. Other's nodes are byte-copied into self's arena and
+    /// the leaf chain is spliced; the spines are bridged with at most a
+    /// single new internal node (equal heights) or by appending other's root
+    /// as a new last child somewhere on self's right spine (self taller).
+    ///
+    /// Falls back to [`append_drain`] when `self.height < other.height` —
+    /// supporting that direction is symmetric work but rare in practice
+    /// (other being taller means it has more entries than self, which is
+    /// unusual for an "append-into-self" call).
+    ///
+    /// **Precondition**: `self.last_key < other.first_key`.
+    ///
+    /// [`append_drain`]: Self::append_drain
+    #[doc(hidden)]
+    pub fn append_graft(&mut self, other: &mut Self) {
+        if other.tree.is_empty() {
+            return;
+        }
+        if self.tree.is_empty() {
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            return;
+        }
+        debug_assert!(
+            self.last_key_value().map(|(k, _)| k) < other.first_key_value().map(|(k, _)| k),
+            "append_graft requires self.last_key < other.first_key"
+        );
+        if !self.tree.append_graft_disjoint(&mut other.tree) {
+            // Height delta unsupported (self.height < other.height): fallback.
+            self.append_drain(other);
+        }
     }
 
     /// Splits the map into two at the given key. Returns everything with
@@ -3030,6 +3166,213 @@ mod tests {
         // Spot-check
         assert_eq!(a.get(&100), Some(&50));
         assert_eq!(a.get(&101), Some(&(50 + 100_000)));
+    }
+
+    #[test]
+    fn append_reverse_order_swap() {
+        // self.first > other.last → dispatcher must swap then extend.
+        let mut a: FlatBTree<u64, u64> = (100..150).map(|i| (i, i + 1000)).collect();
+        let mut b: FlatBTree<u64, u64> = (0..50).map(|i| (i, i)).collect();
+        a.append(&mut b);
+        assert!(b.is_empty());
+        assert_eq!(a.len(), 100);
+        for i in 0..50 {
+            assert_eq!(a.get(&i), Some(&i));
+        }
+        for i in 100..150 {
+            assert_eq!(a.get(&i), Some(&(i + 1000)));
+        }
+        // sorted invariant
+        let keys: Vec<u64> = a.iter().map(|(k, _)| *k).collect();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    // ── Per-variant correctness tests ─────────────────────────────────
+
+    fn check_append_invariants(a: &FlatBTree<u64, u64>, expected: &[(u64, u64)]) {
+        assert_eq!(a.len(), expected.len());
+        let actual: Vec<(u64, u64)> = a.iter().map(|(k, v)| (*k, *v)).collect();
+        assert_eq!(actual, expected);
+    }
+
+    fn build_disjoint_pair(
+        n_a: usize,
+        n_b: usize,
+    ) -> (FlatBTree<u64, u64>, FlatBTree<u64, u64>, Vec<(u64, u64)>) {
+        let a: FlatBTree<u64, u64> = (0..n_a as u64).map(|i| (i, i)).collect();
+        let b: FlatBTree<u64, u64> = (n_a as u64..(n_a + n_b) as u64)
+            .map(|i| (i, i * 2))
+            .collect();
+        let mut expected: Vec<(u64, u64)> = (0..n_a as u64).map(|i| (i, i)).collect();
+        expected.extend((n_a as u64..(n_a + n_b) as u64).map(|i| (i, i * 2)));
+        (a, b, expected)
+    }
+
+    #[test]
+    fn append_drain_overlapping() {
+        // append_drain handles overlap correctly (other wins).
+        let mut a: FlatBTree<u64, u64> =
+            [(1u64, 11u64), (2, 12), (3, 13)].into_iter().collect();
+        let mut b: FlatBTree<u64, u64> = [(2u64, 22u64), (3, 23), (4, 24)].into_iter().collect();
+        a.append_drain(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &[(1, 11), (2, 22), (3, 23), (4, 24)]);
+    }
+
+    #[test]
+    fn append_concat_disjoint_small() {
+        let (mut a, mut b, expected) = build_disjoint_pair(50, 50);
+        a.append_concat(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_concat_disjoint_multilevel() {
+        // 3000 + 3000 → multi-level B+ tree.
+        let (mut a, mut b, expected) = build_disjoint_pair(3000, 3000);
+        a.append_concat(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_extend_disjoint_small() {
+        let (mut a, mut b, expected) = build_disjoint_pair(50, 50);
+        a.append_extend(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_extend_disjoint_multilevel() {
+        let (mut a, mut b, expected) = build_disjoint_pair(3000, 3000);
+        a.append_extend(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_disjoint_small() {
+        // Both small → both single-leaf trees, equal heights.
+        let (mut a, mut b, expected) = build_disjoint_pair(5, 5);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_equal_heights_multilevel() {
+        // Two 3000-entry trees, both 3-level — exercises the full graft path
+        // including the new-root-above-both case.
+        let (mut a, mut b, expected) = build_disjoint_pair(3000, 3000);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_self_taller() {
+        // self has 100K entries (height 3 for u64), other has 30 entries
+        // (height 1 — single internal node above 2 leaves). Exercises the
+        // descent-spine codepath.
+        let (mut a, mut b, expected) = build_disjoint_pair(100_000, 30);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_self_taller_full_seam() {
+        // Provoke the cascade-split path: self has height 3 with the
+        // rightmost spine fully packed, then graft other (small, single
+        // leaf). The descended cur should be full → split + propagate.
+        let (mut a, mut b, expected) = build_disjoint_pair(50_000, 5);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_other_taller_falls_back() {
+        // self.height < other.height → graft falls back to drain. Result
+        // must still be correct.
+        let (mut a, mut b, expected) = build_disjoint_pair(30, 100_000);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_huge_disjoint() {
+        // 1M-entry stress to flush out arena-growth corner cases during graft.
+        let (mut a, mut b, expected) = build_disjoint_pair(500_000, 500_000);
+        a.append_graft(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_graft_then_mutate() {
+        // After graft, follow-up insert/remove operations must work normally.
+        let (mut a, mut b, _) = build_disjoint_pair(3000, 3000);
+        a.append_graft(&mut b);
+
+        // Insert into the seam region.
+        a.insert(2999_500, 999_500);
+        assert_eq!(a.get(&2999_500), Some(&999_500));
+
+        // Remove around the seam.
+        for i in 2_990..3_010u64 {
+            assert!(a.remove(&i).is_some());
+        }
+        assert_eq!(a.len(), 6000 + 1 - 20);
+
+        // Sorted iteration still holds.
+        let keys: Vec<u64> = a.iter().map(|(k, _)| *k).collect();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn append_dispatcher_disjoint_uses_extend() {
+        // Public append must produce identical results to all variants.
+        let (mut a, mut b, expected) = build_disjoint_pair(3000, 3000);
+        a.append(&mut b);
+        assert!(b.is_empty());
+        check_append_invariants(&a, &expected);
+    }
+
+    #[test]
+    fn append_cross_validation() {
+        // All four variants must produce identical results on disjoint input.
+        let (a_drain_lhs, a_drain_rhs, _) = build_disjoint_pair(2000, 2000);
+        let (a_concat_lhs, a_concat_rhs, _) = build_disjoint_pair(2000, 2000);
+        let (a_extend_lhs, a_extend_rhs, _) = build_disjoint_pair(2000, 2000);
+        let (a_graft_lhs, a_graft_rhs, _) = build_disjoint_pair(2000, 2000);
+
+        let mut a = a_drain_lhs;
+        let mut b = a_drain_rhs;
+        a.append_drain(&mut b);
+        let drain_out: Vec<(u64, u64)> = a.iter().map(|(k, v)| (*k, *v)).collect();
+
+        let mut a = a_concat_lhs;
+        let mut b = a_concat_rhs;
+        a.append_concat(&mut b);
+        let concat_out: Vec<(u64, u64)> = a.iter().map(|(k, v)| (*k, *v)).collect();
+
+        let mut a = a_extend_lhs;
+        let mut b = a_extend_rhs;
+        a.append_extend(&mut b);
+        let extend_out: Vec<(u64, u64)> = a.iter().map(|(k, v)| (*k, *v)).collect();
+
+        let mut a = a_graft_lhs;
+        let mut b = a_graft_rhs;
+        a.append_graft(&mut b);
+        let graft_out: Vec<(u64, u64)> = a.iter().map(|(k, v)| (*k, *v)).collect();
+
+        assert_eq!(drain_out, concat_out);
+        assert_eq!(drain_out, extend_out);
+        assert_eq!(drain_out, graft_out);
     }
 
     #[test]

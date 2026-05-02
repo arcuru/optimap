@@ -1075,39 +1075,224 @@ fn bench_split_off(c: &mut Criterion) {
 fn bench_append(c: &mut Criterion) {
     let mut group = c.benchmark_group("btree/append");
 
-    for &n in &[10_000, 100_000, 1_000_000] {
-        // Two disjoint ranges of size n each → result of size 2n.
-        let keys_a = make_random_keys(n, 11);
+    // Two disjoint adjacent ranges of size n each → result of size 2n.
+    // self holds keys in [0, 2^33), other holds [2^33, 2^34) — random within
+    // each range, but `self.last_key < other.first_key` always.
+    //
+    // Append size sweep: 1K and 10M added so we see the small-N regime
+    // (where fixed costs dominate) and the very-large-N regime (where the
+    // graft savings of NOT touching self's existing nodes should compound).
+    for &n in &[1_000usize, 10_000, 100_000, 1_000_000] {
+        // Bounded random keys — keys_a in [0, 2^33), keys_b in [2^33, 2^34) so
+        // self.last_key < other.first_key is GUARANTEED (the dispatcher routes
+        // these to the disjoint-adjacent fast path).
+        let keys_a: Vec<u64> = make_random_keys(n, 11)
+            .into_iter()
+            .map(|k| k & ((1u64 << 33) - 1))
+            .collect();
         let keys_b: Vec<u64> = make_random_keys(n, 22)
             .into_iter()
-            .map(|k| k.wrapping_add(1 << 33))
+            .map(|k| (k & ((1u64 << 33) - 1)) | (1u64 << 33))
             .collect();
         group.throughput(Throughput::Elements((2 * n) as u64));
         if n >= 1_000_000 {
             group.sample_size(20);
         }
 
-        group.bench_function(BenchmarkId::new("FlatBTree", n), |b| {
-            b.iter_batched(
-                || (build_flat::<0>(&keys_a), build_flat::<0>(&keys_b)),
-                |(mut a, mut b)| {
-                    a.append(&mut b);
-                    black_box((a, b));
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
+        // Public dispatcher: detects disjointness and picks `append_extend`.
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-dispatch", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
 
-        group.bench_function(BenchmarkId::new("std::BTreeMap", n), |b| {
-            b.iter_batched(
-                || (build_std::<0>(&keys_a), build_std::<0>(&keys_b)),
-                |(mut a, mut b)| {
-                    a.append(&mut b);
-                    black_box((a, b));
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
+        // Drain + merge + bulk_load (former default). O(n + m).
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-drain", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_drain(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        // Drain + chain + bulk_load (no merge step, requires disjoint adjacent).
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-concat", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_concat(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        // Drain `other` only, insert each into `self` (exploits tail fast path).
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-extend", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_extend(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        // Tree-surgery graft (byte-copy other's nodes, splice chain, bridge spines).
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-graft", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_graft(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("std::BTreeMap", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_std::<0>(ka), build_std::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Asymmetric append: small `other` (always 100 entries) appended to a large `self`.
+/// This is where tree-surgery should shine — `self` doesn't need to be touched.
+/// Drain pays O(n + m) for both even though m ≪ n.
+fn bench_append_asymmetric(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/append_asymmetric");
+
+    let m: usize = 100; // small `other`
+    let keys_b: Vec<u64> = make_random_keys(m, 99)
+        .into_iter()
+        .map(|k| (k & ((1u64 << 33) - 1)) | (1u64 << 33))
+        .collect();
+
+    for &n in &[10_000usize, 100_000, 1_000_000] {
+        let keys_a: Vec<u64> = make_random_keys(n, 11)
+            .into_iter()
+            .map(|k| k & ((1u64 << 33) - 1))
+            .collect();
+        group.throughput(Throughput::Elements((n + m) as u64));
+        if n >= 1_000_000 {
+            group.sample_size(20);
+        }
+
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-dispatch", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-drain", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_drain(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-extend", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_extend(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("FlatBTree-graft", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_flat::<0>(ka), build_flat::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append_graft(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("std::BTreeMap", n),
+            &(&keys_a, &keys_b),
+            |b, (ka, kb)| {
+                b.iter_batched(
+                    || (build_std::<0>(ka), build_std::<0>(kb)),
+                    |(mut a, mut b)| {
+                        a.append(&mut b);
+                        black_box((a, b));
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
     }
     group.finish();
 }
@@ -1131,6 +1316,7 @@ criterion_group!(
     bench_string_keys,
     bench_split_off,
     bench_append,
+    bench_append_asymmetric,
     bench_range_mut,
     bench_sparse_after_remove,
 );
