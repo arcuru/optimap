@@ -182,8 +182,13 @@ pub(crate) const MAX_PATH_HEIGHT: usize = 16;
 /// `(parent_node_idx, child_slot_in_parent)` from root → leaf so that a
 /// subsequent `propagate_split` can walk back up. Replaces a per-insert
 /// `Vec` heap allocation in the hot insert path.
+///
+/// Items are stored as `MaybeUninit` so `PathBuf::new()` is a single 4-byte
+/// `len = 0` write — no 256-byte stack zero-init at every entry / insert
+/// call site. Slots `0..len` are always initialized; slots beyond are
+/// never read.
 pub(crate) struct PathBuf {
-    items: [(NodeIdx, usize); MAX_PATH_HEIGHT],
+    items: [std::mem::MaybeUninit<(NodeIdx, usize)>; MAX_PATH_HEIGHT],
     len: u32,
 }
 
@@ -191,7 +196,11 @@ impl PathBuf {
     #[inline(always)]
     pub fn new() -> Self {
         Self {
-            items: [(NO_NODE, 0); MAX_PATH_HEIGHT],
+            // SAFETY: `MaybeUninit::uninit().assume_init()` on an array of
+            // `MaybeUninit` is the documented way to leave the slots
+            // uninitialized; we never read uninitialized slots
+            // (`push` writes before any `pop` / `as_slice` read).
+            items: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
             len: 0,
         }
     }
@@ -214,7 +223,11 @@ impl PathBuf {
         );
         // SAFETY: debug_assert above guards in debug; release relies on
         // height ≤ MAX_PATH_HEIGHT (checked at insert sites by tree shape).
-        unsafe { *self.items.get_unchecked_mut(self.len as usize) = item };
+        unsafe {
+            self.items
+                .get_unchecked_mut(self.len as usize)
+                .write(item);
+        }
         self.len += 1;
     }
 
@@ -224,8 +237,9 @@ impl PathBuf {
             return None;
         }
         self.len -= 1;
-        // SAFETY: 0 <= self.len < MAX_PATH_HEIGHT after the decrement.
-        Some(unsafe { *self.items.get_unchecked(self.len as usize) })
+        // SAFETY: 0 <= self.len < MAX_PATH_HEIGHT, and the slot was
+        // initialized by an earlier `push`.
+        Some(unsafe { self.items.get_unchecked(self.len as usize).assume_init() })
     }
 
     /// Reverse the path in place. Used by `path_to_node` which records
@@ -238,10 +252,18 @@ impl PathBuf {
         }
     }
 
-    /// Live slice of recorded path entries in their current (insertion / reverse) order.
+    /// Live slice of recorded path entries in their current (insertion /
+    /// reverse) order.
     #[inline]
     pub fn as_slice(&self) -> &[(NodeIdx, usize)] {
-        &self.items[..self.len as usize]
+        // SAFETY: slots 0..len are initialized by prior `push` calls; the
+        // repr of `MaybeUninit<T>` matches `T`.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.items.as_ptr() as *const (NodeIdx, usize),
+                self.len as usize,
+            )
+        }
     }
 }
 
