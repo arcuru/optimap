@@ -700,6 +700,25 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
             };
         }
 
+        // Trivial case 1: every key is < at → right is empty, self unchanged.
+        match self.tree.lower_bound(at) {
+            None => {
+                return FlatBTree {
+                    tree: RawBTree::new(),
+                    _hasher: PhantomData,
+                };
+            }
+            // Trivial case 2: at falls before any element → entire tree moves right.
+            Some((leaf_idx, 0)) if leaf_idx == self.tree.first_leaf => {
+                let stolen = std::mem::replace(&mut self.tree, RawBTree::new());
+                return FlatBTree {
+                    tree: stolen,
+                    _hasher: PhantomData,
+                };
+            }
+            _ => {}
+        }
+
         let pairs: Vec<(K, V)> = self.drain().collect();
         // drain() yields in sorted order, so partition_point finds the boundary.
         let split = pairs.partition_point(|(k, _)| k.borrow() < at);
