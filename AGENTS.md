@@ -135,8 +135,8 @@ correlate with the AND group index.
 
 ## Optimization Status
 
-All designs have been through extensive optimization passes. See `docs/` (mdbook) for
-detailed logs and `.claude/plans/abstract-churning-tome.md` for the latest investigation.
+All designs have been through extensive optimization passes. See `docs/src/optimization/`
+(mdbook) for detailed logs and `docs/src/roadmap.md` for current open/closed work.
 
 Key results (107K entries, `Byte7_128_Tomb` (formerly `Hi128_Tomb`) vs hashbrown):
 - Lookup hit: 4.07 vs 4.25 ns (4% faster)

@@ -388,6 +388,97 @@ impl<K: Ord, V> RawBTree<K, V> {
         }
     }
 
+    /// O(log n) estimate of the right side's fraction for `split_off(at)`.
+    /// Walks the spine top-down; at each level, accumulates contributions
+    /// from "pure" left and right children (sized by approximate balanced
+    /// subtree weights) and recurses into the boundary subtree. The boundary
+    /// itself becomes exact at the leaf level. Used by the `split_off`
+    /// dispatcher to pick between drain (large right) and surgical (small right).
+    ///
+    /// Returns None if the tree is empty.
+    pub(crate) fn estimate_right_fraction<Q>(&self, at: &Q) -> Option<f64>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if self.root == NO_NODE {
+            return None;
+        }
+
+        let leaf_cap = NodeLayout::<K, V>::LEAF_CAP as u64;
+        let n_children_full = (NodeLayout::<K, V>::INTERNAL_CAP + 1) as u64;
+
+        // child_size at the current level = approximate entries per child of the
+        // current internal node. Starts at leaf_cap × n_children^(height-1) and
+        // divides by n_children each descent. Assumes balanced fill; off by a
+        // constant factor when nodes are partially full, but the right_fraction
+        // ratio largely cancels the error out.
+        let h = self.height;
+        let mut child_size: u64 = leaf_cap;
+        for _ in 0..h.saturating_sub(1) {
+            child_size = child_size.saturating_mul(n_children_full);
+        }
+
+        let mut left: u64 = 0;
+        let mut right: u64 = 0;
+        let mut node = self.root;
+
+        loop {
+            let header = unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(node)) };
+            let len = header.len as usize;
+            if header.is_leaf() {
+                if len == 0 {
+                    break;
+                }
+                let keys = unsafe {
+                    std::slice::from_raw_parts(
+                        NodeLayout::<K, V>::leaf_key_ptr(self.arena.node_ptr(node), 0),
+                        len,
+                    )
+                };
+                let pos = keys.partition_point(|k| k.borrow().cmp(at) == std::cmp::Ordering::Less);
+                left += pos as u64;
+                right += (len - pos) as u64;
+                break;
+            }
+            let keys = unsafe {
+                std::slice::from_raw_parts(
+                    NodeLayout::<K, V>::internal_key_ptr(self.arena.node_ptr(node), 0),
+                    len,
+                )
+            };
+            let child_idx =
+                keys.partition_point(|k| k.borrow().cmp(at) == std::cmp::Ordering::Less);
+            // In B+ tree, keys[i] = first leaf-key of child[i+1]. If the pivot
+            // exactly equals keys[child_idx], the boundary is at the leftmost
+            // leaf of child[child_idx+1] — that whole child is entirely right.
+            let on_boundary_key = child_idx < len
+                && unsafe {
+                    keys.get_unchecked(child_idx).borrow().cmp(at) == std::cmp::Ordering::Equal
+                };
+            if on_boundary_key {
+                left += ((child_idx + 1) as u64).saturating_mul(child_size);
+                right += ((len - child_idx) as u64).saturating_mul(child_size);
+                break;
+            }
+            // Standard: children[0..child_idx] left, children[child_idx+1..=len] right,
+            // children[child_idx] is the boundary subtree — descend into it.
+            left += (child_idx as u64).saturating_mul(child_size);
+            right += ((len - child_idx) as u64).saturating_mul(child_size);
+            node = unsafe {
+                NodeLayout::<K, V>::internal_child_ptr(self.arena.node_ptr(node), child_idx).read()
+            };
+            child_size = (child_size / n_children_full).max(1);
+        }
+
+        let total = left + right;
+        if total == 0 {
+            None
+        } else {
+            Some((right as f64) / (total as f64))
+        }
+    }
+
     /// Find the first (leaf, position) where key >= target.
     /// Returns (leaf_idx, slot_idx) or None if all keys are less than target.
     #[inline]
@@ -2045,6 +2136,485 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             last_leaf,
             len: n,
             height,
+            _marker: PhantomData,
+        }
+    }
+}
+
+// ── Tree-surgery split_off ──────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+pub(crate) enum CollapseEdge {
+    Leftmost,
+    Rightmost,
+}
+
+impl<K, V> RawBTree<K, V> {
+    /// Walk down a tree along the leftmost or rightmost edge, collapsing
+    /// degenerate internal nodes (1 child, 0 keys) along the way. After a
+    /// surgical split, the spine of the resulting tree may have such
+    /// degenerates; this normalizes the structure and returns the new root.
+    pub(crate) fn collapse_along_edge(
+        arena: &mut Arena,
+        root: NodeIdx,
+        edge: CollapseEdge,
+    ) -> NodeIdx {
+        if root == NO_NODE {
+            return NO_NODE;
+        }
+        let mut new_root = root;
+        // Track the parent that holds the link to `current` and the slot index there.
+        // None at the very top (current == new_root).
+        let mut parent_node: Option<NodeIdx> = None;
+        let mut parent_slot: usize = 0;
+        let mut current = root;
+
+        loop {
+            let header = unsafe { NodeLayout::<K, V>::header(arena.node_ptr(current)) };
+            if header.is_leaf() {
+                return new_root;
+            }
+            let len = header.len as usize;
+            if len == 0 {
+                // Degenerate. Replace `current` with its sole child.
+                let only =
+                    unsafe { NodeLayout::<K, V>::internal_child_ptr(arena.node_ptr(current), 0).read() };
+                unsafe {
+                    NodeLayout::<K, V>::header_mut(arena.node_ptr(only)).parent =
+                        parent_node.unwrap_or(NO_NODE);
+                }
+                if let Some(p) = parent_node {
+                    unsafe {
+                        NodeLayout::<K, V>::internal_child_ptr(arena.node_ptr(p), parent_slot)
+                            .write(only);
+                    }
+                } else {
+                    new_root = only;
+                }
+                arena.free_node(current);
+                current = only;
+                // parent_node / parent_slot unchanged: we replaced one child with another at the same slot.
+            } else {
+                // Non-degenerate. Descend chosen edge.
+                let slot = match edge {
+                    CollapseEdge::Leftmost => 0,
+                    CollapseEdge::Rightmost => len, // children[len] is rightmost
+                };
+                parent_node = Some(current);
+                parent_slot = slot;
+                current = unsafe {
+                    NodeLayout::<K, V>::internal_child_ptr(arena.node_ptr(current), slot).read()
+                };
+            }
+        }
+    }
+
+    /// Compute the height of the tree by walking root → leaf via the leftmost child.
+    pub(crate) fn compute_height(arena: &Arena, root: NodeIdx) -> u32 {
+        if root == NO_NODE {
+            return 0;
+        }
+        let mut h: u32 = 0;
+        let mut node = root;
+        loop {
+            let header = unsafe { NodeLayout::<K, V>::header(arena.node_ptr(node)) };
+            if header.is_leaf() {
+                return h;
+            }
+            h += 1;
+            node = unsafe { NodeLayout::<K, V>::internal_child_ptr(arena.node_ptr(node), 0).read() };
+        }
+    }
+
+    /// Deep-copy a subtree rooted at `src` (in `self.arena`) into `dst_arena`,
+    /// freeing source nodes as it goes. Each copied leaf is appended to the
+    /// running leaf chain in `dst_arena` (tracked via `dst_first_leaf` / `dst_chain_tail`).
+    /// Returns the new root index in `dst_arena`.
+    fn deep_copy_subtree(
+        &mut self,
+        src: NodeIdx,
+        dst_arena: &mut Arena,
+        dst_first_leaf: &mut NodeIdx,
+        dst_chain_tail: &mut NodeIdx,
+        dst_count: &mut usize,
+    ) -> NodeIdx {
+        // Snapshot shape info before any mutation.
+        let (is_leaf, len) = {
+            let header = unsafe { NodeLayout::<K, V>::header(self.arena.node_ptr(src)) };
+            (header.is_leaf(), header.len as usize)
+        };
+
+        let dst = dst_arena.alloc_node(); // may grow dst_arena
+
+        if is_leaf {
+            // Bitwise-copy header+keys+values; do NOT copy prev/next links.
+            let copy_size = NODE_SIZE - 2 * std::mem::size_of::<NodeIdx>();
+            unsafe {
+                let src_ptr = self.arena.node_ptr(src);
+                let dst_ptr = dst_arena.node_ptr(dst);
+                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, copy_size);
+                let dst_header = NodeLayout::<K, V>::header_mut(dst_ptr);
+                dst_header.parent = NO_NODE;
+
+                // Wire dst into the leaf chain.
+                NodeLayout::<K, V>::leaf_prev_ptr(dst_ptr).write(*dst_chain_tail);
+                NodeLayout::<K, V>::leaf_next_ptr(dst_ptr).write(NO_NODE);
+                if *dst_chain_tail != NO_NODE {
+                    let prev_ptr = dst_arena.node_ptr(*dst_chain_tail);
+                    NodeLayout::<K, V>::leaf_next_ptr(prev_ptr).write(dst);
+                } else {
+                    *dst_first_leaf = dst;
+                }
+                *dst_chain_tail = dst;
+
+                // Mark src as moved-out so it won't be walked / dropped.
+                let src_header = NodeLayout::<K, V>::header_mut(self.arena.node_ptr(src));
+                src_header.len = 0;
+            }
+            *dst_count += len;
+            self.arena.free_node(src);
+        } else {
+            // Internal: copy bytes (with stale child indices) then re-write children
+            // after recursive copies.
+            unsafe {
+                let src_ptr = self.arena.node_ptr(src);
+                let dst_ptr = dst_arena.node_ptr(dst);
+                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, NODE_SIZE);
+                NodeLayout::<K, V>::header_mut(dst_ptr).parent = NO_NODE;
+            }
+
+            // Snapshot children indices.
+            let mut children: Vec<NodeIdx> = Vec::with_capacity(len + 1);
+            for i in 0..=len {
+                children.push(unsafe {
+                    NodeLayout::<K, V>::internal_child_ptr(self.arena.node_ptr(src), i).read()
+                });
+            }
+
+            // Recurse leftmost-first so the leaf chain extends in sorted order.
+            for (i, c) in children.iter().enumerate() {
+                let new_c =
+                    self.deep_copy_subtree(*c, dst_arena, dst_first_leaf, dst_chain_tail, dst_count);
+                unsafe {
+                    let dst_ptr = dst_arena.node_ptr(dst);
+                    NodeLayout::<K, V>::internal_child_ptr(dst_ptr, i).write(new_c);
+                    NodeLayout::<K, V>::header_mut(dst_arena.node_ptr(new_c)).parent = dst;
+                }
+            }
+
+            // Mark src as moved-out (its keys were bitwise-copied into dst).
+            unsafe {
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(src)).len = 0;
+            }
+            self.arena.free_node(src);
+        }
+
+        dst
+    }
+}
+
+impl<K: Ord, V> RawBTree<K, V> {
+    /// Tree-surgery split_off. Mutates self in place to retain keys `< at`,
+    /// deep-copies the right subtree into a fresh arena. O(log n + right_nodes)
+    /// rather than O(n) for drain+bulk_load.
+    ///
+    /// Currently always copies the right side. For asymmetric splits where the
+    /// left side is smaller, the larger right side dominates cost; see roadmap
+    /// for "adaptive split direction" follow-up.
+    pub(crate) fn split_off_surgical<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        // Empty tree → empty result.
+        if self.root == NO_NODE {
+            return Self::new();
+        }
+
+        // Find the boundary leaf+slot.
+        let (leaf_idx, slot_idx) = match self.lower_bound(at) {
+            Some(p) => p,
+            None => return Self::new(), // all keys < at
+        };
+
+        // Trivial: at lands before all keys → entire tree moves right.
+        if leaf_idx == self.first_leaf && slot_idx == 0 {
+            let mut moved = Self::new();
+            std::mem::swap(self, &mut moved);
+            return moved;
+        }
+
+        // Spine from root down to the boundary leaf (one entry per internal level).
+        let spine = self.path_to_node(leaf_idx);
+        debug_assert_eq!(spine.len() as u32, self.height);
+
+        // Capture the boundary leaf's original prev (for later if the whole leaf moves right).
+        let (leaf_len, original_leaf_prev) = unsafe {
+            let n = self.arena.node_ptr(leaf_idx);
+            (
+                NodeLayout::<K, V>::header(n).len as usize,
+                NodeLayout::<K, V>::leaf_prev_ptr(n).read(),
+            )
+        };
+
+        // ── Phase 1: split or move the boundary leaf ───────────────────────
+        let mut right_arena = Arena::new();
+        let mut right_first_leaf: NodeIdx = NO_NODE;
+        let mut right_chain_tail: NodeIdx = NO_NODE;
+        let mut right_count: usize = 0;
+
+        let (mut left_root_below, mut right_root_below): (Option<NodeIdx>, Option<NodeIdx>) =
+            if slot_idx == 0 {
+                // Whole boundary leaf goes right.
+                let dst = self.deep_copy_subtree(
+                    leaf_idx,
+                    &mut right_arena,
+                    &mut right_first_leaf,
+                    &mut right_chain_tail,
+                    &mut right_count,
+                );
+                (None, Some(dst))
+            } else {
+                // Physical split: keys[0..slot_idx] stay, keys[slot_idx..len] go right.
+                let right_dst = right_arena.alloc_node();
+                let n_to_right = leaf_len - slot_idx;
+                unsafe {
+                    let dst_ptr = right_arena.node_ptr(right_dst);
+                    let dst_header = NodeLayout::<K, V>::header_mut(dst_ptr);
+                    dst_header.len = n_to_right as u16;
+                    dst_header.flags = NodeHeader::IS_LEAF;
+                    dst_header.parent = NO_NODE;
+                    NodeLayout::<K, V>::leaf_prev_ptr(dst_ptr).write(NO_NODE);
+                    NodeLayout::<K, V>::leaf_next_ptr(dst_ptr).write(NO_NODE);
+                }
+                for i in 0..n_to_right {
+                    unsafe {
+                        let src_ptr = self.arena.node_ptr(leaf_idx);
+                        let k = NodeLayout::<K, V>::leaf_key_ptr(src_ptr, slot_idx + i).read();
+                        let v = NodeLayout::<K, V>::leaf_val_ptr(src_ptr, slot_idx + i).read();
+                        let dst_ptr = right_arena.node_ptr(right_dst);
+                        NodeLayout::<K, V>::leaf_key_ptr(dst_ptr, i).write(k);
+                        NodeLayout::<K, V>::leaf_val_ptr(dst_ptr, i).write(v);
+                    }
+                }
+                unsafe {
+                    let src_ptr = self.arena.node_ptr(leaf_idx);
+                    NodeLayout::<K, V>::header_mut(src_ptr).len = slot_idx as u16;
+                    // Cut the next-leaf link; subsequent leaves are gone in self.
+                    NodeLayout::<K, V>::leaf_next_ptr(src_ptr).write(NO_NODE);
+                }
+                right_first_leaf = right_dst;
+                right_chain_tail = right_dst;
+                right_count += n_to_right;
+                (Some(leaf_idx), Some(right_dst))
+            };
+
+        // ── Phase 2: spine walk bottom-up ──────────────────────────────────
+        // No collapsing during the walk — we always build internal nodes (even
+        // degenerate 1-child/0-keys ones) so that subtree heights stay aligned
+        // when we combine `*_root_below` with deep-copied siblings. Degenerates
+        // are removed in Phase 3.
+        for &(parent_idx, child_pos) in spine.iter().rev() {
+            let n = unsafe {
+                NodeLayout::<K, V>::header(self.arena.node_ptr(parent_idx)).len as usize
+            };
+
+            // Snapshot children to move (children[child_pos+1..=n]) and the
+            // surrounding keys, BEFORE deep_copy_subtree mutates self.arena.
+            let mut moved_children: Vec<NodeIdx> = Vec::with_capacity(n.saturating_sub(child_pos));
+            for i in (child_pos + 1)..=n {
+                moved_children.push(unsafe {
+                    NodeLayout::<K, V>::internal_child_ptr(self.arena.node_ptr(parent_idx), i).read()
+                });
+            }
+
+            // separator_at_split = keys[child_pos] (B+ tree: this equals the
+            // first leaf-key in original child[child_pos+1]'s subtree, which is
+            // also the first leaf-key of the right side at this level).
+            let separator_at_split: Option<K> = if child_pos < n {
+                Some(unsafe {
+                    NodeLayout::<K, V>::internal_key_ptr(self.arena.node_ptr(parent_idx), child_pos)
+                        .read()
+                })
+            } else {
+                None
+            };
+            let mut keys_after_split: Vec<K> =
+                Vec::with_capacity(n.saturating_sub(child_pos + 1));
+            for i in (child_pos + 1)..n {
+                keys_after_split.push(unsafe {
+                    NodeLayout::<K, V>::internal_key_ptr(self.arena.node_ptr(parent_idx), i).read()
+                });
+            }
+
+            // Deep-copy each moved child's subtree to right_arena.
+            let mut copied_children: Vec<NodeIdx> = Vec::with_capacity(moved_children.len());
+            for c in moved_children {
+                let new_c = self.deep_copy_subtree(
+                    c,
+                    &mut right_arena,
+                    &mut right_first_leaf,
+                    &mut right_chain_tail,
+                    &mut right_count,
+                );
+                copied_children.push(new_c);
+            }
+
+            // Build new right at this level.
+            let mut new_right_keys: Vec<K> = Vec::new();
+            let mut new_right_children: Vec<NodeIdx> = Vec::new();
+
+            if let Some(rrb) = right_root_below {
+                new_right_children.push(rrb);
+                if !copied_children.is_empty() {
+                    // separator_at_split is Some iff copied_children non-empty
+                    // (both are equivalent to child_pos < n).
+                    new_right_keys.push(
+                        separator_at_split.expect("separator_at_split must be Some when copied non-empty"),
+                    );
+                } else {
+                    debug_assert!(separator_at_split.is_none());
+                }
+            } else {
+                // Drop the separator: its left side (the dropped boundary subtree) is gone.
+                drop(separator_at_split);
+            }
+            new_right_children.extend(copied_children);
+            new_right_keys.extend(keys_after_split);
+
+            right_root_below = if new_right_children.is_empty() {
+                None
+            } else {
+                let new_right = right_arena.alloc_node();
+                let n_keys = new_right_keys.len();
+                let n_children = new_right_children.len();
+                unsafe {
+                    let dst_ptr = right_arena.node_ptr(new_right);
+                    let header = NodeLayout::<K, V>::header_mut(dst_ptr);
+                    header.len = n_keys as u16;
+                    header.flags = 0; // internal
+                    header.parent = NO_NODE;
+                }
+                for (i, k) in new_right_keys.into_iter().enumerate() {
+                    unsafe {
+                        NodeLayout::<K, V>::internal_key_ptr(right_arena.node_ptr(new_right), i)
+                            .write(k);
+                    }
+                }
+                for i in 0..n_children {
+                    let c = new_right_children[i];
+                    unsafe {
+                        NodeLayout::<K, V>::internal_child_ptr(
+                            right_arena.node_ptr(new_right),
+                            i,
+                        )
+                        .write(c);
+                        NodeLayout::<K, V>::header_mut(right_arena.node_ptr(c)).parent = new_right;
+                    }
+                }
+                Some(new_right)
+            };
+
+            // Mutate `parent_idx` in self.arena to be the new left at this level.
+            left_root_below = if let Some(lrb) = left_root_below {
+                unsafe {
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    NodeLayout::<K, V>::internal_child_ptr(parent_node, child_pos).write(lrb);
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(lrb)).parent = parent_idx;
+                    NodeLayout::<K, V>::header_mut(parent_node).len = child_pos as u16;
+                }
+                Some(parent_idx)
+            } else if child_pos == 0 {
+                // No keys, no children retained: free parent.
+                self.arena.free_node(parent_idx);
+                None
+            } else {
+                // Drop separator before the now-removed child[child_pos].
+                unsafe {
+                    let parent_node = self.arena.node_ptr(parent_idx);
+                    std::ptr::drop_in_place(
+                        NodeLayout::<K, V>::internal_key_ptr(parent_node, child_pos - 1),
+                    );
+                    NodeLayout::<K, V>::header_mut(parent_node).len = (child_pos - 1) as u16;
+                }
+                Some(parent_idx)
+            };
+        }
+
+        // ── Phase 3: collapse degenerates + finalize self ──────────────────
+        let mut self_root = left_root_below.unwrap_or(NO_NODE);
+        if self_root != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::header_mut(self.arena.node_ptr(self_root)).parent = NO_NODE;
+            }
+            self_root = Self::collapse_along_edge(
+                &mut self.arena,
+                self_root,
+                CollapseEdge::Rightmost,
+            );
+        }
+
+        let new_self_last_leaf = if slot_idx > 0 {
+            leaf_idx
+        } else {
+            // Boundary leaf moved entirely; new last leaf = original predecessor.
+            original_leaf_prev
+        };
+        if new_self_last_leaf != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::leaf_next_ptr(self.arena.node_ptr(new_self_last_leaf))
+                    .write(NO_NODE);
+            }
+        }
+        let new_self_first_leaf = if new_self_last_leaf == NO_NODE {
+            NO_NODE
+        } else {
+            self.first_leaf
+        };
+
+        let new_self_height = Self::compute_height(&self.arena, self_root);
+        let new_self_len = self.len - right_count;
+
+        self.root = self_root;
+        self.first_leaf = new_self_first_leaf;
+        self.last_leaf = new_self_last_leaf;
+        self.height = new_self_height;
+        self.len = new_self_len;
+
+        // ── Phase 4: build the right tree ──────────────────────────────────
+        let mut right_root = right_root_below.unwrap_or(NO_NODE);
+        if right_root != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::header_mut(right_arena.node_ptr(right_root)).parent = NO_NODE;
+            }
+            right_root = Self::collapse_along_edge(
+                &mut right_arena,
+                right_root,
+                CollapseEdge::Leftmost,
+            );
+        }
+        if right_first_leaf != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::leaf_prev_ptr(right_arena.node_ptr(right_first_leaf))
+                    .write(NO_NODE);
+            }
+        }
+        if right_chain_tail != NO_NODE {
+            unsafe {
+                NodeLayout::<K, V>::leaf_next_ptr(right_arena.node_ptr(right_chain_tail))
+                    .write(NO_NODE);
+            }
+        }
+
+        let right_height = Self::compute_height(&right_arena, right_root);
+
+        RawBTree {
+            arena: right_arena,
+            root: right_root,
+            first_leaf: right_first_leaf,
+            last_leaf: right_chain_tail,
+            len: right_count,
+            height: right_height,
             _marker: PhantomData,
         }
     }

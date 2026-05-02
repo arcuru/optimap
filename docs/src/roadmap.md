@@ -10,6 +10,7 @@ thoroughly investigated and proven unproductive — see
 
 | Item | Scope |
 |------|-------|
+| `FlatBTree::split_off` tree-surgery + spine-aware dispatch | Added `split_off_surgical` (O(log n + right_subtree_nodes)) alongside the v1 drain+bulk_load path. Public `split_off` dispatches based on a cheap O(log n) right-fraction estimate from the spine. **Wins**: at 100K, 1.8-2.2× faster across p050-p099 (266µs vs 485µs at half-split); at 1M-p090, 7.5ms vs drain's 15.6ms (2.1×, beats std). **Limit**: dispatch falls back to drain at very-low pivots on huge trees (1M-p001) where deep-copying ~99% of the tree is dominated by per-node Vec/alloc overhead; std's structural split is fastest there (7.4ms vs our 21ms drain, 52ms surgical). The 0.65 cutoff threshold (vs ideal 0.5) absorbs a +0.10 systematic bias in the estimator coming from uniform-subtree-weighting (the rightmost top-level subtree is almost always partial; on the right side of low/mid pivots, this inflates `right_frac`). All 12 surgical-path tests pass under miri (zero UB). |
 | OptiMap policy: data-driven backend bands | Switch to Splitsies above the tombstone-DRAM cliff (~1M entries). IPO/IPO64 suffer 5-13× lookup_miss regression at ≥1M due to tombstone accumulation. New thresholds: `< 1024` Splitsies, `1024..1M` IPO, `≥1M` Splitsies. ReadHeavy / WriteHeavy hints fall back to Splitsies above the cliff. Boundary tests added. |
 | `OptiSet` / `OptiSortedSet` operator parity | Added `BitOr`/`BitAnd`/`BitXor`/`Sub` operators on `&Set` (matching std::HashSet / std::BTreeSet). |
 | `GenericSet::intersection` swap fix | Prior impl iterated `self` in *both* branches — when `self` was larger we still iterated the larger set. Fixed to iterate the smaller. |
@@ -195,6 +196,7 @@ difference — the memory savings are pure upside.
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
+| Adaptive split direction (copy smaller side) | Medium | `split_off_surgical` always deep-copies the right subtree; cost is O(right_size). For asymmetric splits where the left side is smaller, deep-copying the left side instead would close the gap. Mirror the spine walk to retain `[child_pos..=n]` and shift kept children to start of parent's array; final `mem::swap` to put the kept side back in `self`. Picker: O(log n) heuristic on root-level `child_pos` is sufficient. Doubles the spine-walk surface area; defer until benchmarks show the asymmetric case matters. |
 | ~~Remove rebalancing (steal/merge)~~ | ~~Medium~~ | **Already implemented** — `RawBTree::remove` triggers `rebalance_leaf` on underflow (`< LEAF_CAP/2`), which steals from a sibling or merges and cascades through `rebalance_internal`/`merge_internals`. Roadmap entry was stale. |
 | ~~Child node prefetching~~ | ~~Low~~ | **Closed (May 2026).** No useful work between reading the child pointer and reading the next node — nothing to overlap. Speculative prefetch during the linear scan would mis-predict roughly half its prefetches for u64 keys (random access). HW prefetcher already covers the 4-cache-line node walk. |
 

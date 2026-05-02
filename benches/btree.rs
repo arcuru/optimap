@@ -967,35 +967,92 @@ fn bench_sparse_after_remove(c: &mut Criterion) {
 fn bench_split_off(c: &mut Criterion) {
     let mut group = c.benchmark_group("btree/split_off");
 
-    for &n in &[10_000, 100_000, 1_000_000] {
-        let keys = make_random_keys(n, 42);
-        let pivot = (n / 2) as u64; // pivot picked to land near the middle
+    // Exercise multiple split positions per N so we can see the asymmetric
+    // cost: drain is O(n) regardless; surgical is O(min_subtree_size); std
+    // structural split is O(log n). The 1% / 99% pivots specifically expose
+    // whether always-copy-right hurts vs always-copy-left.
+    let positions: &[(&str, f64)] = &[
+        ("p001", 0.01), // peel off the smallest 1% — left small, right huge
+        ("p010", 0.10), // 10% / 90%
+        ("p050", 0.50), // half / half
+        ("p090", 0.90), // 90% / 10%
+        ("p099", 0.99), // peel off the largest 1% — left huge, right small
+    ];
+
+    for &n in &[1_000usize, 10_000, 100_000, 1_000_000] {
+        // Use sequential keys so the pivot fraction maps directly to the
+        // intended split position (random keys would make 0.5 of the keyspace
+        // not coincide with 0.5 of the entries).
+        let keys: Vec<u64> = (0..n as u64).collect();
         group.throughput(Throughput::Elements(n as u64));
         if n >= 1_000_000 {
             group.sample_size(20);
         }
 
-        group.bench_with_input(BenchmarkId::new("FlatBTree", n), &keys, |b, keys| {
-            b.iter_batched(
-                || build_flat::<0>(keys),
-                |mut map| {
-                    let right = map.split_off(&pivot);
-                    black_box((map, right));
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
+        for &(label, frac) in positions {
+            let pivot = ((n as f64) * frac) as u64;
 
-        group.bench_with_input(BenchmarkId::new("std::BTreeMap", n), &keys, |b, keys| {
-            b.iter_batched(
-                || build_std::<0>(keys),
-                |mut map| {
-                    let right = map.split_off(&pivot);
-                    black_box((map, right));
+            group.bench_with_input(
+                BenchmarkId::new(format!("FlatBTree-drain-{label}"), n),
+                &keys,
+                |b, keys| {
+                    b.iter_batched(
+                        || build_flat::<0>(keys),
+                        |mut map| {
+                            let right = map.split_off_drain(&pivot);
+                            black_box((map, right));
+                        },
+                        criterion::BatchSize::SmallInput,
+                    );
                 },
-                criterion::BatchSize::SmallInput,
             );
-        });
+
+            group.bench_with_input(
+                BenchmarkId::new(format!("FlatBTree-surgical-{label}"), n),
+                &keys,
+                |b, keys| {
+                    b.iter_batched(
+                        || build_flat::<0>(keys),
+                        |mut map| {
+                            let right = map.split_off_surgical(&pivot);
+                            black_box((map, right));
+                        },
+                        criterion::BatchSize::SmallInput,
+                    );
+                },
+            );
+
+            // Dispatcher: should match drain at low pivots and surgical at high pivots.
+            group.bench_with_input(
+                BenchmarkId::new(format!("FlatBTree-dispatch-{label}"), n),
+                &keys,
+                |b, keys| {
+                    b.iter_batched(
+                        || build_flat::<0>(keys),
+                        |mut map| {
+                            let right = map.split_off(&pivot);
+                            black_box((map, right));
+                        },
+                        criterion::BatchSize::SmallInput,
+                    );
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new(format!("std::BTreeMap-{label}"), n),
+                &keys,
+                |b, keys| {
+                    b.iter_batched(
+                        || build_std::<0>(keys),
+                        |mut map| {
+                            let right = map.split_off(&pivot);
+                            black_box((map, right));
+                        },
+                        criterion::BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
     }
     group.finish();
 }
