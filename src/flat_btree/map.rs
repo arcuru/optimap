@@ -635,10 +635,10 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
     /// Currently O(n + m): drains both into sorted vectors, merges, bulk-loads.
     /// The merge takes advantage of both sources already being sorted.
     pub fn append(&mut self, other: &mut Self) {
-        if other.tree.len() == 0 {
+        if other.tree.is_empty() {
             return;
         }
-        if self.tree.len() == 0 {
+        if self.tree.is_empty() {
             std::mem::swap(&mut self.tree, &mut other.tree);
             return;
         }
@@ -693,7 +693,7 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        if self.tree.len() == 0 {
+        if self.tree.is_empty() {
             return FlatBTree {
                 tree: RawBTree::new(),
                 _hasher: PhantomData,
