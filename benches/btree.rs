@@ -864,6 +864,84 @@ fn bench_string_keys(c: &mut Criterion) {
     group.finish();
 }
 
+// ── split_off / append ─────────────────────────────────────────────────
+
+fn bench_split_off(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/split_off");
+
+    for &n in &[10_000, 100_000, 1_000_000] {
+        let keys = make_random_keys(n, 42);
+        let pivot = (n / 2) as u64; // pivot picked to land near the middle
+        group.throughput(Throughput::Elements(n as u64));
+        if n >= 1_000_000 {
+            group.sample_size(20);
+        }
+
+        group.bench_with_input(BenchmarkId::new("FlatBTree", n), &keys, |b, keys| {
+            b.iter_batched(
+                || build_flat::<0>(keys),
+                |mut map| {
+                    let right = map.split_off(&pivot);
+                    black_box((map, right));
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_with_input(BenchmarkId::new("std::BTreeMap", n), &keys, |b, keys| {
+            b.iter_batched(
+                || build_std::<0>(keys),
+                |mut map| {
+                    let right = map.split_off(&pivot);
+                    black_box((map, right));
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn bench_append(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/append");
+
+    for &n in &[10_000, 100_000, 1_000_000] {
+        // Two disjoint ranges of size n each → result of size 2n.
+        let keys_a = make_random_keys(n, 11);
+        let keys_b: Vec<u64> = make_random_keys(n, 22)
+            .into_iter()
+            .map(|k| k.wrapping_add(1 << 33))
+            .collect();
+        group.throughput(Throughput::Elements((2 * n) as u64));
+        if n >= 1_000_000 {
+            group.sample_size(20);
+        }
+
+        group.bench_function(BenchmarkId::new("FlatBTree", n), |b| {
+            b.iter_batched(
+                || (build_flat::<0>(&keys_a), build_flat::<0>(&keys_b)),
+                |(mut a, mut b)| {
+                    a.append(&mut b);
+                    black_box((a, b));
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("std::BTreeMap", n), |b| {
+            b.iter_batched(
+                || (build_std::<0>(&keys_a), build_std::<0>(&keys_b)),
+                |(mut a, mut b)| {
+                    a.append(&mut b);
+                    black_box((a, b));
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     btree_benches,
     bench_insert,
@@ -881,5 +959,7 @@ criterion_group!(
     bench_churn,
     bench_large_values,
     bench_string_keys,
+    bench_split_off,
+    bench_append,
 );
 criterion_main!(btree_benches);

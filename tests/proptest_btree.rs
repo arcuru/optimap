@@ -27,6 +27,10 @@ enum Op {
     EntryOrInsert(u8, u8),
     EntryOrDefault(u8),
     EntryAndModify(u8, u8),
+    /// Split off everything >= `at` into a new map; verify both halves match the reference.
+    SplitOff(u8),
+    /// Append a freshly-built map of (k, v) pairs into self; verify against reference.
+    Append(Vec<(u8, u8)>),
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -56,6 +60,8 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (any::<u8>(), any::<u8>()).prop_map(|(k, v)| Op::EntryOrInsert(k, v)),
         1 => any::<u8>().prop_map(Op::EntryOrDefault),
         2 => (any::<u8>(), any::<u8>()).prop_map(|(k, v)| Op::EntryAndModify(k, v)),
+        1 => any::<u8>().prop_map(Op::SplitOff),
+        1 => proptest::collection::vec((any::<u8>(), any::<u8>()), 0..40).prop_map(Op::Append),
     ]
 }
 
@@ -182,6 +188,31 @@ fn run_differential(ops: &[Op]) {
             Op::EntryAndModify(k, v) => {
                 test.entry(*k).and_modify(|e| *e = e.wrapping_add(*v)).or_insert(*v);
                 reference.entry(*k).and_modify(|e| *e = e.wrapping_add(*v)).or_insert(*v);
+            }
+            Op::SplitOff(at) => {
+                let t_right = test.split_off(at);
+                let r_right = reference.split_off(at);
+                let tr: Vec<_> = t_right.iter_sorted().map(|(&k, &v)| (k, v)).collect();
+                let rr: Vec<_> = r_right.iter().map(|(&k, &v)| (k, v)).collect();
+                assert_eq!(tr, rr, "op {i}: split_off({at}) right side");
+                let tl: Vec<_> = test.iter_sorted().map(|(&k, &v)| (k, v)).collect();
+                let rl: Vec<_> = reference.iter().map(|(&k, &v)| (k, v)).collect();
+                assert_eq!(tl, rl, "op {i}: split_off({at}) left side");
+            }
+            Op::Append(pairs) => {
+                let mut t_other: FlatBTree<u8, u8> = FlatBTree::new();
+                let mut r_other: BTreeMap<u8, u8> = BTreeMap::new();
+                for (k, v) in pairs {
+                    t_other.insert(*k, *v);
+                    r_other.insert(*k, *v);
+                }
+                test.append(&mut t_other);
+                reference.append(&mut r_other);
+                assert!(t_other.is_empty(), "op {i}: append left other non-empty");
+                assert!(r_other.is_empty(), "op {i}: ref append left other non-empty");
+                let tl: Vec<_> = test.iter_sorted().map(|(&k, &v)| (k, v)).collect();
+                let rl: Vec<_> = reference.iter().map(|(&k, &v)| (k, v)).collect();
+                assert_eq!(tl, rl, "op {i}: append result");
             }
         }
 

@@ -627,6 +627,100 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
             Entry::Vacant(e) => { e.insert(value); Ok(()) }
         }
     }
+
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    ///
+    /// On key collision, the value from `other` wins (matches `std::BTreeMap::append`).
+    ///
+    /// Currently O(n + m): drains both into sorted vectors, merges, bulk-loads.
+    /// The merge takes advantage of both sources already being sorted.
+    pub fn append(&mut self, other: &mut Self) {
+        if other.tree.len() == 0 {
+            return;
+        }
+        if self.tree.len() == 0 {
+            std::mem::swap(&mut self.tree, &mut other.tree);
+            return;
+        }
+
+        let a: Vec<(K, V)> = self.drain().collect();
+        let b: Vec<(K, V)> = other.drain().collect();
+        let mut a_iter = a.into_iter();
+        let mut b_iter = b.into_iter();
+        let mut out: Vec<(K, V)> = Vec::with_capacity(a_iter.len() + b_iter.len());
+        let mut a_head = a_iter.next();
+        let mut b_head = b_iter.next();
+        loop {
+            match (&a_head, &b_head) {
+                (None, None) => break,
+                (Some(_), None) => {
+                    out.push(a_head.take().unwrap());
+                    a_head = a_iter.next();
+                }
+                (None, Some(_)) => {
+                    out.push(b_head.take().unwrap());
+                    b_head = b_iter.next();
+                }
+                (Some(av), Some(bv)) => match av.0.cmp(&bv.0) {
+                    std::cmp::Ordering::Less => {
+                        out.push(a_head.take().unwrap());
+                        a_head = a_iter.next();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        out.push(b_head.take().unwrap());
+                        b_head = b_iter.next();
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // other wins on collision
+                        a_head = a_iter.next();
+                        out.push(b_head.take().unwrap());
+                        b_head = b_iter.next();
+                    }
+                },
+            }
+        }
+        self.tree = RawBTree::bulk_load(out);
+    }
+
+    /// Splits the map into two at the given key. Returns everything with
+    /// keys >= `at` as a new map; `self` keeps everything with keys < `at`.
+    ///
+    /// Currently O(n): drains in sorted order, partitions, then bulk-loads
+    /// both halves. Tree-surgery split (cheap when `at` lands on a node
+    /// boundary) is left as a follow-up.
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if self.tree.len() == 0 {
+            return FlatBTree {
+                tree: RawBTree::new(),
+                _hasher: PhantomData,
+            };
+        }
+
+        let pairs: Vec<(K, V)> = self.drain().collect();
+        // drain() yields in sorted order, so partition_point finds the boundary.
+        let split = pairs.partition_point(|(k, _)| k.borrow() < at);
+        let mut left = pairs;
+        let right = left.split_off(split);
+
+        if !left.is_empty() {
+            self.tree = RawBTree::bulk_load(left);
+        }
+
+        let right_tree = if right.is_empty() {
+            RawBTree::new()
+        } else {
+            RawBTree::bulk_load(right)
+        };
+
+        FlatBTree {
+            tree: right_tree,
+            _hasher: PhantomData,
+        }
+    }
 }
 
 impl<K: Ord, V, S> FlatBTree<K, V, S> {
@@ -2106,6 +2200,138 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(h(&a), h(&b));
         assert_ne!(h(&a), h(&c));
+    }
+
+    #[test]
+    fn split_off_basic() {
+        let mut map: FlatBTree<i32, i32> = (0..200).map(|i| (i, i * 10)).collect();
+        let right = map.split_off(&100);
+
+        assert_eq!(map.len(), 100);
+        assert_eq!(right.len(), 100);
+
+        for i in 0..100 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+            assert_eq!(right.get(&i), None);
+        }
+        for i in 100..200 {
+            assert_eq!(map.get(&i), None);
+            assert_eq!(right.get(&i), Some(&(i * 10)));
+        }
+    }
+
+    #[test]
+    fn split_off_at_missing_key() {
+        // Splitting at a key not in the map: everything strictly less stays in self.
+        let mut map: FlatBTree<i32, i32> = [10, 20, 30, 40].iter().map(|&i| (i, i)).collect();
+        let right = map.split_off(&25);
+        assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![10, 20]);
+        assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![30, 40]);
+    }
+
+    #[test]
+    fn split_off_edges() {
+        // Split before everything → self empty, right gets all.
+        let mut a: FlatBTree<i32, i32> = (1..=10).map(|i| (i, i)).collect();
+        let r = a.split_off(&0);
+        assert!(a.is_empty());
+        assert_eq!(r.len(), 10);
+
+        // Split after everything → self keeps all, right empty.
+        let mut b: FlatBTree<i32, i32> = (1..=10).map(|i| (i, i)).collect();
+        let r = b.split_off(&100);
+        assert_eq!(b.len(), 10);
+        assert!(r.is_empty());
+
+        // Empty self → empty right.
+        let mut c: FlatBTree<i32, i32> = FlatBTree::new();
+        let r = c.split_off(&5);
+        assert!(c.is_empty());
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn split_off_large_then_mutate() {
+        // After split, both halves must support insert/remove correctly.
+        let mut map: FlatBTree<u64, u64> = (0..5_000).map(|i| (i, i)).collect();
+        let mut right = map.split_off(&2_500);
+        assert_eq!(map.len(), 2500);
+        assert_eq!(right.len(), 2500);
+
+        // Mutate both halves and re-check.
+        for i in 0..2500 {
+            map.insert(i, i + 1);
+            right.insert(i + 2500, i + 2501);
+        }
+        for i in 0..2500 {
+            assert_eq!(map.get(&i), Some(&(i + 1)));
+            assert_eq!(right.get(&(i + 2500)), Some(&(i + 2501)));
+        }
+
+        // Removes still work after split.
+        for i in (0..2500).step_by(7) {
+            assert_eq!(map.remove(&i), Some(i + 1));
+        }
+        assert_eq!(map.len(), 2500 - (2500_usize.div_ceil(7)));
+    }
+
+    #[test]
+    fn append_disjoint() {
+        let mut a: FlatBTree<i32, i32> = (0..50).map(|i| (i, i)).collect();
+        let mut b: FlatBTree<i32, i32> = (50..100).map(|i| (i, i + 1000)).collect();
+        a.append(&mut b);
+        assert!(b.is_empty());
+        assert_eq!(a.len(), 100);
+        for i in 0..50 {
+            assert_eq!(a.get(&i), Some(&i));
+        }
+        for i in 50..100 {
+            assert_eq!(a.get(&i), Some(&(i + 1000)));
+        }
+    }
+
+    #[test]
+    fn append_overlapping_other_wins() {
+        // Verify std::BTreeMap::append semantics: on key collision, other wins.
+        let mut a: FlatBTree<i32, &str> = [(1, "a1"), (2, "a2"), (3, "a3")].into_iter().collect();
+        let mut b: FlatBTree<i32, &str> = [(2, "b2"), (3, "b3"), (4, "b4")].into_iter().collect();
+        a.append(&mut b);
+        assert!(b.is_empty());
+        assert_eq!(a.get(&1), Some(&"a1"));
+        assert_eq!(a.get(&2), Some(&"b2"));
+        assert_eq!(a.get(&3), Some(&"b3"));
+        assert_eq!(a.get(&4), Some(&"b4"));
+    }
+
+    #[test]
+    fn append_empty_cases() {
+        // Append into empty: self gets all of other.
+        let mut a: FlatBTree<i32, i32> = FlatBTree::new();
+        let mut b: FlatBTree<i32, i32> = (0..10).map(|i| (i, i)).collect();
+        a.append(&mut b);
+        assert!(b.is_empty());
+        assert_eq!(a.len(), 10);
+
+        // Append empty: self unchanged.
+        let mut a: FlatBTree<i32, i32> = (0..10).map(|i| (i, i)).collect();
+        let mut b: FlatBTree<i32, i32> = FlatBTree::new();
+        a.append(&mut b);
+        assert!(b.is_empty());
+        assert_eq!(a.len(), 10);
+    }
+
+    #[test]
+    fn append_large_then_check_invariants() {
+        let mut a: FlatBTree<u64, u64> = (0..3000).map(|i| (i * 2, i)).collect();
+        let mut b: FlatBTree<u64, u64> = (0..3000).map(|i| (i * 2 + 1, i + 100_000)).collect();
+        a.append(&mut b);
+        assert_eq!(a.len(), 6000);
+        // Sorted iteration check
+        let keys: Vec<u64> = a.iter().map(|(k, _)| *k).collect();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]));
+        // Spot-check
+        assert_eq!(a.get(&100), Some(&50));
+        assert_eq!(a.get(&101), Some(&(50 + 100_000)));
     }
 
     #[test]
