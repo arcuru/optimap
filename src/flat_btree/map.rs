@@ -129,30 +129,24 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
 
     /// Removes and returns the first (minimum) key-value pair.
     pub fn pop_first(&mut self) -> Option<(K, V)> {
-        if self.tree.first_leaf == NO_NODE {
+        if self.tree.len == 0 {
             return None;
         }
-        let node = self.tree.arena.node_ptr(self.tree.first_leaf);
-        let header = unsafe { NodeLayout::<K, V>::header(node) };
-        if header.len == 0 {
-            return None;
-        }
-        let leaf_idx = self.tree.first_leaf;
+        // Walk past any empty leaves left by an in-place op (e.g. partial
+        // `retain`) to find the actual first non-empty leaf.
+        let leaf_idx = self.tree.first_nonempty_leaf()?;
         Some(self.tree.leaf_remove_at(leaf_idx, 0))
     }
 
     /// Removes and returns the last (maximum) key-value pair.
     pub fn pop_last(&mut self) -> Option<(K, V)> {
-        if self.tree.last_leaf == NO_NODE {
+        if self.tree.len == 0 {
             return None;
         }
-        let node = self.tree.arena.node_ptr(self.tree.last_leaf);
+        let leaf_idx = self.tree.last_nonempty_leaf()?;
+        let node = self.tree.arena.node_ptr(leaf_idx);
         let header = unsafe { NodeLayout::<K, V>::header(node) };
-        if header.len == 0 {
-            return None;
-        }
         let last_idx = header.len as usize - 1;
-        let leaf_idx = self.tree.last_leaf;
         Some(self.tree.leaf_remove_at(leaf_idx, last_idx))
     }
 
@@ -405,14 +399,13 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
 
     /// Returns the first (minimum) key-value pair.
     pub fn first_key_value(&self) -> Option<(&K, &V)> {
-        if self.tree.first_leaf == NO_NODE {
+        if self.tree.len == 0 {
             return None;
         }
-        let node = self.tree.arena.node_ptr(self.tree.first_leaf);
-        let header = unsafe { NodeLayout::<K, V>::header(node) };
-        if header.len == 0 {
-            return None;
-        }
+        // Walk past any empty leaves left by an in-place op (e.g. partial
+        // `retain`) to find the actual first non-empty leaf.
+        let leaf_idx = self.tree.first_nonempty_leaf()?;
+        let node = self.tree.arena.node_ptr(leaf_idx);
         Some(unsafe {
             (
                 &*NodeLayout::<K, V>::leaf_key_ptr(node, 0),
@@ -423,14 +416,12 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
 
     /// Returns the last (maximum) key-value pair.
     pub fn last_key_value(&self) -> Option<(&K, &V)> {
-        if self.tree.last_leaf == NO_NODE {
+        if self.tree.len == 0 {
             return None;
         }
-        let node = self.tree.arena.node_ptr(self.tree.last_leaf);
+        let leaf_idx = self.tree.last_nonempty_leaf()?;
+        let node = self.tree.arena.node_ptr(leaf_idx);
         let header = unsafe { NodeLayout::<K, V>::header(node) };
-        if header.len == 0 {
-            return None;
-        }
         let last_idx = header.len as usize - 1;
         Some(unsafe {
             (
@@ -609,6 +600,15 @@ impl<K, V, S> FlatBTree<K, V, S> {
             }
 
             leaf_idx = next;
+        }
+
+        // Restore tree invariants: an in-place retain can leave leaves
+        // empty while internal nodes still reference them, breaking
+        // first/last_leaf assumptions for subsequent ops (entry / pop_first /
+        // pop_last). For the all-empty case, fully reset; this is the
+        // common terminal state and the case proptest pinned down.
+        if self.tree.len == 0 {
+            self.tree.clear();
         }
     }
 
@@ -1046,6 +1046,13 @@ impl<K, V> Drop for Drain<'_, K, V> {
     fn drop(&mut self) {
         // Consume remaining elements
         while self.next().is_some() {}
+        // Restore tree invariants: drain leaves leaves marked len=0 but
+        // first_leaf / last_leaf / root still pointing into the empty
+        // chain. Subsequent entry / pop_first ops would see an empty
+        // first_leaf and return None even though insert succeeded into
+        // a different leaf. Match the std::BTreeMap::drain contract: the
+        // map is empty after drain.
+        self.tree.clear();
     }
 }
 

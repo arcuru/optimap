@@ -295,6 +295,37 @@ impl<K, V> RawBTree<K, V> {
         self.len
     }
 
+    /// First non-empty leaf, walking forward from `first_leaf` past any
+    /// empty leaves (which can be left behind by an in-place op like a
+    /// partial `retain`). Returns None when no non-empty leaf exists.
+    pub(crate) fn first_nonempty_leaf(&self) -> Option<NodeIdx> {
+        let mut idx = self.first_leaf;
+        while idx != NO_NODE {
+            let n = self.arena.node_ptr(idx);
+            let h = unsafe { NodeLayout::<K, V>::header(n) };
+            if h.len > 0 {
+                return Some(idx);
+            }
+            idx = unsafe { NodeLayout::<K, V>::leaf_next_ptr(n).read() };
+        }
+        None
+    }
+
+    /// Last non-empty leaf, walking backward from `last_leaf` past any
+    /// empty leaves.
+    pub(crate) fn last_nonempty_leaf(&self) -> Option<NodeIdx> {
+        let mut idx = self.last_leaf;
+        while idx != NO_NODE {
+            let n = self.arena.node_ptr(idx);
+            let h = unsafe { NodeLayout::<K, V>::header(n) };
+            if h.len > 0 {
+                return Some(idx);
+            }
+            idx = unsafe { NodeLayout::<K, V>::leaf_prev_ptr(n).read() };
+        }
+        None
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
