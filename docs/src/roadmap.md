@@ -17,6 +17,7 @@ thoroughly investigated and proven unproductive — see
 | `FlatBTree::from_sorted_iter()` | Bulk-load for already-sorted input. Skips the sort+dedup pass `FromIterator` does. |
 | `bulk_load` separator-key bug fix | For trees with height ≥ 2, the separator key promoted into an internal parent at position j was read from the right child's `internal_key_ptr(0)` (the child's *own* first internal separator), not the leftmost leaf-key in the right subtree. Effect: `get` returned `None` for some keys on any `FromIterator` input ≳ 300 entries (u64/u64). The 100-entry `from_iterator` test produced only a single-level tree and couldn't catch it. Fix tracks parallel `min_keys: Vec<K>` across build levels. New 100K-entry `FromIterator` + `from_sorted_iter` multi-level tests pin down the regression. |
 | `FlatBTree::shrink_to_fit` (was no-op) | Drains the tree in sorted order into a `Vec`, bulk-loads a fresh tree, swaps. Releases unused arena slots *and* compacts leaves from ~50% utilization (split-on-insert legacy) up to `LEAF_CAP`. |
+| Roadmap accuracy: rebalance entry was stale | "Remove rebalancing (steal/merge) — Currently lazy" was incorrect. `RawBTree::remove` already calls `rebalance_leaf` on underflow (`raw.rs:1217`), which steals from right/left siblings or merges; the cascade up through `rebalance_internal` / `merge_internals` keeps internal nodes within `INTERNAL_CAP/2..INTERNAL_CAP`. Entry moved out of "Open" — only arena compaction *across* heavy churn remains, and `shrink_to_fit` already covers that on demand. |
 
 ### API Completeness (April 2025)
 
@@ -190,7 +191,7 @@ difference — the memory savings are pure upside.
 
 | Item | Difficulty | Notes |
 |------|-----------|-------|
-| Remove rebalancing (steal/merge) | Medium | Currently lazy (no rebalancing on remove). Tree stays valid but wastes memory under heavy churn. Low-watermark nodes are never reclaimed. |
+| ~~Remove rebalancing (steal/merge)~~ | ~~Medium~~ | **Already implemented** — `RawBTree::remove` triggers `rebalance_leaf` on underflow (`< LEAF_CAP/2`), which steals from a sibling or merges and cascades through `rebalance_internal`/`merge_internals`. Roadmap entry was stale. |
 | ~~Child node prefetching~~ | ~~Low~~ | **Closed (May 2026).** No useful work between reading the child pointer and reading the next node — nothing to overlap. Speculative prefetch during the linear scan would mis-predict roughly half its prefetches for u64 keys (random access). HW prefetcher already covers the 4-cache-line node walk. |
 
 ### API Completeness

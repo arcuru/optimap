@@ -1273,6 +1273,16 @@ impl<K: Ord + PartialEq, V: PartialEq, S> PartialEq for FlatBTree<K, V, S> {
 
 impl<K: Ord + Eq, V: Eq, S> Eq for FlatBTree<K, V, S> {}
 
+impl<K: Ord + Hash, V: Hash, S> Hash for FlatBTree<K, V, S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Match std::BTreeMap: hash length followed by each (k, v) in sorted order.
+        state.write_usize(self.len());
+        for kv in self.iter() {
+            kv.hash(state);
+        }
+    }
+}
+
 impl<K: Ord, V, S, Q> std::ops::Index<&Q> for FlatBTree<K, V, S>
 where
     K: Borrow<Q>,
@@ -1326,6 +1336,17 @@ where
     type IntoIter = Iter<'a, K, V>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a mut FlatBTree<K, V, S>
+where
+    K: Ord,
+{
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = IterMut<'a, K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
@@ -2054,6 +2075,37 @@ mod tests {
             assert_eq!(*k, i as i32);
             assert_eq!(*v, (i * 10) as i32);
         }
+    }
+
+    #[test]
+    fn into_iter_mut_yields_mutable_refs() {
+        let mut map: FlatBTree<i32, i32> = (0..30).map(|i| (i, i)).collect();
+        for (_k, v) in &mut map {
+            *v *= 10;
+        }
+        for i in 0..30 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+        }
+    }
+
+    #[test]
+    fn hash_matches_equal_maps() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
+        let a: FlatBTree<i32, i32> = (0..50).map(|i| (i, i * 2)).collect();
+        let b: FlatBTree<i32, i32> = (0..50).rev().map(|i| (i, i * 2)).collect();
+        let c: FlatBTree<i32, i32> = (0..49).map(|i| (i, i * 2)).collect();
+
+        let h = |m: &FlatBTree<i32, i32>| {
+            let mut s = DefaultHasher::new();
+            m.hash(&mut s);
+            s.finish()
+        };
+
+        assert_eq!(a, b);
+        assert_eq!(h(&a), h(&b));
+        assert_ne!(h(&a), h(&c));
     }
 
     #[test]
