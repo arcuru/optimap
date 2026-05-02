@@ -291,6 +291,14 @@ impl<K: Ord, V> RawBTree<K, V> {
     }
 
     /// Search for a key, returning the leaf node index and slot index if found.
+    ///
+    /// Uses linear scan for shallow trees (better branch prediction in the
+    /// hot loop) and binary search for taller trees (the saved comparisons
+    /// pay off when more nodes are visited and the working set spills L1).
+    /// Crossover height calibrated on `lookup_hit/lookup_miss` benches:
+    /// linear wins ~75% at height ≤ 2 (≤ ~1K entries for u64/u64), binary
+    /// wins ~20% at height ≥ 3 (≥ ~10K entries).
+    #[inline]
     pub fn search<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
     where
         K: Borrow<Q>,
@@ -299,17 +307,27 @@ impl<K: Ord, V> RawBTree<K, V> {
         if self.root == NO_NODE {
             return None;
         }
+        if self.height < 3 {
+            self.search_linear(key)
+        } else {
+            self.search_binary(key)
+        }
+    }
 
+    #[inline(always)]
+    fn search_linear<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         let mut node_idx = self.root;
 
-        // Navigate internal nodes
         for _ in 0..self.height {
             let node = self.arena.node_ptr(node_idx);
             let header = unsafe { NodeLayout::<K, V>::header(node) };
             let len = header.len as usize;
 
-            // Linear scan to find child index
-            let mut child_idx = len; // default: rightmost child
+            let mut child_idx = len;
             for i in 0..len {
                 let k = unsafe { &*NodeLayout::<K, V>::internal_key_ptr(node, i) };
                 if key.cmp(k.borrow()) == std::cmp::Ordering::Less {
@@ -321,7 +339,6 @@ impl<K: Ord, V> RawBTree<K, V> {
             node_idx = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
         }
 
-        // At leaf: linear scan for exact match
         let node = self.arena.node_ptr(node_idx);
         let header = unsafe { NodeLayout::<K, V>::header(node) };
         let len = header.len as usize;
@@ -334,12 +351,46 @@ impl<K: Ord, V> RawBTree<K, V> {
                 std::cmp::Ordering::Greater => {}
             }
         }
-
         None
+    }
+
+    #[inline(always)]
+    fn search_binary<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let mut node_idx = self.root;
+
+        for _ in 0..self.height {
+            let node = self.arena.node_ptr(node_idx);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            let keys = unsafe {
+                std::slice::from_raw_parts(NodeLayout::<K, V>::internal_key_ptr(node, 0), len)
+            };
+            let child_idx =
+                keys.partition_point(|k| k.borrow().cmp(key) != std::cmp::Ordering::Greater);
+
+            node_idx = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+        }
+
+        let node = self.arena.node_ptr(node_idx);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        let len = header.len as usize;
+        let keys = unsafe {
+            std::slice::from_raw_parts(NodeLayout::<K, V>::leaf_key_ptr(node, 0), len)
+        };
+        match keys.binary_search_by(|k| k.borrow().cmp(key)) {
+            Ok(i) => Some((node_idx, i)),
+            Err(_) => None,
+        }
     }
 
     /// Find the first (leaf, position) where key >= target.
     /// Returns (leaf_idx, slot_idx) or None if all keys are less than target.
+    #[inline]
     pub fn lower_bound<Q>(&self, key: &Q) -> Option<(NodeIdx, usize)>
     where
         K: Borrow<Q>,
@@ -351,21 +402,42 @@ impl<K: Ord, V> RawBTree<K, V> {
 
         let mut node_idx = self.root;
 
-        for _ in 0..self.height {
-            let node = self.arena.node_ptr(node_idx);
-            let header = unsafe { NodeLayout::<K, V>::header(node) };
-            let len = header.len as usize;
+        if self.height < 3 {
+            // Linear navigation in shallow trees.
+            for _ in 0..self.height {
+                let node = self.arena.node_ptr(node_idx);
+                let header = unsafe { NodeLayout::<K, V>::header(node) };
+                let len = header.len as usize;
 
-            let mut child_idx = len;
-            for i in 0..len {
-                let k = unsafe { &*NodeLayout::<K, V>::internal_key_ptr(node, i) };
-                if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
-                    child_idx = i;
-                    break;
+                let mut child_idx = len;
+                for i in 0..len {
+                    let k = unsafe { &*NodeLayout::<K, V>::internal_key_ptr(node, i) };
+                    if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
+                        child_idx = i;
+                        break;
+                    }
                 }
-            }
 
-            node_idx = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+                node_idx =
+                    unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+            }
+        } else {
+            // Binary navigation in taller trees.
+            for _ in 0..self.height {
+                let node = self.arena.node_ptr(node_idx);
+                let header = unsafe { NodeLayout::<K, V>::header(node) };
+                let len = header.len as usize;
+
+                let keys = unsafe {
+                    std::slice::from_raw_parts(NodeLayout::<K, V>::internal_key_ptr(node, 0), len)
+                };
+                // child_idx = first i where keys[i] >= target.
+                let child_idx =
+                    keys.partition_point(|k| k.borrow().cmp(key) == std::cmp::Ordering::Less);
+
+                node_idx =
+                    unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+            }
         }
 
         // At leaf: find first key >= target
@@ -373,11 +445,23 @@ impl<K: Ord, V> RawBTree<K, V> {
         let header = unsafe { NodeLayout::<K, V>::header(node) };
         let len = header.len as usize;
 
-        for i in 0..len {
-            let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, i) };
-            if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
-                return Some((node_idx, i));
+        let leaf_keys = unsafe {
+            std::slice::from_raw_parts(NodeLayout::<K, V>::leaf_key_ptr(node, 0), len)
+        };
+        let pos = if self.height < 3 {
+            let mut p = len;
+            for (i, k) in leaf_keys.iter().enumerate() {
+                if key.cmp(k.borrow()) != std::cmp::Ordering::Greater {
+                    p = i;
+                    break;
+                }
             }
+            p
+        } else {
+            leaf_keys.partition_point(|k| k.borrow().cmp(key) == std::cmp::Ordering::Less)
+        };
+        if pos < len {
+            return Some((node_idx, pos));
         }
 
         // All keys in this leaf are less — check next leaf
