@@ -31,6 +31,8 @@ enum Op {
     SplitOff(u8),
     /// Append a freshly-built map of (k, v) pairs into self; verify against reference.
     Append(Vec<(u8, u8)>),
+    /// range_mut: mutate every value in [lo, hi] by adding a delta.
+    RangeMut(u8, u8, u8),
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -62,6 +64,10 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (any::<u8>(), any::<u8>()).prop_map(|(k, v)| Op::EntryAndModify(k, v)),
         1 => any::<u8>().prop_map(Op::SplitOff),
         1 => proptest::collection::vec((any::<u8>(), any::<u8>()), 0..40).prop_map(Op::Append),
+        2 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(a, b, d)| {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            Op::RangeMut(lo, hi, d)
+        }),
     ]
 }
 
@@ -198,6 +204,14 @@ fn run_differential(ops: &[Op]) {
                 let tl: Vec<_> = test.iter_sorted().map(|(&k, &v)| (k, v)).collect();
                 let rl: Vec<_> = reference.iter().map(|(&k, &v)| (k, v)).collect();
                 assert_eq!(tl, rl, "op {i}: split_off({at}) left side");
+            }
+            Op::RangeMut(lo, hi, d) => {
+                for (_, v) in test.range_mut(*lo..=*hi) {
+                    *v = v.wrapping_add(*d);
+                }
+                for (_, v) in reference.range_mut(*lo..=*hi) {
+                    *v = v.wrapping_add(*d);
+                }
             }
             Op::Append(pairs) => {
                 let mut t_other: FlatBTree<u8, u8> = FlatBTree::new();
