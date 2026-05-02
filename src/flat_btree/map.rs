@@ -1331,6 +1331,18 @@ impl<K: Ord + Clone, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
     {
         FlatBTree::range(self, range)
     }
+
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::split_off(self, at)
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        FlatBTree::append(self, other);
+    }
 }
 
 // ── Standard traits ─────────────────────────────────────────────────────

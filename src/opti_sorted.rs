@@ -266,6 +266,22 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
     {
         self.inner.range_mut(range)
     }
+
+    /// Splits the map at `at`. Self keeps keys `< at`; the returned map has
+    /// keys `>= at`.
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        OptiSortedMap { inner: self.inner.split_off(at) }
+    }
+
+    /// Moves all entries from `other` into `self`, leaving `other` empty.
+    /// On key collision, `other`'s value wins.
+    pub fn append(&mut self, other: &mut Self) {
+        self.inner.append(&mut other.inner);
+    }
 }
 
 // ── Trait implementations ──────────────────────────────────────────────────
@@ -460,6 +476,18 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
     {
         self.inner.range(range)
     }
+
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        OptiSortedMap { inner: self.inner.split_off(at) }
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        self.inner.append(&mut other.inner);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -639,6 +667,21 @@ impl<T: Ord + Clone, S: BuildHasher + Default> OptiSortedSet<T, S> {
         R: std::ops::RangeBounds<Q> + 'a,
     {
         self.inner.range(range).map(|(k, _)| k)
+    }
+
+    /// Splits the set at `at`. Self keeps elements `< at`; the returned set
+    /// has elements `>= at`.
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        OptiSortedSet { inner: self.inner.split_off(at) }
+    }
+
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    pub fn append(&mut self, other: &mut Self) {
+        self.inner.append(&mut other.inner);
     }
 }
 
@@ -890,6 +933,16 @@ impl<T: Hash + Eq + Ord + Clone> crate::SortedSet<T> for OptiSortedSet<T> {
         R: std::ops::RangeBounds<Q> + 'a,
     {
         OptiSortedSet::range(self, range)
+    }
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        OptiSortedSet::split_off(self, at)
+    }
+    fn append(&mut self, other: &mut Self) {
+        OptiSortedSet::append(self, other);
     }
 }
 

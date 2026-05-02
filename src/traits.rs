@@ -232,6 +232,20 @@ pub trait SortedMap<K, V> {
         V: 'a,
         Q: Ord + ?Sized,
         R: std::ops::RangeBounds<Q> + 'a;
+
+    /// Splits the map at `at`, keeping keys `< at` in self and returning a
+    /// new map containing keys `>= at`.
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        Self: Sized,
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Moves all entries from `other` into `self`, leaving `other` empty.
+    /// On key collision, `other`'s value wins (matches `std::BTreeMap::append`).
+    fn append(&mut self, other: &mut Self)
+    where
+        Self: Sized;
 }
 
 // ── SortedMap impl for std::BTreeMap ────────────────────────────────────────
@@ -269,6 +283,18 @@ impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
         R: std::ops::RangeBounds<Q> + 'a,
     {
         std::collections::BTreeMap::range(self, range)
+    }
+
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::split_off(self, at)
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        std::collections::BTreeMap::append(self, other)
     }
 }
 
@@ -718,6 +744,19 @@ pub trait SortedSet<T> {
         T: Borrow<Q> + 'a,
         Q: Ord + ?Sized,
         R: std::ops::RangeBounds<Q> + 'a;
+
+    /// Splits the set at `at`, keeping elements `< at` in self and returning
+    /// a new set containing elements `>= at`.
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        Self: Sized,
+        T: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    fn append(&mut self, other: &mut Self)
+    where
+        Self: Sized;
 }
 
 // ── Macro to generate Set trait impl ────────────────────────────────────────
@@ -1068,6 +1107,18 @@ where
     {
         crate::generic_set::GenericSet::range(self, range)
     }
+
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        crate::generic_set::GenericSet::split_off(self, at)
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        crate::generic_set::GenericSet::append(self, other)
+    }
 }
 
 // ── SortedSet impl for std::BTreeSet ────────────────────────────────────────
@@ -1103,5 +1154,17 @@ impl<T: Ord> SortedSet<T> for std::collections::BTreeSet<T> {
         R: std::ops::RangeBounds<Q> + 'a,
     {
         std::collections::BTreeSet::range(self, range)
+    }
+
+    fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeSet::split_off(self, at)
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        std::collections::BTreeSet::append(self, other)
     }
 }

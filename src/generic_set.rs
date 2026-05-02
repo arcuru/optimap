@@ -172,6 +172,24 @@ impl<T: Hash + Eq, M: Map<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
     {
         self.map.range(range).map(|(k, _)| k)
     }
+
+    /// Splits the set at `at`. Self keeps elements `< at`; the returned set
+    /// has elements `>= at`.
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        GenericSet {
+            map: self.map.split_off(at),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    pub fn append(&mut self, other: &mut Self) {
+        self.map.append(&mut other.map);
+    }
 }
 
 // ── Set algebra operations ──────────────────────────────────────────────────
