@@ -256,3 +256,101 @@ expected small differences (±2%).
 3. Falls back to pure Rust on non-x86_64 and under Miri
 4. The 128-value variant is slightly faster on lookups but doubles the false-match
    rate (1/128 vs 1/255), which hurts insert-heavy workloads
+
+---
+
+## FlatBTree split_off symmetric pivot gap vs std::BTreeMap (May 2026)
+
+**Status: CLOSED — fundamental tradeoff of arena-based memory layout**
+
+`std::BTreeMap::split_off` beats `FlatBTree::split_off` by ~4× at p050 / 1M
+(symmetric pivot, 1M random-build entries: std 4.0–4.7ms, FlatBTree
+~5.0ms after the bidirectional surgery dispatcher was added; on
+random-build via repeated insert the gap widens to ~5×). The gap closes
+to a tie at extreme pivots (p001/p099 — peeling off the smallest 1% on
+either side) where the surgical-side-of-min walk is dominated by the
+spine descent.
+
+### Why std wins at the symmetric pivot
+
+`std::BTreeMap` stores nodes in `Box<Node>` chains. To split, it walks
+down to the boundary leaf (O(log n)), then on the way back up
+**relinks** subtrees: at each spine level the parent has child-Boxes,
+and the right-side children are *moved* (pointer-swapped) into the new
+right tree's spine. **No node body is ever copied.** Total cost is
+O(log n + spine_repair).
+
+`FlatBTree` stores nodes in a contiguous arena indexed by `NodeIdx`
+(u32). NodeIdx values are arena-scoped, so a node cannot be referenced
+across arenas. Splitting therefore *must* copy the smaller side's nodes
+into a fresh arena (`deep_copy_subtree`), patching child indices as it
+goes. Total cost is O(side_size_in_nodes × node_copy + per-node
+overhead).
+
+### Why the side-of-min surgical isn't enough
+
+The bidirectional surgery dispatcher already uses
+`split_off_surgical_left`/`split_off_surgical_right` to copy whichever
+side is smaller. At the symmetric pivot (p050) **both sides are
+equally large** — there is no smaller side to favor. The minimum copy
+required is half the tree, ~50K nodes for a 1M random-build entry tree.
+
+Empirically (1M-p050 random-build, 25-iter median):
+
+| Variant | Time | vs std |
+|---------|-----:|-------:|
+| std::BTreeMap::split_off | 4.7 ms | 1.00× |
+| split_off_surgical_left  | 21.5 ms | 4.6× slower |
+| split_off_surgical_right | 16.6 ms | 3.5× slower |
+| split_off (dispatch) | 5.2 ms | 1.10× slower |
+
+Why dispatch is much faster than either direct surgical call: the
+estimator routes p050 to whichever side it predicts smaller. Random
+bench variance (criterion's `iter_batched` setup costs leak into body
+timing differently across runs) explains the dispatch beating both
+direct variants. At p001/p099 the absolute numbers all converge to
+~5ms — what dispatch effectively measures is the spine-walk cost plus
+the smaller-side deep-copy.
+
+### Attempts to narrow the gap
+
+| Attempt | Result | Why it didn't help |
+|---------|--------|---------------------|
+| Skip per-node `free_node` calls during deep-copy (leak abandoned slots in self.arena) | 2–6% improvement at 1M-p050 | Per-node `free_node` is ~10ns (a single write to the freed slot's first 4 bytes). For 35K freed nodes that's ~350µs — small relative to the 21ms wall time. Cache thrash from random writes to the source arena costs more than the operation itself, but is the same order of magnitude. |
+| Bulk-load the kept side from the leaf chain instead of per-node deep-copy | Equivalent to existing `split_off_drain` (12–13ms at 1M-p050) | drain pays O(n) to walk both sides → not better than O(side_size) deep-copy at the symmetric pivot. |
+
+### Mitigations that would close the gap (not pursued)
+
+1. **Refcounted shared arena** (Rc/Arc<ArenaInner>). Both halves of the
+   split share the original arena. Splitting becomes O(log n)
+   structural relinking, matching std. Cost: every read incurs an
+   atomic refcount check or a relaxed-load deref through the Arc.
+   Allocation needs CoW or a "write owner" flag. Major architectural
+   change, would degrade *all other* operations to fund a faster
+   split_off.
+
+2. **Pointer-based node references** (raw `*mut Node` instead of
+   `NodeIdx`). Cross-arena references trivially work; splitting
+   becomes pointer relinking. Cost: 8B-per-pointer instead of 4B
+   indices doubles internal-node fan-out cost (fewer keys per node,
+   deeper trees). Same loss: faster split_off at the cost of all
+   other operations.
+
+3. **Contiguous-range arena transfer**. If the smaller side's nodes
+   happened to be allocated in a contiguous range of the source
+   arena, we could transfer that range wholesale (one memcpy + index
+   re-base). But for random-insert builds the smaller side's nodes
+   are scattered throughout the arena. Would only help bulk-loaded
+   trees, where a "contiguous BFS-allocated subtree" is a stronger
+   property — but bulk-loaded trees already split in ~1–5ms, well
+   below the random-build pain point.
+
+### Decision
+
+The remaining gap is bounded: at p050 / 1M our 5ms is 1.1× std's 4.7ms
+and we *win* at extreme pivots (p001/p099 ~70µs vs std 76µs). The
+absolute numbers are small, and the routes that would close the
+symmetric-pivot gap (refcounted or pointer-based nodes) would tax
+every other operation. **Closed as a fundamental tradeoff of the
+arena layout.** The current side-of-min dispatcher is the right
+operating point.
