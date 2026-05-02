@@ -864,6 +864,104 @@ fn bench_string_keys(c: &mut Criterion) {
     group.finish();
 }
 
+// ── range_mut ──────────────────────────────────────────────────────────
+
+fn bench_range_mut(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/range_mut");
+
+    for &n in &[10_000, 100_000] {
+        let keys = make_random_keys(n, 42);
+        let min_key = *keys.iter().min().unwrap();
+        let max_key = *keys.iter().max().unwrap();
+        let range_size = (max_key - min_key) / 10;
+
+        let mut rng = Sfc64::new(123);
+        let range_starts: Vec<u64> = (0..1000)
+            .map(|_| min_key + (rng.next_u64() % (max_key - min_key - range_size)))
+            .collect();
+
+        group.bench_function(BenchmarkId::new("FlatBTree", n), |b| {
+            let mut flat = build_flat::<0>(&keys);
+            b.iter(|| {
+                for &start in &range_starts {
+                    for (_, v) in flat.range_mut(start..start + range_size) {
+                        *v = v.wrapping_add(1);
+                    }
+                }
+                black_box(&flat);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("BTreeMap", n), |b| {
+            let mut std_map = build_std::<0>(&keys);
+            b.iter(|| {
+                for &start in &range_starts {
+                    for (_, v) in std_map.range_mut(start..start + range_size) {
+                        *v = v.wrapping_add(1);
+                    }
+                }
+                black_box(&std_map);
+            });
+        });
+    }
+    group.finish();
+}
+
+// ── Sparse-after-remove ────────────────────────────────────────────────
+//
+// Build N entries, remove every other, then measure lookup_hit on the
+// surviving keys. Stresses the rebalance/merge path: if rebalance leaves
+// the tree well-utilized, lookup cost ≈ original; if it doesn't, the
+// tree walks more nodes than necessary.
+
+fn bench_sparse_after_remove(c: &mut Criterion) {
+    let mut group = c.benchmark_group("btree/sparse_after_remove");
+
+    for &n in &[10_000, 100_000] {
+        let keys = make_random_keys(n, 42);
+        let surviving: Vec<u64> = keys.iter().step_by(2).copied().collect();
+
+        let mut flat = FlatBTree::with_capacity(n);
+        for &k in &keys {
+            flat.insert(k, k);
+        }
+        for k in keys.iter().skip(1).step_by(2) {
+            flat.remove(k);
+        }
+
+        let mut std_map = BTreeMap::new();
+        for &k in &keys {
+            std_map.insert(k, k);
+        }
+        for k in keys.iter().skip(1).step_by(2) {
+            std_map.remove(k);
+        }
+
+        group.throughput(Throughput::Elements(surviving.len() as u64));
+
+        group.bench_function(BenchmarkId::new("FlatBTree", n), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for k in &surviving {
+                    sum = sum.wrapping_add(*flat.get(k).unwrap_or(&0));
+                }
+                black_box(sum);
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("BTreeMap", n), |b| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for k in &surviving {
+                    sum = sum.wrapping_add(*std_map.get(k).unwrap_or(&0));
+                }
+                black_box(sum);
+            });
+        });
+    }
+    group.finish();
+}
+
 // ── split_off / append ─────────────────────────────────────────────────
 
 fn bench_split_off(c: &mut Criterion) {
@@ -961,5 +1059,7 @@ criterion_group!(
     bench_string_keys,
     bench_split_off,
     bench_append,
+    bench_range_mut,
+    bench_sparse_after_remove,
 );
 criterion_main!(btree_benches);
