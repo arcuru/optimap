@@ -167,6 +167,84 @@ impl Drop for Arena {
     }
 }
 
+// ── PathBuf ─────────────────────────────────────────────────────────────
+
+/// Maximum tree height supported by [`PathBuf`].
+///
+/// 16 covers any practical (K, V) pair where K + V ≤ 64 bytes up to
+/// `u32::MAX` entries (the arena limit). For example: `(String, String)`
+/// has LEAF_CAP=5, INTERNAL_CAP=8 → max height ≈ 11 at 4 billion entries.
+/// Trees with extreme key sizes that exceed this will hit the
+/// `debug_assert!` in `push`.
+pub(crate) const MAX_PATH_HEIGHT: usize = 16;
+
+/// Stack-allocated path buffer used during B-tree descent. Records
+/// `(parent_node_idx, child_slot_in_parent)` from root → leaf so that a
+/// subsequent `propagate_split` can walk back up. Replaces a per-insert
+/// `Vec` heap allocation in the hot insert path.
+pub(crate) struct PathBuf {
+    items: [(NodeIdx, usize); MAX_PATH_HEIGHT],
+    len: u32,
+}
+
+impl PathBuf {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            items: [(NO_NODE, 0); MAX_PATH_HEIGHT],
+            len: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline(always)]
+    pub fn push(&mut self, item: (NodeIdx, usize)) {
+        debug_assert!(
+            (self.len as usize) < MAX_PATH_HEIGHT,
+            "PathBuf overflow: tree height exceeded MAX_PATH_HEIGHT={MAX_PATH_HEIGHT}"
+        );
+        // SAFETY: debug_assert above guards in debug; release relies on
+        // height ≤ MAX_PATH_HEIGHT (checked at insert sites by tree shape).
+        unsafe { *self.items.get_unchecked_mut(self.len as usize) = item };
+        self.len += 1;
+    }
+
+    #[inline(always)]
+    pub fn pop(&mut self) -> Option<(NodeIdx, usize)> {
+        if self.len == 0 {
+            return None;
+        }
+        self.len -= 1;
+        // SAFETY: 0 <= self.len < MAX_PATH_HEIGHT after the decrement.
+        Some(unsafe { *self.items.get_unchecked(self.len as usize) })
+    }
+
+    /// Reverse the path in place. Used by `path_to_node` which records
+    /// leaf→root and needs root→leaf order.
+    #[inline]
+    pub fn reverse(&mut self) {
+        let len = self.len as usize;
+        if len > 1 {
+            self.items[..len].reverse();
+        }
+    }
+
+    /// Live slice of recorded path entries in their current (insertion / reverse) order.
+    #[inline]
+    pub fn as_slice(&self) -> &[(NodeIdx, usize)] {
+        &self.items[..self.len as usize]
+    }
+}
+
 // ── RawBTree ────────────────────────────────────────────────────────────
 
 /// Core B+ tree structure, parameterized by K and V.
@@ -571,12 +649,13 @@ impl<K: Ord, V> RawBTree<K, V> {
     /// Search for the leaf where a key should be inserted.
     /// Returns (leaf_idx, insert_position) where insert_position is the
     /// index at which the key should go to maintain sorted order.
-    /// Also returns the path of (node_idx, child_index) pairs for split propagation.
-    fn search_for_insert(&self, key: &K) -> (NodeIdx, usize, Vec<(NodeIdx, usize)>) {
+    /// Records the descent path of `(node_idx, child_index)` pairs into
+    /// `path` for split propagation.
+    fn search_for_insert(&self, key: &K, path: &mut PathBuf) -> (NodeIdx, usize) {
         debug_assert!(self.root != NO_NODE);
+        debug_assert!(path.is_empty());
 
         let mut node_idx = self.root;
-        let mut path = Vec::new();
 
         // Navigate internal nodes
         for _ in 0..self.height {
@@ -611,17 +690,18 @@ impl<K: Ord, V> RawBTree<K, V> {
             }
         }
 
-        (node_idx, pos, path)
+        (node_idx, pos)
     }
 
     /// Search for a key, returning either the existing location or the
-    /// insertion point with path info for the Entry API.
-    pub(crate) fn entry_search(&self, key: &K) -> EntrySearch {
+    /// insertion point. The descent path is written into `path` for use
+    /// by `insert_at_vacant` if a split cascade is needed.
+    pub(crate) fn entry_search(&self, key: &K, path: &mut PathBuf) -> EntrySearch {
         if self.root == NO_NODE {
             return EntrySearch::EmptyTree;
         }
 
-        let (leaf_idx, pos, path) = self.search_for_insert(key);
+        let (leaf_idx, pos) = self.search_for_insert(key, path);
 
         // Check if key already exists at this position
         let node = self.arena.node_ptr(leaf_idx);
@@ -635,7 +715,7 @@ impl<K: Ord, V> RawBTree<K, V> {
             }
         }
 
-        EntrySearch::Vacant(leaf_idx, pos, path)
+        EntrySearch::Vacant(leaf_idx, pos)
     }
 
     /// Insert a value at a pre-located vacant position.
@@ -645,7 +725,7 @@ impl<K: Ord, V> RawBTree<K, V> {
         &mut self,
         leaf_idx: NodeIdx,
         pos: usize,
-        path: Vec<(NodeIdx, usize)>,
+        path: &mut PathBuf,
         key: K,
         value: V,
     ) -> (NodeIdx, usize)
@@ -696,8 +776,9 @@ impl<K: Ord, V> RawBTree<K, V> {
     }
 
     /// Build the path from root to a given node by following parent pointers.
-    fn path_to_node(&self, target: NodeIdx) -> Vec<(NodeIdx, usize)> {
-        let mut path = Vec::new();
+    /// Writes into `path` (which must be empty on entry).
+    fn path_to_node(&self, target: NodeIdx, path: &mut PathBuf) {
+        debug_assert!(path.is_empty());
         let mut node_idx = target;
 
         loop {
@@ -724,18 +805,23 @@ impl<K: Ord, V> RawBTree<K, V> {
         }
 
         path.reverse();
-        path
     }
 }
 
 /// Result of an entry search on the B-tree.
+///
+/// The descent path is *not* embedded in the variants — callers pass a
+/// `&mut PathBuf` into `entry_search` and own the path buffer themselves.
+/// Keeping this enum small (~16 bytes vs ~280 bytes if PathBuf were
+/// embedded) avoids large stack copies on every entry() call.
 pub(crate) enum EntrySearch {
     /// Tree is empty.
     EmptyTree,
     /// Key found at (leaf_idx, slot_idx).
     Occupied(NodeIdx, usize),
-    /// Key not found. Insert at (leaf_idx, pos) with the given path for splits.
-    Vacant(NodeIdx, usize, Vec<(NodeIdx, usize)>),
+    /// Key not found. Insert at (leaf_idx, pos). The descent path is in the
+    /// caller-provided `PathBuf` passed to `entry_search`.
+    Vacant(NodeIdx, usize),
 }
 
 impl<K: Ord + Clone, V> RawBTree<K, V> {
@@ -783,11 +869,12 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
                         return None;
                     }
                     // Last leaf is full: need split. Build path to last leaf.
-                    let path = self.path_to_node(self.last_leaf);
+                    let mut path = PathBuf::new();
+                    self.path_to_node(self.last_leaf, &mut path);
                     let (promoted_key, new_leaf_idx) =
                         self.leaf_split_and_insert(self.last_leaf, last_len, key, value);
                     self.len += 1;
-                    self.propagate_split(path, promoted_key, new_leaf_idx);
+                    self.propagate_split(&mut path, promoted_key, new_leaf_idx);
                     return None;
                 }
             }
@@ -807,17 +894,19 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
                         self.len += 1;
                         return None;
                     }
-                    let path = self.path_to_node(self.first_leaf);
+                    let mut path = PathBuf::new();
+                    self.path_to_node(self.first_leaf, &mut path);
                     let (promoted_key, new_leaf_idx) =
                         self.leaf_split_and_insert(self.first_leaf, 0, key, value);
                     self.len += 1;
-                    self.propagate_split(path, promoted_key, new_leaf_idx);
+                    self.propagate_split(&mut path, promoted_key, new_leaf_idx);
                     return None;
                 }
             }
         }
 
-        let (leaf_idx, pos, path) = self.search_for_insert(&key);
+        let mut path = PathBuf::new();
+        let (leaf_idx, pos) = self.search_for_insert(&key, &mut path);
 
         // Check if key already exists at this position
         let node = self.arena.node_ptr(leaf_idx);
@@ -844,7 +933,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
             let (promoted_key, new_leaf_idx) =
                 self.leaf_split_and_insert(leaf_idx, pos, key, value);
             self.len += 1;
-            self.propagate_split(path, promoted_key, new_leaf_idx);
+            self.propagate_split(&mut path, promoted_key, new_leaf_idx);
             None
         }
     }
@@ -1020,7 +1109,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
     /// Propagate a split upward from child to parent(s).
     fn propagate_split(
         &mut self,
-        mut path: Vec<(NodeIdx, usize)>,
+        path: &mut PathBuf,
         mut key: K,
         mut new_child: NodeIdx,
     ) where
@@ -2320,7 +2409,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         // if cur is full, cascade splits up via propagate_split.
         let descend = self.height - other_height - 1;
         let mut cur = self.root;
-        let mut path: Vec<(NodeIdx, usize)> = Vec::with_capacity(descend as usize);
+        let mut path = PathBuf::new();
         for _ in 0..descend {
             let cur_len = unsafe {
                 NodeLayout::<K, V>::header(self.arena.node_ptr(cur)).len as usize
@@ -2351,7 +2440,7 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         // cur is full: split, then cascade up.
         let (promoted, new_internal) =
             self.internal_split_and_insert(cur, cur_len, separator, other_root);
-        self.propagate_split(path, promoted, new_internal);
+        self.propagate_split(&mut path, promoted, new_internal);
     }
 }
 
@@ -2559,7 +2648,8 @@ impl<K: Ord, V> RawBTree<K, V> {
         }
 
         // Spine from root down to the boundary leaf (one entry per internal level).
-        let spine = self.path_to_node(leaf_idx);
+        let mut spine = PathBuf::new();
+        self.path_to_node(leaf_idx, &mut spine);
         debug_assert_eq!(spine.len() as u32, self.height);
 
         // Capture the boundary leaf's original prev (for later if the whole leaf moves right).
@@ -2628,7 +2718,7 @@ impl<K: Ord, V> RawBTree<K, V> {
         // degenerate 1-child/0-keys ones) so that subtree heights stay aligned
         // when we combine `*_root_below` with deep-copied siblings. Degenerates
         // are removed in Phase 3.
-        for &(parent_idx, child_pos) in spine.iter().rev() {
+        for &(parent_idx, child_pos) in spine.as_slice().iter().rev() {
             let n = unsafe {
                 NodeLayout::<K, V>::header(self.arena.node_ptr(parent_idx)).len as usize
             };
@@ -2862,7 +2952,8 @@ impl<K: Ord, V> RawBTree<K, V> {
             return moved;
         }
 
-        let spine = self.path_to_node(leaf_idx);
+        let mut spine = PathBuf::new();
+        self.path_to_node(leaf_idx, &mut spine);
         debug_assert_eq!(spine.len() as u32, self.height);
 
         let leaf_len = unsafe {
@@ -2931,7 +3022,7 @@ impl<K: Ord, V> RawBTree<K, V> {
         let mut right_root_below: Option<NodeIdx> = Some(leaf_idx);
 
         // ── Phase 2: spine walk bottom-up ──────────────────────────────────
-        for &(parent_idx, child_pos) in spine.iter().rev() {
+        for &(parent_idx, child_pos) in spine.as_slice().iter().rev() {
             let n = unsafe {
                 NodeLayout::<K, V>::header(self.arena.node_ptr(parent_idx)).len as usize
             };
