@@ -685,44 +685,39 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
     /// Splits the map into two at the given key. Returns everything with
     /// keys >= `at` as a new map; `self` keeps everything with keys < `at`.
     ///
-    /// Dispatches between two strategies based on a cheap O(1) right-fraction
-    /// estimate from the spine root:
-    /// - **Surgical** (deep-copy the right subtree, mutate self for left) wins
-    ///   when right ≤ ~50% of the tree. O(log n + right_size).
-    /// - **Drain** (collect all pairs, partition, bulk_load both halves) wins
-    ///   when right is large — surgical's per-node bookkeeping dominates while
-    ///   drain stays bandwidth-bound. O(n).
+    /// Picks the surgical direction that deep-copies the SMALLER side using
+    /// a cheap O(log n) right-fraction estimate of the spine. Drain is no
+    /// longer used: with both directions available, the side-of-min surgical
+    /// is always at least as fast as drain (and 2-7× faster at asymmetric
+    /// pivots on large trees).
     ///
-    /// Currently always copies the right side. The "adaptive split direction"
-    /// follow-up (see roadmap) would deep-copy whichever side is smaller and
-    /// close the remaining gap at very-low pivots on huge trees.
+    /// - `right_frac` ≤ ~0.5 → `surgical_right` (deep-copy the right side)
+    /// - `right_frac` >  ~0.5 → `surgical_left`  (deep-copy the left side)
+    ///
+    /// Each surgical impl is O(log n + side_size).
     pub fn split_off<Q>(&mut self, at: &Q) -> Self
     where
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        // Threshold tuned from `btree/split_off` bench across n ∈ [1K..1M] and
-        // pivots {p001, p010, p050, p090, p099}. At right_frac ≤ 0.65, surgical
-        // wins or ties; above, drain wins (especially at large n where surgical's
-        // per-node deep-copy overhead dominates the 90%-of-tree-copied case).
+        // Cutoff is 0.6 (not 0.5) because `estimate_right_fraction` weights
+        // every subtree uniformly at `LEAF_CAP × (IC+1)^k`, but the rightmost
+        // top-level subtree is almost always partial (e.g. n=1000 with
+        // INTERNAL_CAP=20 packs into 4 subtrees of [315, 315, 315, 55] —
+        // the tail is 55 actual but estimated as 315). Whenever the partial
+        // tail lands on the right side of the split, `right` is inflated.
+        // Empirically the overshoot is consistently ~+0.10 at the symmetric
+        // pivot across n ∈ [1K..1M], so 0.6 absorbs it and routes the
+        // actual r ≈ 0.5 boundary correctly.
         //
-        // Why 0.65 and not 0.5: `estimate_right_fraction` weights every subtree
-        // uniformly at `LEAF_CAP × (IC+1)^k`, but the rightmost top-level
-        // subtree is almost always partial (e.g. n=1000 with INTERNAL_CAP=20
-        // packs into 4 subtrees of [315, 315, 315, 55] entries — the tail is
-        // 55 actual but estimated as 315, a 5.7× over-count). Whenever the
-        // partial tail lands on the right side of the split (every pivot
-        // before the last full subtree), `right` is inflated. Empirically the
-        // overshoot is consistently ~+0.10 at p050 across n ∈ [1K..1M] (verified
-        // identical for both per-element-insert and bulk-loaded trees, ruling
-        // out fill-density as the cause). Setting the cutoff to 0.65 absorbs
-        // this systematic bias rather than trying to correct it inside the
-        // estimator (which would require knowing the actual tail-subtree size,
-        // re-introducing O(N) accounting we explicitly want to avoid).
-        const RIGHT_FRAC_DRAIN_CUTOFF: f64 = 0.65;
+        // Mis-routing near the boundary (estimator says 0.55, actual 0.45)
+        // costs ≤ 10% extra work since both directions copy similar amounts
+        // when the tree is near-symmetric. The big wins (2-7×) come at
+        // asymmetric pivots where the cutoff direction is unambiguous.
+        const RIGHT_FRAC_LEFT_CUTOFF: f64 = 0.6;
         match self.tree.estimate_right_fraction(at) {
-            Some(rf) if rf <= RIGHT_FRAC_DRAIN_CUTOFF => self.split_off_surgical(at),
-            _ => self.split_off_drain(at),
+            Some(rf) if rf > RIGHT_FRAC_LEFT_CUTOFF => self.split_off_surgical_left(at),
+            _ => self.split_off_surgical_right(at),
         }
     }
 
@@ -782,17 +777,34 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
         }
     }
 
-    /// Tree-surgery split: O(log n + right_subtree_nodes). Mutates `self` in
-    /// place to retain the left half; deep-copies the right subtree into a
-    /// fresh arena. Currently always copies the right side; see roadmap for
-    /// adaptive direction follow-up.
+    /// Tree-surgery split, deep-copying the RIGHT side. O(log n + right_nodes).
+    /// Mutates `self` in place to retain `< at`; the deep-copied right subtree
+    /// is returned. Wins when the right side is the smaller of the two.
     #[doc(hidden)]
-    pub fn split_off_surgical<Q>(&mut self, at: &Q) -> Self
+    pub fn split_off_surgical_right<Q>(&mut self, at: &Q) -> Self
     where
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        let right_tree = self.tree.split_off_surgical(at);
+        let right_tree = self.tree.split_off_surgical_right(at);
+        FlatBTree {
+            tree: right_tree,
+            _hasher: PhantomData,
+        }
+    }
+
+    /// Tree-surgery split, deep-copying the LEFT side. O(log n + left_nodes).
+    /// The kept side stays in self.arena (mutated in place), the LEFT side is
+    /// deep-copied to a fresh arena, then a `mem::swap` flips them so `self`
+    /// holds `< at` and the returned tree holds `>= at`. Wins when the left
+    /// side is the smaller of the two.
+    #[doc(hidden)]
+    pub fn split_off_surgical_left<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let right_tree = self.tree.split_off_surgical_left(at);
         FlatBTree {
             tree: right_tree,
             _hasher: PhantomData,
@@ -2367,7 +2379,7 @@ mod tests {
     // ── Surgical split_off tests ───────────────────────────────────────────
     //
     // The surgical variant has independent invariants from drain+bulk_load,
-    // so it gets its own coverage. Tests run via `split_off_surgical()` directly.
+    // so it gets its own coverage. Tests run via `split_off_surgical_right()` directly.
 
     fn assert_sorted_and_len<K: Ord + std::fmt::Debug, V>(tree: &FlatBTree<K, V>) {
         let keys: Vec<&K> = tree.iter().map(|(k, _)| k).collect();
@@ -2380,7 +2392,7 @@ mod tests {
     #[test]
     fn surgical_split_off_basic() {
         let mut map: FlatBTree<i32, i32> = (0..200).map(|i| (i, i * 10)).collect();
-        let right = map.split_off_surgical(&100);
+        let right = map.split_off_surgical_right(&100);
 
         assert_eq!(map.len(), 100);
         assert_eq!(right.len(), 100);
@@ -2399,7 +2411,7 @@ mod tests {
     #[test]
     fn surgical_split_off_at_missing_key() {
         let mut map: FlatBTree<i32, i32> = [10, 20, 30, 40].iter().map(|&i| (i, i)).collect();
-        let right = map.split_off_surgical(&25);
+        let right = map.split_off_surgical_right(&25);
         assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![10, 20]);
         assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![30, 40]);
     }
@@ -2408,39 +2420,39 @@ mod tests {
     fn surgical_split_off_edges() {
         // Split before everything → self empty, right gets all.
         let mut a: FlatBTree<i32, i32> = (1..=10).map(|i| (i, i)).collect();
-        let r = a.split_off_surgical(&0);
+        let r = a.split_off_surgical_right(&0);
         assert!(a.is_empty());
         assert_eq!(r.len(), 10);
         assert_sorted_and_len(&r);
 
         // Split at the smallest key still moves everything to right (lower_bound = first leaf, slot 0).
         let mut a2: FlatBTree<i32, i32> = (1..=10).map(|i| (i, i)).collect();
-        let r2 = a2.split_off_surgical(&1);
+        let r2 = a2.split_off_surgical_right(&1);
         assert!(a2.is_empty());
         assert_eq!(r2.len(), 10);
 
         // Split after everything → self keeps all, right empty.
         let mut b: FlatBTree<i32, i32> = (1..=10).map(|i| (i, i)).collect();
-        let r = b.split_off_surgical(&100);
+        let r = b.split_off_surgical_right(&100);
         assert_eq!(b.len(), 10);
         assert!(r.is_empty());
         assert_sorted_and_len(&b);
 
         // Empty self → empty right.
         let mut c: FlatBTree<i32, i32> = FlatBTree::new();
-        let r = c.split_off_surgical(&5);
+        let r = c.split_off_surgical_right(&5);
         assert!(c.is_empty());
         assert!(r.is_empty());
 
         // Single-element tree, split below key.
         let mut d: FlatBTree<i32, i32> = [(5, 50)].into_iter().collect();
-        let r = d.split_off_surgical(&5);
+        let r = d.split_off_surgical_right(&5);
         assert!(d.is_empty());
         assert_eq!(r.len(), 1);
 
         // Single-element tree, split above key.
         let mut e: FlatBTree<i32, i32> = [(5, 50)].into_iter().collect();
-        let r = e.split_off_surgical(&6);
+        let r = e.split_off_surgical_right(&6);
         assert_eq!(e.len(), 1);
         assert!(r.is_empty());
     }
@@ -2449,7 +2461,7 @@ mod tests {
     fn surgical_split_off_single_leaf_root() {
         // Tree fits in one leaf (height 0). Surgical must handle the empty-spine case.
         let mut map: FlatBTree<i32, i32> = (0..10).map(|i| (i, i)).collect();
-        let right = map.split_off_surgical(&5);
+        let right = map.split_off_surgical_right(&5);
         assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
         assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![5, 6, 7, 8, 9]);
     }
@@ -2461,7 +2473,7 @@ mod tests {
         let mut map: FlatBTree<u64, u64> = (0..1_000).map(|i| (i, i)).collect();
         // LEAF_CAP for u64/u64 is 15. So leaf 0 holds keys 0..15, leaf 1 holds 15..30, etc.
         // Pivot = 15 lands at slot 0 of leaf 1.
-        let right = map.split_off_surgical(&15);
+        let right = map.split_off_surgical_right(&15);
         assert_eq!(map.len(), 15);
         assert_eq!(right.len(), 985);
         assert_sorted_and_len(&map);
@@ -2479,7 +2491,7 @@ mod tests {
         // Pivot lands inside a leaf, exercising the physical leaf split path.
         let mut map: FlatBTree<u64, u64> = (0..1_000).map(|i| (i, i)).collect();
         // 22 lands somewhere inside leaf 1 (keys 15..30 with LEAF_CAP=15).
-        let right = map.split_off_surgical(&22);
+        let right = map.split_off_surgical_right(&22);
         assert_eq!(map.len(), 22);
         assert_eq!(right.len(), 978);
         assert_sorted_and_len(&map);
@@ -2492,7 +2504,7 @@ mod tests {
         // the left has child_pos == 0 at multiple levels and produces a chain
         // of degenerate internals that Phase 3 must collapse.
         let mut map: FlatBTree<u64, u64> = (0..10_000).map(|i| (i, i)).collect();
-        let right = map.split_off_surgical(&50);
+        let right = map.split_off_surgical_right(&50);
         assert_eq!(map.len(), 50);
         assert_eq!(right.len(), 9950);
         assert_sorted_and_len(&map);
@@ -2511,7 +2523,7 @@ mod tests {
         // are empty, right side accumulates degenerate internals along its
         // leftmost edge that Phase 3 must collapse.
         let mut map: FlatBTree<u64, u64> = (0..10_000).map(|i| (i, i)).collect();
-        let right = map.split_off_surgical(&9_950);
+        let right = map.split_off_surgical_right(&9_950);
         assert_eq!(map.len(), 9950);
         assert_eq!(right.len(), 50);
         assert_sorted_and_len(&map);
@@ -2527,7 +2539,7 @@ mod tests {
     #[test]
     fn surgical_split_off_post_split_mutate() {
         let mut map: FlatBTree<u64, u64> = (0..5_000).map(|i| (i, i)).collect();
-        let mut right = map.split_off_surgical(&2_500);
+        let mut right = map.split_off_surgical_right(&2_500);
         assert_eq!(map.len(), 2500);
         assert_eq!(right.len(), 2500);
 
@@ -2573,7 +2585,7 @@ mod tests {
                 let mut b: FlatBTree<i64, i64> = (0..n as i64).map(|i| (i, i * 3)).collect();
 
                 let a_right = a.split_off_drain(&pivot);
-                let b_right = b.split_off_surgical(&pivot);
+                let b_right = b.split_off_surgical_right(&pivot);
 
                 let a_left_keys: Vec<i64> = a.iter().map(|(k, _)| *k).collect();
                 let b_left_keys: Vec<i64> = b.iter().map(|(k, _)| *k).collect();
@@ -2603,7 +2615,7 @@ mod tests {
             .map(|i| (format!("key_{i:03}"), format!("val_{i}")))
             .collect();
         let pivot = "key_100".to_string();
-        let right = map.split_off_surgical(&pivot);
+        let right = map.split_off_surgical_right(&pivot);
         assert_eq!(map.len(), 100);
         assert_eq!(right.len(), 100);
         for i in 0..100 {
@@ -2622,7 +2634,7 @@ mod tests {
         // pointers are consistent on both sides after the surgery.
         let mut map: FlatBTree<u64, u64> = (0..50_000).map(|i| (i, i)).collect();
         let pivot = 25_137_u64; // arbitrary mid-leaf pivot
-        let right = map.split_off_surgical(&pivot);
+        let right = map.split_off_surgical_right(&pivot);
 
         let left_keys: Vec<u64> = map.iter().map(|(k, _)| *k).collect();
         assert_eq!(left_keys, (0..pivot).collect::<Vec<_>>());
@@ -2633,20 +2645,22 @@ mod tests {
     #[test]
     fn estimate_right_fraction_matches_dispatch_intent() {
         // Sanity check that the dispatcher's estimator routes the bench-tested
-        // pivot positions to the correct strategy. Documents the systematic
-        // bias from uniform-subtree-weighting.
+        // pivot positions to the correct surgical direction. Cutoff is 0.6 to
+        // absorb the +0.10 systematic bias from uniform-subtree-weighting.
         let pairs: Vec<(u64, u64)> = (0..1000_u64).map(|i| (i, i)).collect();
         let map: FlatBTree<u64, u64> = pairs.iter().copied().collect();
-        // p001 / p010: estimator says ≈ 0.99 / 0.92 (matches actual 0.99 / 0.90)
-        //              → above 0.65 cutoff → drain (correct: drain wins these)
-        assert!(map.tree.estimate_right_fraction(&10).unwrap() > 0.65);
-        assert!(map.tree.estimate_right_fraction(&100).unwrap() > 0.65);
-        // p050: estimator says ≈ 0.60 (actual 0.50, over-states by 0.10 due to
-        // tail-subtree over-weighting) → below 0.65 → surgical (correct).
-        assert!(map.tree.estimate_right_fraction(&500).unwrap() <= 0.65);
-        // p090 / p099: estimator says ≈ 0.29 / 0.01 → below 0.65 → surgical (correct).
-        assert!(map.tree.estimate_right_fraction(&900).unwrap() <= 0.65);
-        assert!(map.tree.estimate_right_fraction(&990).unwrap() <= 0.65);
+        // p001 / p010: estimator says ≈ 0.99 / 0.92 (actual 0.99 / 0.90)
+        //              → above 0.6 → surgical_left (deep-copy small left)
+        assert!(map.tree.estimate_right_fraction(&10).unwrap() > 0.6);
+        assert!(map.tree.estimate_right_fraction(&100).unwrap() > 0.6);
+        // p050: estimator says ≈ 0.60 (actual 0.50). At the cutoff boundary;
+        // either direction is fine since both copy ~50% with similar cost.
+        let r050 = map.tree.estimate_right_fraction(&500).unwrap();
+        assert!(r050 > 0.55 && r050 <= 0.65);
+        // p090 / p099: estimator says ≈ 0.29 / 0.01 (actual 0.10 / 0.01)
+        //              → below 0.6 → surgical_right (deep-copy small right)
+        assert!(map.tree.estimate_right_fraction(&900).unwrap() <= 0.6);
+        assert!(map.tree.estimate_right_fraction(&990).unwrap() <= 0.6);
     }
 
     #[test]
@@ -2657,13 +2671,306 @@ mod tests {
         let mut map: FlatBTree<u64, u64> = (0..10_000).map(|i| (i, i)).collect();
         let mut total = 10_000_u64;
         for cut in &[5_000_u64, 2_500, 1_250, 625, 312, 156, 78, 39, 19, 9, 4, 1] {
-            let right = map.split_off_surgical(cut);
+            let right = map.split_off_surgical_right(cut);
             assert_eq!(map.len() + right.len(), total as usize);
             assert_sorted_and_len(&map);
             assert_sorted_and_len(&right);
             total = *cut;
         }
         assert_eq!(map.len() as u64, total);
+    }
+
+    // ── Surgical copy-LEFT split_off tests ────────────────────────────────
+    //
+    // Mirror coverage for `split_off_surgical_left`. Each test asserts the
+    // same invariants as its copy-right counterpart, verifying both (left,
+    // right) contents and structural soundness via assert_sorted_and_len.
+
+    #[test]
+    fn surgical_left_split_off_basic() {
+        let mut map: FlatBTree<i32, i32> = (0..200).map(|i| (i, i * 10)).collect();
+        let right = map.split_off_surgical_left(&100);
+        assert_eq!(map.len(), 100);
+        assert_eq!(right.len(), 100);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+        for i in 0..100 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+            assert_eq!(right.get(&i), None);
+        }
+        for i in 100..200 {
+            assert_eq!(map.get(&i), None);
+            assert_eq!(right.get(&i), Some(&(i * 10)));
+        }
+    }
+
+    #[test]
+    fn surgical_left_split_off_at_missing_key() {
+        let mut map: FlatBTree<i32, i32> =
+            (0..50).map(|i| (i * 2, i)).collect(); // even keys only
+        let right = map.split_off_surgical_left(&25); // 25 is not present
+        assert_eq!(map.len(), 13);
+        assert_eq!(right.len(), 37);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+        assert_eq!(map.get(&24), Some(&12));
+        assert_eq!(right.get(&26), Some(&13));
+    }
+
+    #[test]
+    fn surgical_left_split_off_edges() {
+        // pivot before first key → entire tree to right.
+        let mut a: FlatBTree<i32, i32> = (10..50).map(|i| (i, i)).collect();
+        let r = a.split_off_surgical_left(&0);
+        assert!(a.is_empty());
+        assert_eq!(r.len(), 40);
+
+        let mut a2: FlatBTree<i32, i32> = (1..5).map(|i| (i, i)).collect();
+        let r2 = a2.split_off_surgical_left(&1);
+        assert!(a2.is_empty());
+        assert_eq!(r2.len(), 4);
+
+        // pivot after last key → right empty.
+        let mut b: FlatBTree<i32, i32> = (0..50).map(|i| (i, i)).collect();
+        let r = b.split_off_surgical_left(&100);
+        assert!(r.is_empty());
+        assert_eq!(b.len(), 50);
+
+        // pivot equals interior key.
+        let mut c: FlatBTree<i32, i32> = (0..10).map(|i| (i, i * 3)).collect();
+        let r = c.split_off_surgical_left(&5);
+        assert_eq!(c.len(), 5);
+        assert_eq!(r.len(), 5);
+
+        // pivot at a missing key just below an existing one.
+        let mut d: FlatBTree<i32, i32> = (0..10).map(|i| (i * 2, i)).collect();
+        let r = d.split_off_surgical_left(&5); // first key >= 5 is 6
+        assert_eq!(d.len(), 3); // 0,2,4
+        assert_eq!(r.len(), 7); // 6,8,...,18
+
+        // missing pivot just above, picks last key precisely.
+        let mut e: FlatBTree<i32, i32> = (0..10).map(|i| (i * 2, i)).collect();
+        let r = e.split_off_surgical_left(&6);
+        assert_eq!(e.len(), 3);
+        assert_eq!(r.len(), 7);
+    }
+
+    #[test]
+    fn surgical_left_split_off_single_leaf_root() {
+        // Tree fits in one leaf (height 0). Spine walk runs zero iterations.
+        let mut map: FlatBTree<u64, u64> = (0..10).map(|i| (i, i)).collect();
+        let right = map.split_off_surgical_left(&5);
+        assert_eq!(map.len(), 5);
+        assert_eq!(right.len(), 5);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+        for i in 0..5 {
+            assert_eq!(map.get(&i), Some(&i));
+        }
+        for i in 5..10 {
+            assert_eq!(right.get(&i), Some(&i));
+        }
+    }
+
+    #[test]
+    fn surgical_left_split_off_at_leaf_boundary() {
+        // Pivot = first key of a non-first leaf → slot_idx == 0, entire boundary
+        // leaf stays in self.arena (no in-place shift). Exercises the
+        // slot_idx == 0 branch.
+        let mut map: FlatBTree<u64, u64> = (0..200).map(|i| (i, i)).collect();
+        // LEAF_CAP for u64/u64 is 15, so leaves boundaries are at multiples of 15.
+        // Pivot at exactly key 15 should align with a leaf boundary.
+        let right = map.split_off_surgical_left(&15);
+        assert_eq!(map.len(), 15);
+        assert_eq!(right.len(), 185);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_mid_leaf() {
+        // Pivot mid-leaf (slot_idx > 0) — boundary leaf physically split,
+        // keys[slot_idx..] shifted in place to slots [0..].
+        let mut map: FlatBTree<u64, u64> = (0..200).map(|i| (i, i)).collect();
+        let right = map.split_off_surgical_left(&22); // 22 % 15 = 7, so mid-leaf
+        assert_eq!(map.len(), 22);
+        assert_eq!(right.len(), 178);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_left_collapses() {
+        // Pivot near the END forces left-side spine to be a chain of degenerates
+        // along the rightmost edge. Exercises Phase 4 collapse_along_edge(Rightmost).
+        let mut map: FlatBTree<u64, u64> = (0..100).map(|i| (i, i)).collect();
+        let right = map.split_off_surgical_left(&99);
+        assert_eq!(map.len(), 99);
+        assert_eq!(right.len(), 1);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_right_collapses() {
+        // Pivot near the START forces kept (right) spine to be degenerates
+        // along the leftmost edge. Exercises Phase 3 collapse_along_edge(Leftmost).
+        let mut map: FlatBTree<u64, u64> = (0..100).map(|i| (i, i)).collect();
+        let right = map.split_off_surgical_left(&1);
+        assert_eq!(map.len(), 1);
+        assert_eq!(right.len(), 99);
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_post_split_mutate() {
+        let mut map: FlatBTree<u64, u64> = (0..5_000).map(|i| (i, i)).collect();
+        let mut right = map.split_off_surgical_left(&2_500);
+        assert_eq!(map.len(), 2500);
+        assert_eq!(right.len(), 2500);
+        for i in 0..2500 {
+            map.insert(i, i + 1);
+            right.insert(i + 2500, i + 2501);
+        }
+        assert_eq!(map.len(), 2500);
+        assert_eq!(right.len(), 2500);
+        for i in 0..2500 {
+            assert_eq!(map.get(&i), Some(&(i + 1)));
+            assert_eq!(right.get(&(i + 2500)), Some(&(i + 2501)));
+        }
+        for i in (0..2500).step_by(7) {
+            assert_eq!(map.remove(&i), Some(i + 1));
+        }
+        assert_eq!(map.len(), 2500 - (2500_usize.div_ceil(7)));
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_drop_types() {
+        // String K/V exercises Drop on the deep-copied LEFT side.
+        let mut map: FlatBTree<String, String> = (0..200)
+            .map(|i| (format!("key_{i:03}"), format!("val_{i}")))
+            .collect();
+        let pivot = "key_100".to_string();
+        let right = map.split_off_surgical_left(&pivot);
+        assert_eq!(map.len(), 100);
+        assert_eq!(right.len(), 100);
+        for i in 0..100 {
+            assert_eq!(map.get(&format!("key_{i:03}")), Some(&format!("val_{i}")));
+        }
+        for i in 100..200 {
+            assert_eq!(right.get(&format!("key_{i:03}")), Some(&format!("val_{i}")));
+        }
+        assert_sorted_and_len(&map);
+        assert_sorted_and_len(&right);
+    }
+
+    #[test]
+    fn surgical_left_split_off_iterate_full_chain() {
+        let mut map: FlatBTree<u64, u64> = (0..50_000).map(|i| (i, i)).collect();
+        let pivot = 25_137_u64;
+        let right = map.split_off_surgical_left(&pivot);
+
+        let left_keys: Vec<u64> = map.iter().map(|(k, _)| *k).collect();
+        assert_eq!(left_keys, (0..pivot).collect::<Vec<_>>());
+        let right_keys: Vec<u64> = right.iter().map(|(k, _)| *k).collect();
+        assert_eq!(right_keys, (pivot..50_000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn surgical_left_split_off_repeated() {
+        // Repeatedly split off the LOW half. Each call exercises a smaller
+        // tree on the kept (right) side, while the deep-copy chain accumulates
+        // the discarded prefixes — must remain sorted-iterable each round.
+        let mut map: FlatBTree<u64, u64> = (0..10_000).map(|i| (i, i)).collect();
+        let cuts = [
+            500_u64, 1_000, 1_500, 2_500, 3_500, 5_000, 6_500, 8_000, 9_000, 9_500, 9_900, 9_999,
+        ];
+        for cut in &cuts {
+            let len_before = map.len();
+            let left = map.split_off_surgical_left(cut);
+            assert!(left.len() <= len_before);
+            assert_eq!(left.len() + map.len(), len_before);
+            assert_sorted_and_len(&map);
+            assert_sorted_and_len(&left);
+        }
+    }
+
+    #[test]
+    fn surgical_left_matches_drain_and_right() {
+        // Three-way cross-validation: drain, surgical_right, surgical_left
+        // must all produce identical (left_contents, right_contents) trees
+        // for the same input + pivot. Covers many sizes including:
+        // single-leaf (height 0), height 1 (15..225), height 2 (225..3375),
+        // height 3 (>3375), and irregular fills near boundaries.
+        for &n in &[0usize, 1, 7, 15, 16, 30, 100, 224, 225, 226, 500, 5_000, 50_000] {
+            // Pick a representative spread of pivots, including out-of-range.
+            let pivots: Vec<i64> = if n == 0 {
+                vec![0, 5]
+            } else {
+                vec![
+                    -1,                          // before everything
+                    0,                           // first key
+                    (n / 1000).max(1) as i64,    // very-near start
+                    (n / 100).max(1) as i64,     // p001
+                    (n / 10) as i64,             // p010
+                    (n / 2) as i64,              // p050
+                    (n - n / 10) as i64,         // p090
+                    (n - n / 100).max(0) as i64, // p099
+                    (n - 1).max(0) as i64,       // last key
+                    n as i64,                    // beyond everything
+                ]
+            };
+            for &pivot in &pivots {
+                let mut a: FlatBTree<i64, i64> = (0..n as i64).map(|i| (i, i * 3)).collect();
+                let mut b: FlatBTree<i64, i64> = (0..n as i64).map(|i| (i, i * 3)).collect();
+                let mut c: FlatBTree<i64, i64> = (0..n as i64).map(|i| (i, i * 3)).collect();
+
+                let a_right = a.split_off_drain(&pivot);
+                let b_right = b.split_off_surgical_right(&pivot);
+                let c_right = c.split_off_surgical_left(&pivot);
+
+                let a_left_keys: Vec<i64> = a.iter().map(|(k, _)| *k).collect();
+                let b_left_keys: Vec<i64> = b.iter().map(|(k, _)| *k).collect();
+                let c_left_keys: Vec<i64> = c.iter().map(|(k, _)| *k).collect();
+                let a_right_keys: Vec<i64> = a_right.iter().map(|(k, _)| *k).collect();
+                let b_right_keys: Vec<i64> = b_right.iter().map(|(k, _)| *k).collect();
+                let c_right_keys: Vec<i64> = c_right.iter().map(|(k, _)| *k).collect();
+
+                assert_eq!(
+                    a_left_keys, b_left_keys,
+                    "left mismatch drain vs surgical_right (n={n}, pivot={pivot})"
+                );
+                assert_eq!(
+                    a_left_keys, c_left_keys,
+                    "left mismatch drain vs surgical_left (n={n}, pivot={pivot})"
+                );
+                assert_eq!(
+                    a_right_keys, b_right_keys,
+                    "right mismatch drain vs surgical_right (n={n}, pivot={pivot})"
+                );
+                assert_eq!(
+                    a_right_keys, c_right_keys,
+                    "right mismatch drain vs surgical_left (n={n}, pivot={pivot})"
+                );
+
+                // Cross-check values too, not just keys.
+                let a_left_vals: Vec<i64> = a.iter().map(|(_, v)| *v).collect();
+                let c_left_vals: Vec<i64> = c.iter().map(|(_, v)| *v).collect();
+                assert_eq!(
+                    a_left_vals, c_left_vals,
+                    "left value mismatch drain vs surgical_left (n={n}, pivot={pivot})"
+                );
+                let a_right_vals: Vec<i64> = a_right.iter().map(|(_, v)| *v).collect();
+                let c_right_vals: Vec<i64> = c_right.iter().map(|(_, v)| *v).collect();
+                assert_eq!(
+                    a_right_vals, c_right_vals,
+                    "right value mismatch drain vs surgical_left (n={n}, pivot={pivot})"
+                );
+            }
+        }
     }
 
     #[test]

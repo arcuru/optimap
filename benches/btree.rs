@@ -1008,13 +1008,13 @@ fn bench_split_off(c: &mut Criterion) {
             );
 
             group.bench_with_input(
-                BenchmarkId::new(format!("FlatBTree-surgical-{label}"), n),
+                BenchmarkId::new(format!("FlatBTree-surgical_right-{label}"), n),
                 &keys,
                 |b, keys| {
                     b.iter_batched(
                         || build_flat::<0>(keys),
                         |mut map| {
-                            let right = map.split_off_surgical(&pivot);
+                            let right = map.split_off_surgical_right(&pivot);
                             black_box((map, right));
                         },
                         criterion::BatchSize::SmallInput,
@@ -1022,7 +1022,22 @@ fn bench_split_off(c: &mut Criterion) {
                 },
             );
 
-            // Dispatcher: should match drain at low pivots and surgical at high pivots.
+            group.bench_with_input(
+                BenchmarkId::new(format!("FlatBTree-surgical_left-{label}"), n),
+                &keys,
+                |b, keys| {
+                    b.iter_batched(
+                        || build_flat::<0>(keys),
+                        |mut map| {
+                            let right = map.split_off_surgical_left(&pivot);
+                            black_box((map, right));
+                        },
+                        criterion::BatchSize::SmallInput,
+                    );
+                },
+            );
+
+            // Dispatcher: picks among drain / surgical_left / surgical_right.
             group.bench_with_input(
                 BenchmarkId::new(format!("FlatBTree-dispatch-{label}"), n),
                 &keys,
