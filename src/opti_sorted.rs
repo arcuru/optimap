@@ -493,18 +493,149 @@ impl<K: Hash + Eq + Ord + Clone, V, S: BuildHasher + Default> crate::HashedMap<K
 impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
     for OptiSortedMap<K, V, S>
 {
+    fn new() -> Self {
+        OptiSortedMap {
+            inner: crate::SortedMap::new(),
+        }
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        OptiSortedMap {
+            inner: crate::SortedMap::with_capacity(capacity),
+        }
+    }
+
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.inner.insert(key, value)
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.get(key)
+    }
+
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.get_key_value(key)
+    }
+
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.get_mut(key)
+    }
+
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.remove(key)
+    }
+
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.remove_entry(key)
+    }
+
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.inner.contains_key(key)
+    }
+
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        self.inner.try_insert(key, value)
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear()
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.inner.reserve(additional)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.inner.shrink_to_fit()
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.inner.iter()
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.inner.iter_mut()
+    }
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        self.inner.retain(f)
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        self.inner.drain()
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        self.inner.into_keys()
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        self.inner.into_values()
+    }
+
     fn first_key_value(&self) -> Option<(&K, &V)> {
         self.inner.first_key_value()
     }
+
     fn last_key_value(&self) -> Option<(&K, &V)> {
         self.inner.last_key_value()
     }
+
     fn pop_first(&mut self) -> Option<(K, V)> {
         self.inner.pop_first()
     }
+
     fn pop_last(&mut self) -> Option<(K, V)> {
         self.inner.pop_last()
     }
+
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
@@ -512,6 +643,7 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
     {
         self.inner.iter_sorted()
     }
+
     fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: Borrow<Q> + 'a,

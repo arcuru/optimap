@@ -1569,7 +1569,130 @@ impl<K, V> std::iter::FusedIterator for RangeIterMut<'_, K, V> {}
 
 // ── SortedMap trait impl ────────────────────────────────────────────────
 
-impl<K: Ord + Clone, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
+impl<K: Ord + Clone, V, S: Default> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
+    fn new() -> Self {
+        FlatBTree::with_hasher(S::default())
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        FlatBTree::with_capacity_and_hasher(capacity, S::default())
+    }
+
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        FlatBTree::insert(self, key, value)
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::get(self, key)
+    }
+
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::get_key_value(self, key)
+    }
+
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::get_mut(self, key)
+    }
+
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::remove(self, key)
+    }
+
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::remove_entry(self, key)
+    }
+
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        FlatBTree::contains_key(self, key)
+    }
+
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        FlatBTree::try_insert(self, key, value)
+    }
+
+    fn len(&self) -> usize {
+        FlatBTree::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        FlatBTree::is_empty(self)
+    }
+
+    fn capacity(&self) -> usize {
+        FlatBTree::capacity(self)
+    }
+
+    fn clear(&mut self) {
+        FlatBTree::clear(self)
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        FlatBTree::reserve(self, additional)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        FlatBTree::shrink_to_fit(self)
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        FlatBTree::iter(self)
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        FlatBTree::iter_mut(self)
+    }
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        FlatBTree::retain(self, f)
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        FlatBTree::drain(self)
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        FlatBTree::into_keys(self)
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        FlatBTree::into_values(self)
+    }
+
     fn first_key_value(&self) -> Option<(&K, &V)> {
         FlatBTree::first_key_value(self)
     }
@@ -1584,14 +1707,6 @@ impl<K: Ord + Clone, V, S> crate::SortedMap<K, V> for FlatBTree<K, V, S> {
 
     fn pop_last(&mut self) -> Option<(K, V)> {
         FlatBTree::pop_last(self)
-    }
-
-    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
-    where
-        K: 'a,
-        V: 'a,
-    {
-        self.iter()
     }
 
     fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -2189,6 +2304,77 @@ mod tests {
             map.insert(i, i * 10);
         }
         check(&map);
+    }
+
+    #[test]
+    fn sorted_map_trait_crud() {
+        // Exercises the SortedMap CRUD surface (added in task 9 of the trait
+        // refactor). Generic over both FlatBTree and std::BTreeMap to confirm
+        // both impls behave identically for the new methods.
+        use crate::SortedMap;
+
+        fn exercise<M: SortedMap<i32, i32>>() {
+            let mut m: M = SortedMap::new();
+            assert!(m.is_empty());
+            assert_eq!(m.len(), 0);
+
+            // Insert + len + contains
+            assert_eq!(m.insert(2, 20), None);
+            assert_eq!(m.insert(1, 10), None);
+            assert_eq!(m.insert(3, 30), None);
+            assert_eq!(m.insert(2, 200), Some(20)); // overwrite
+            assert_eq!(m.len(), 3);
+            assert!(SortedMap::contains_key(&m, &1));
+            assert!(!SortedMap::contains_key(&m, &99));
+
+            // get / get_mut / get_key_value
+            assert_eq!(SortedMap::get(&m, &1), Some(&10));
+            assert_eq!(SortedMap::get_key_value(&m, &2), Some((&2, &200)));
+            *SortedMap::get_mut(&mut m, &1).unwrap() = 11;
+            assert_eq!(SortedMap::get(&m, &1), Some(&11));
+
+            // try_insert
+            assert!(SortedMap::try_insert(&mut m, 4, 40).is_ok());
+            let err = SortedMap::try_insert(&mut m, 4, 400).unwrap_err();
+            assert_eq!(err.value, 400);
+
+            // iter is sorted
+            let pairs: Vec<_> = SortedMap::iter(&m).map(|(&k, &v)| (k, v)).collect();
+            assert_eq!(pairs, vec![(1, 11), (2, 200), (3, 30), (4, 40)]);
+
+            // remove / remove_entry
+            assert_eq!(SortedMap::remove(&mut m, &3), Some(30));
+            assert_eq!(SortedMap::remove_entry(&mut m, &1), Some((1, 11)));
+            assert_eq!(m.len(), 2);
+
+            // retain (drop evens, keep odds — only 4 left, then 0)
+            // First refill so retain has something interesting to chew on.
+            for i in 5..15 {
+                m.insert(i, i * 10);
+            }
+            SortedMap::retain(&mut m, |k, _| k % 2 == 1);
+            let kept: Vec<_> = m.keys().copied().collect();
+            assert_eq!(kept, vec![5, 7, 9, 11, 13]);
+
+            // pop_first / pop_last
+            assert_eq!(m.pop_first(), Some((5, 50)));
+            assert_eq!(m.pop_last(), Some((13, 130)));
+
+            // clear
+            SortedMap::clear(&mut m);
+            assert!(m.is_empty());
+
+            // drain
+            for i in 0..5 {
+                m.insert(i, i);
+            }
+            let drained: Vec<_> = SortedMap::drain(&mut m).collect();
+            assert_eq!(drained.len(), 5);
+            assert!(m.is_empty());
+        }
+
+        exercise::<FlatBTree<i32, i32>>();
+        exercise::<std::collections::BTreeMap<i32, i32>>();
     }
 
     #[test]

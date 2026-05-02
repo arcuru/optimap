@@ -137,7 +137,7 @@ impl<T: Hash + Eq, M: HashedMap<T, ()>> GenericSet<T, M> {
 
 // ── Sorted operations (available when backing map is SortedMap) ─────────────
 
-impl<T: Hash + Eq, M: HashedMap<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
+impl<T: Hash + Eq + Ord, M: HashedMap<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
     /// Returns a reference to the first (minimum) element.
     pub fn first(&self) -> Option<&T> {
         self.map.first_key_value().map(|(k, _)| k)

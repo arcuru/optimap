@@ -209,11 +209,164 @@ pub trait HashedMap<K: Hash + Eq, V> {
         Self: Sized;
 }
 
-/// Trait for sorted map implementations that support ordered operations.
+/// Core ord-dispatched map interface. Maps keys to values via `Ord`.
 ///
 /// Unlike [`HashedMap`], this does not require `Hash` — it works with any
-/// key type that supports ordering.
-pub trait SortedMap<K, V> {
+/// key type that supports ordering. Implementors store keys in sorted order
+/// and use comparison to navigate (e.g. `FlatBTree`, `std::BTreeMap`).
+///
+/// No type implements both `HashedMap` and `SortedMap`: a hash-bucketed
+/// store can't navigate by `Ord` (and vice versa) without falling back to
+/// linear scans. A future `Map` facade trait will let generic code call
+/// into either flavor via the implementor's preferred path.
+pub trait SortedMap<K: Ord, V> {
+    // ── Construction ────────────────────────────────────────────────────
+
+    /// Create an empty map.
+    fn new() -> Self;
+
+    /// Create a map with at least the specified capacity.
+    fn with_capacity(capacity: usize) -> Self;
+
+    // ── Core CRUD ───────────────────────────────────────────────────────
+
+    /// Insert a key-value pair. Returns the previous value if the key existed.
+    fn insert(&mut self, key: K, value: V) -> Option<V>;
+
+    /// Look up a value by key.
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Returns the key-value pair corresponding to the key.
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Look up a value by key, returning a mutable reference.
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Remove a key, returning its value if present.
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Removes a key from the map, returning the key and value if it was present.
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized;
+
+    /// Whether the map contains the given key.
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.get(key).is_some()
+    }
+
+    /// Tries to insert a key-value pair into the map, failing if the key
+    /// already exists.
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), OccupiedError<K, V>> {
+        if self.contains_key(&key) {
+            Err(OccupiedError { key, value })
+        } else {
+            self.insert(key, value);
+            Ok(())
+        }
+    }
+
+    // ── Size / capacity ─────────────────────────────────────────────────
+
+    /// Number of elements in the map.
+    fn len(&self) -> usize;
+
+    /// Whether the map is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Number of elements the map can hold without reallocation.
+    fn capacity(&self) -> usize;
+
+    /// Remove all elements, keeping allocated memory.
+    fn clear(&mut self);
+
+    /// Reserves capacity for at least `additional` more elements.
+    fn reserve(&mut self, additional: usize);
+
+    /// Shrinks the capacity as much as possible.
+    fn shrink_to_fit(&mut self);
+
+    // ── Iteration ───────────────────────────────────────────────────────
+
+    /// Iterate over key-value pairs. For sorted maps this yields pairs in
+    /// ascending key order — same as [`Self::iter_sorted`].
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a;
+
+    /// Iterate over key-value pairs with mutable values, in ascending key order.
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a;
+
+    /// Iterate over keys in ascending order.
+    fn keys<'a>(&'a self) -> impl Iterator<Item = &'a K>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over values in ascending key order.
+    fn values<'a>(&'a self) -> impl Iterator<Item = &'a V>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter().map(|(_, v)| v)
+    }
+
+    /// Iterate over mutable values in ascending key order.
+    fn values_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut V>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.iter_mut().map(|(_, v)| v)
+    }
+
+    /// Retains only the elements specified by the predicate.
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool;
+
+    /// Clears the map, returning all key-value pairs as an iterator.
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)>;
+
+    /// Creates a consuming iterator over the keys of the map.
+    fn into_keys(self) -> impl Iterator<Item = K>
+    where
+        Self: Sized;
+
+    /// Creates a consuming iterator over the values of the map.
+    fn into_values(self) -> impl Iterator<Item = V>
+    where
+        Self: Sized;
+
+    // ── Sorted-only operations ──────────────────────────────────────────
+
     /// Returns the first (minimum) key-value pair.
     fn first_key_value(&self) -> Option<(&K, &V)>;
 
@@ -226,11 +379,16 @@ pub trait SortedMap<K, V> {
     /// Removes and returns the last (maximum) key-value pair.
     fn pop_last(&mut self) -> Option<(K, V)>;
 
-    /// Iterate over all key-value pairs in sorted order.
+    /// Iterate over all key-value pairs in sorted order. Same as [`Self::iter`]
+    /// for `SortedMap` impls — provided as an explicit name for callers that
+    /// want to make the ordering guarantee visible at the call site.
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
     where
         K: 'a,
-        V: 'a;
+        V: 'a,
+    {
+        self.iter()
+    }
 
     /// Iterate over key-value pairs within the given range, in sorted order.
     fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -258,12 +416,134 @@ pub trait SortedMap<K, V> {
 // ── SortedMap impl for std::BTreeMap ────────────────────────────────────────
 
 impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
+    fn new() -> Self {
+        std::collections::BTreeMap::new()
+    }
+
+    fn with_capacity(_capacity: usize) -> Self {
+        // BTreeMap doesn't support capacity hints — accepts and ignores.
+        std::collections::BTreeMap::new()
+    }
+
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        std::collections::BTreeMap::insert(self, key, value)
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::get(self, key)
+    }
+
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::get_key_value(self, key)
+    }
+
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::get_mut(self, key)
+    }
+
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::remove(self, key)
+    }
+
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::remove_entry(self, key)
+    }
+
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        std::collections::BTreeMap::contains_key(self, key)
+    }
+
+    fn len(&self) -> usize {
+        std::collections::BTreeMap::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        std::collections::BTreeMap::is_empty(self)
+    }
+
+    fn capacity(&self) -> usize {
+        // BTreeMap has no notion of capacity beyond `len`.
+        self.len()
+    }
+
+    fn clear(&mut self) {
+        std::collections::BTreeMap::clear(self)
+    }
+
+    fn reserve(&mut self, _additional: usize) {
+        // No-op: BTreeMap doesn't support pre-reservation.
+    }
+
+    fn shrink_to_fit(&mut self) {
+        // No-op: BTreeMap nodes are individually heap-allocated; nothing to shrink.
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        std::collections::BTreeMap::iter(self)
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        std::collections::BTreeMap::iter_mut(self)
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        std::collections::BTreeMap::retain(self, |k, v| f(k, v))
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        // BTreeMap has no native `drain`; emulate via take + into_iter.
+        std::mem::take(self).into_iter()
+    }
+
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        std::collections::BTreeMap::into_keys(self)
+    }
+
+    fn into_values(self) -> impl Iterator<Item = V> {
+        std::collections::BTreeMap::into_values(self)
+    }
+
     fn first_key_value(&self) -> Option<(&K, &V)> {
-        self.iter().next()
+        std::collections::BTreeMap::first_key_value(self)
     }
 
     fn last_key_value(&self) -> Option<(&K, &V)> {
-        self.iter().next_back()
+        std::collections::BTreeMap::last_key_value(self)
     }
 
     fn pop_first(&mut self) -> Option<(K, V)> {
@@ -272,14 +552,6 @@ impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
 
     fn pop_last(&mut self) -> Option<(K, V)> {
         std::collections::BTreeMap::pop_last(self)
-    }
-
-    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
-    where
-        K: 'a,
-        V: 'a,
-    {
-        self.iter()
     }
 
     fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -1080,7 +1352,7 @@ where
 
 impl<T, M> SortedSet<T> for crate::generic_set::GenericSet<T, M>
 where
-    T: Hash + Eq,
+    T: Hash + Eq + Ord,
     M: HashedMap<T, ()> + crate::SortedMap<T, ()>,
 {
     fn first(&self) -> Option<&T> {
