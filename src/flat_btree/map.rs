@@ -836,23 +836,56 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        // Cutoff is 0.6 (not 0.5) because `estimate_right_fraction` weights
-        // every subtree uniformly at `LEAF_CAP × (IC+1)^k`, but the rightmost
-        // top-level subtree is almost always partial (e.g. n=1000 with
-        // INTERNAL_CAP=20 packs into 4 subtrees of [315, 315, 315, 55] —
-        // the tail is 55 actual but estimated as 315). Whenever the partial
-        // tail lands on the right side of the split, `right` is inflated.
-        // Empirically the overshoot is consistently ~+0.10 at the symmetric
-        // pivot across n ∈ [1K..1M], so 0.6 absorbs it and routes the
-        // actual r ≈ 0.5 boundary correctly.
-        //
-        // Mis-routing near the boundary (estimator says 0.55, actual 0.45)
-        // costs ≤ 10% extra work since both directions copy similar amounts
-        // when the tree is near-symmetric. The big wins (2-7×) come at
-        // asymmetric pivots where the cutoff direction is unambiguous.
-        const RIGHT_FRAC_LEFT_CUTOFF: f64 = 0.6;
+        self.split_off_with_cutoff(at, Self::DEFAULT_RIGHT_FRAC_LEFT_CUTOFF)
+    }
+
+    /// Default dispatcher cutoff for `split_off`. See [`split_off_with_cutoff`]
+    /// for the semantics and tuning rationale.
+    ///
+    /// [`split_off_with_cutoff`]: Self::split_off_with_cutoff
+    pub const DEFAULT_RIGHT_FRAC_LEFT_CUTOFF: f64 = 0.70;
+
+    /// Variant of [`split_off`] with a tunable estimator cutoff. Exposed
+    /// `#[doc(hidden)]` for benchmarking the routing policy. The default
+    /// cutoff used by [`split_off`] is [`DEFAULT_RIGHT_FRAC_LEFT_CUTOFF`].
+    ///
+    /// Two compounding biases shape the right cutoff:
+    ///
+    /// 1. **Estimator bias**: `estimate_right_fraction` weights every
+    ///    subtree uniformly at `LEAF_CAP × (IC+1)^k`, but the rightmost
+    ///    top-level subtree is usually partial. This adds ~+0.10 to the
+    ///    estimated `r` at the symmetric pivot.
+    ///
+    /// 2. **Cost asymmetry between surgical_left and surgical_right**:
+    ///    for the same amount of copied data, `surgical_left` is ~2–3×
+    ///    slower than `surgical_right` on random-build 1M trees. Causes:
+    ///    `surgical_left` does a per-spine-level array compaction shift
+    ///    that `surgical_right` skips, an extra `mem::swap` of the two
+    ///    RawBTrees at the end, and a "temp chain prepend" pass to keep
+    ///    leaf chain order correct. The empirical break-even sits at
+    ///    `actual r ≈ 0.65` (left side ≤ ~35%): below that, copy-right
+    ///    wins despite copying more entries; above, copy-left wins.
+    ///
+    /// Combining: the biased-r boundary corresponding to actual r=0.65
+    /// is ~0.75. Cutoff 0.70 leaves some margin for noise — at p030
+    /// (actual r=0.70, biased ~0.80) we still pick LEFT correctly, and
+    /// at p045 (actual r=0.55, biased ~0.65) we pick RIGHT correctly.
+    /// At cutoff 0.60 (the prior default), p045 mis-routes to LEFT and
+    /// runs 2.2× slower (12.3ms → 5.7ms at 1M).
+    ///
+    /// - `right_frac` > cutoff → `surgical_left`  (deep-copy the left side)
+    /// - `right_frac` ≤ cutoff → `surgical_right` (deep-copy the right side)
+    ///
+    /// [`split_off`]: Self::split_off
+    /// [`DEFAULT_RIGHT_FRAC_LEFT_CUTOFF`]: Self::DEFAULT_RIGHT_FRAC_LEFT_CUTOFF
+    #[doc(hidden)]
+    pub fn split_off_with_cutoff<Q>(&mut self, at: &Q, cutoff: f64) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         match self.tree.estimate_right_fraction(at) {
-            Some(rf) if rf > RIGHT_FRAC_LEFT_CUTOFF => self.split_off_surgical_left(at),
+            Some(rf) if rf > cutoff => self.split_off_surgical_left(at),
             _ => self.split_off_surgical_right(at),
         }
     }
@@ -2781,22 +2814,27 @@ mod tests {
     #[test]
     fn estimate_right_fraction_matches_dispatch_intent() {
         // Sanity check that the dispatcher's estimator routes the bench-tested
-        // pivot positions to the correct surgical direction. Cutoff is 0.6 to
-        // absorb the +0.10 systematic bias from uniform-subtree-weighting.
+        // pivot positions to the correct surgical direction. The default
+        // cutoff is 0.70 — high enough to (1) absorb the ~+0.10 systematic
+        // estimator bias from uniform-subtree-weighting, AND (2) avoid
+        // routing to surgical_left when surgical_right is faster despite
+        // copying more (the variants have a ~2-3× constant-factor asymmetry).
+        let cutoff = FlatBTree::<u64, u64>::DEFAULT_RIGHT_FRAC_LEFT_CUTOFF;
         let pairs: Vec<(u64, u64)> = (0..1000_u64).map(|i| (i, i)).collect();
         let map: FlatBTree<u64, u64> = pairs.iter().copied().collect();
         // p001 / p010: estimator says ≈ 0.99 / 0.92 (actual 0.99 / 0.90)
-        //              → above 0.6 → surgical_left (deep-copy small left)
-        assert!(map.tree.estimate_right_fraction(&10).unwrap() > 0.6);
-        assert!(map.tree.estimate_right_fraction(&100).unwrap() > 0.6);
-        // p050: estimator says ≈ 0.60 (actual 0.50). At the cutoff boundary;
-        // either direction is fine since both copy ~50% with similar cost.
+        //              → above 0.70 → surgical_left (deep-copy small left)
+        assert!(map.tree.estimate_right_fraction(&10).unwrap() > cutoff);
+        assert!(map.tree.estimate_right_fraction(&100).unwrap() > cutoff);
+        // p050: estimator says ≈ 0.60 (actual 0.50). Below cutoff →
+        // surgical_right (small constant-factor advantage at symmetric pivot).
         let r050 = map.tree.estimate_right_fraction(&500).unwrap();
         assert!(r050 > 0.55 && r050 <= 0.65);
+        assert!(r050 <= cutoff, "p050 estimator must route to surgical_right");
         // p090 / p099: estimator says ≈ 0.29 / 0.01 (actual 0.10 / 0.01)
-        //              → below 0.6 → surgical_right (deep-copy small right)
-        assert!(map.tree.estimate_right_fraction(&900).unwrap() <= 0.6);
-        assert!(map.tree.estimate_right_fraction(&990).unwrap() <= 0.6);
+        //              → below 0.70 → surgical_right (deep-copy small right)
+        assert!(map.tree.estimate_right_fraction(&900).unwrap() <= cutoff);
+        assert!(map.tree.estimate_right_fraction(&990).unwrap() <= cutoff);
     }
 
     #[test]
