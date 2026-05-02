@@ -3,7 +3,7 @@
 //! Compares FlatBTree against std::collections::BTreeMap on sorted map
 //! operations: insert, lookup, remove, iteration, range queries, and
 //! mixed workloads. Uses inherent methods (O(log n)) rather than the
-//! Map trait (which has O(n) fallback for get/remove).
+//! HashedMap trait (which has O(n) fallback for get/remove).
 
 mod bench_helpers;
 

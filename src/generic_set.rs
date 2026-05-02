@@ -1,4 +1,4 @@
-//! Generic set wrapper over any `Map<T, ()>` implementation.
+//! Generic set wrapper over any `HashedMap<T, ()>` implementation.
 //!
 //! Provides `GenericSet<T, M>` where `M` is any OptiMap map type (or hashbrown).
 //! The set operations delegate to the underlying map with `()` values.
@@ -7,11 +7,11 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::hash::Hash;
 
-use crate::Map;
+use crate::HashedMap;
 
-/// A hash set backed by any [`Map`] implementation.
+/// A hash set backed by any [`HashedMap`] implementation.
 ///
-/// `GenericSet<T, M>` wraps `M` where `M: Map<T, ()>`. The map's key is the
+/// `GenericSet<T, M>` wraps `M` where `M: HashedMap<T, ()>`. The map's key is the
 /// set element; the value is zero-sized `()`.
 ///
 /// # Type aliases
@@ -22,12 +22,12 @@ use crate::Map;
 /// - `IpoSet<T>` — backed by `InPlaceOverflow`
 /// - `GapsSet<T>` — backed by `Gaps`
 /// - `Ipo64Set<T>` — backed by `IPO64`
-pub struct GenericSet<T: Hash + Eq, M: Map<T, ()> = crate::UnorderedFlatMap<T, ()>> {
+pub struct GenericSet<T: Hash + Eq, M: HashedMap<T, ()> = crate::UnorderedFlatMap<T, ()>> {
     map: M,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> GenericSet<T, M> {
     /// Create an empty set.
     pub fn new() -> Self {
         GenericSet {
@@ -137,7 +137,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> GenericSet<T, M> {
 
 // ── Sorted operations (available when backing map is SortedMap) ─────────────
 
-impl<T: Hash + Eq, M: Map<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
     /// Returns a reference to the first (minimum) element.
     pub fn first(&self) -> Option<&T> {
         self.map.first_key_value().map(|(k, _)| k)
@@ -194,9 +194,9 @@ impl<T: Hash + Eq, M: Map<T, ()> + crate::SortedMap<T, ()>> GenericSet<T, M> {
 
 // ── Set algebra operations ──────────────────────────────────────────────────
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> GenericSet<T, M> {
     /// Returns `true` if `self` has no elements in common with `other`.
-    pub fn is_disjoint<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
+    pub fn is_disjoint<M2: HashedMap<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         if self.len() <= other.len() {
             self.iter().all(|v| !other.contains(v))
         } else {
@@ -205,7 +205,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     }
 
     /// Returns `true` if every element in `self` is also in `other`.
-    pub fn is_subset<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
+    pub fn is_subset<M2: HashedMap<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         if self.len() > other.len() {
             return false;
         }
@@ -213,7 +213,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     }
 
     /// Returns `true` if every element in `other` is also in `self`.
-    pub fn is_superset<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
+    pub fn is_superset<M2: HashedMap<T, ()>>(&self, other: &GenericSet<T, M2>) -> bool {
         other.is_subset(self)
     }
 
@@ -232,7 +232,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     /// Returns the intersection of `self` and `other` as a new set.
     ///
     /// Iterates whichever set is smaller and checks against the larger.
-    pub fn intersection<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
+    pub fn intersection<M2: HashedMap<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
         let mut result = Self::new();
         if self.len() <= other.len() {
             for item in self.iter() {
@@ -251,7 +251,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
     }
 
     /// Returns elements in `self` but not in `other`.
-    pub fn difference<M2: Map<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
+    pub fn difference<M2: HashedMap<T, ()>>(&self, other: &GenericSet<T, M2>) -> Self {
         let mut result = Self::new();
         for item in self.iter() {
             if !other.contains(item) {
@@ -280,13 +280,13 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> GenericSet<T, M> {
 
 // ── Trait implementations ───────────────────────────────────────────────────
 
-impl<T: Hash + Eq, M: Map<T, ()>> Default for GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> Default for GenericSet<T, M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> FromIterator<T> for GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> FromIterator<T> for GenericSet<T, M> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
@@ -298,7 +298,7 @@ impl<T: Hash + Eq, M: Map<T, ()>> FromIterator<T> for GenericSet<T, M> {
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> Extend<T> for GenericSet<T, M> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
             self.insert(item);
@@ -306,13 +306,13 @@ impl<T: Hash + Eq, M: Map<T, ()>> Extend<T> for GenericSet<T, M> {
     }
 }
 
-impl<T: Hash + Eq + fmt::Debug, M: Map<T, ()>> fmt::Debug for GenericSet<T, M> {
+impl<T: Hash + Eq + fmt::Debug, M: HashedMap<T, ()>> fmt::Debug for GenericSet<T, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }
 }
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()> + Clone> Clone for GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()> + Clone> Clone for GenericSet<T, M> {
     fn clone(&self) -> Self {
         GenericSet {
             map: self.map.clone(),
@@ -321,7 +321,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()> + Clone> Clone for GenericSet<T, M> {
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> PartialEq for GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> PartialEq for GenericSet<T, M> {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -330,20 +330,24 @@ impl<T: Hash + Eq, M: Map<T, ()>> PartialEq for GenericSet<T, M> {
     }
 }
 
-impl<T: Hash + Eq, M: Map<T, ()>> Eq for GenericSet<T, M> {}
+impl<T: Hash + Eq, M: HashedMap<T, ()>> Eq for GenericSet<T, M> {}
 
-impl<T: Hash + Eq, M: Map<T, ()>> IntoIterator for GenericSet<T, M> {
+impl<T: Hash + Eq, M: HashedMap<T, ()>> IntoIterator for GenericSet<T, M> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        self.map.drain().map(|(k, _)| k).collect::<Vec<_>>().into_iter()
+        self.map
+            .drain()
+            .map(|(k, _)| k)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 
 // ── Bitwise operators (std::HashSet parity) ─────────────────────────────────
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitOr<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitOr<&GenericSet<T, M>> for &GenericSet<T, M> {
     type Output = GenericSet<T, M>;
     /// Union: `a | b`.
     fn bitor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -351,7 +355,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitOr<&GenericSet<T, M>> for
     }
 }
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitAnd<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitAnd<&GenericSet<T, M>> for &GenericSet<T, M> {
     type Output = GenericSet<T, M>;
     /// Intersection: `a & b`.
     fn bitand(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -359,7 +363,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitAnd<&GenericSet<T, M>> fo
     }
 }
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitXor<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitXor<&GenericSet<T, M>> for &GenericSet<T, M> {
     type Output = GenericSet<T, M>;
     /// Symmetric difference: `a ^ b`.
     fn bitxor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -367,7 +371,7 @@ impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::BitXor<&GenericSet<T, M>> fo
     }
 }
 
-impl<T: Hash + Eq + Clone, M: Map<T, ()>> std::ops::Sub<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::Sub<&GenericSet<T, M>> for &GenericSet<T, M> {
     type Output = GenericSet<T, M>;
     /// Difference: `a - b`.
     fn sub(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -623,7 +627,7 @@ mod tests {
         assert!(!a.is_disjoint(&c));
     }
 
-    // ── Map trait iter test ─────────────────────────────────────────────
+    // ── HashedMap trait iter test ───────────────────────────────────────
 
     #[test]
     fn intersection_uses_smaller() {
@@ -652,8 +656,8 @@ mod tests {
 
     #[test]
     fn map_trait_iter_generic() {
-        use crate::Map;
-        fn sum_values<M: Map<i32, i32>>(m: &M) -> i32 {
+        use crate::HashedMap;
+        fn sum_values<M: HashedMap<i32, i32>>(m: &M) -> i32 {
             m.iter().map(|(_, v)| v).sum()
         }
 

@@ -1,7 +1,7 @@
 //! # OptiMap — Multiple SIMD-accelerated hash map designs
 //!
 //! OptiMap provides several hash map implementations with different
-//! performance trade-offs, all sharing a common [`Map`] trait interface.
+//! performance trade-offs, all sharing a common [`HashedMap`] trait interface.
 //!
 //! ## Designs
 //!
@@ -23,12 +23,12 @@
 //! assert_eq!(map.get("hello"), Some(&42));
 //! ```
 //!
-//! ## Generic code via the Map trait
+//! ## Generic code via the HashedMap trait
 //!
 //! ```
-//! use optimap::{Map, InPlaceOverflow};
+//! use optimap::{HashedMap, InPlaceOverflow};
 //!
-//! fn count_words<M: Map<String, usize>>(map: &mut M, words: &[&str]) {
+//! fn count_words<M: HashedMap<String, usize>>(map: &mut M, words: &[&str]) {
 //!     for &word in words {
 //!         let key = word.to_string();
 //!         let count = map.get(&key).copied().unwrap_or(0);
@@ -184,11 +184,7 @@ pub(crate) fn hash_tag(h: u64) -> u8 {
     }
     #[cfg(not(any(
         feature = "reduced-hash-128",
-        all(
-            feature = "reduced-hash-asm",
-            target_arch = "x86_64",
-            not(miri),
-        ),
+        all(feature = "reduced-hash-asm", target_arch = "x86_64", not(miri),),
     )))]
     {
         // Conditional fix-up: 0→1, everything else unchanged.
@@ -236,22 +232,22 @@ pub use soa::SoaMap;
 
 // ── Smart wrapper ──────────────────────────────────────────────────────────
 
-pub use optimap::OptiMap;
-pub use optimap::Hint;
-pub use optimap::MapType;
-pub use optimap::Entry;
-pub use optimap::OccupiedEntry;
-pub use optimap::VacantEntry;
 pub use opti_set::OptiSet;
 pub use opti_sorted::OptiSortedMap;
 pub use opti_sorted::OptiSortedSet;
+pub use optimap::Entry;
+pub use optimap::Hint;
+pub use optimap::MapType;
+pub use optimap::OccupiedEntry;
+pub use optimap::OptiMap;
+pub use optimap::VacantEntry;
 
 // ── Set types ───────────────────────────────────────────────────────────────
 
 /// The original UFM set (tightly coupled to UnorderedFlatMap internals).
 pub use set::UnorderedFlatSet;
 
-/// Generic set wrapper — works with any Map implementation.
+/// Generic set wrapper — works with any HashedMap implementation.
 pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, SplitsiesSet, UfmSet};
 
 // ── Design matrix types (experimental) ─────────────────────────────────────
@@ -261,30 +257,24 @@ pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, Split
 pub mod matrix_types {
     use crate::generic_map::{DefaultHashBuilder, GenericMap};
     use crate::raw::group_layout::{
-        Byte0_128_1bit, Byte0_128_1bit32, Byte0_128_1bit64,
-        Byte0_128_8bit, Byte0_128_8bit32, Byte0_128_8bit64,
-        Byte0_128_Emb, Byte0_128_Emb32, Byte0_128_Emb64,
-        Byte0_128_EmbP2, Byte0_128_EmbP232, Byte0_128_EmbP264,
-        Byte0_1bit,
-        Byte1_8bit, Byte1_8bit32, Byte1_8bit64,
-        Byte1_Emb, Byte1_Emb32, Byte1_Emb64, Byte1_EmbP2, Byte1_EmbP232, Byte1_EmbP264,
-        Byte7_128_1bitAnd, Byte7_128_1bitAnd32, Byte7_128_1bitAnd64,
-        Byte7_128_8bitAnd, Byte7_128_8bitAnd32, Byte7_128_8bitAnd64,
-        Byte7_128Ch_EmbAnd, Byte7_128Ch_EmbAnd32, Byte7_128Ch_EmbAnd64,
-        Byte7_128Ch_EmbP2And, Byte7_128Ch_EmbP2And32, Byte7_128Ch_EmbP2And64,
-        Byte7_255_1bitAnd, Byte7_255_1bitAnd32, Byte7_255_1bitAnd64,
-        Byte7_255_8bitAnd, Byte7_255_8bitAnd32, Byte7_255_8bitAnd64,
-        Byte7_255Ch_EmbAnd, Byte7_255Ch_EmbAnd32, Byte7_255Ch_EmbAnd64,
-        Byte7_255Ch_EmbP2And, Byte7_255Ch_EmbP2And32, Byte7_255Ch_EmbP2And64,
-        Gaps32Layout, Gaps64Layout,
-        Splitsies32Layout, Splitsies32_1bit, Splitsies64Layout, Splitsies64_1bit,
-        Ufm32Layout, Ufm64Layout,
+        Byte0_1bit, Byte0_128_1bit, Byte0_128_1bit32, Byte0_128_1bit64, Byte0_128_8bit,
+        Byte0_128_8bit32, Byte0_128_8bit64, Byte0_128_Emb, Byte0_128_Emb32, Byte0_128_Emb64,
+        Byte0_128_EmbP2, Byte0_128_EmbP232, Byte0_128_EmbP264, Byte1_8bit, Byte1_8bit32,
+        Byte1_8bit64, Byte1_Emb, Byte1_Emb32, Byte1_Emb64, Byte1_EmbP2, Byte1_EmbP232,
+        Byte1_EmbP264, Byte7_128_1bitAnd, Byte7_128_1bitAnd32, Byte7_128_1bitAnd64,
+        Byte7_128_8bitAnd, Byte7_128_8bitAnd32, Byte7_128_8bitAnd64, Byte7_128Ch_EmbAnd,
+        Byte7_128Ch_EmbAnd32, Byte7_128Ch_EmbAnd64, Byte7_128Ch_EmbP2And, Byte7_128Ch_EmbP2And32,
+        Byte7_128Ch_EmbP2And64, Byte7_255_1bitAnd, Byte7_255_1bitAnd32, Byte7_255_1bitAnd64,
+        Byte7_255_8bitAnd, Byte7_255_8bitAnd32, Byte7_255_8bitAnd64, Byte7_255Ch_EmbAnd,
+        Byte7_255Ch_EmbAnd32, Byte7_255Ch_EmbAnd64, Byte7_255Ch_EmbP2And, Byte7_255Ch_EmbP2And32,
+        Byte7_255Ch_EmbP2And64, Gaps32Layout, Gaps64Layout, Splitsies32_1bit, Splitsies32Layout,
+        Splitsies64_1bit, Splitsies64Layout, Ufm32Layout, Ufm64Layout,
     };
     use crate::raw::overflow_table::RawTable;
     use crate::raw::tag_strategy::{Byte0_254, Byte2_254, Byte7_128, Byte7_254};
 
     /// Define a map type alias over `overflow_table::RawTable<K, V, $layout>` and
-    /// impl the `Map` trait for it in one go. Keeps matrix entries to one line.
+    /// impl the `HashedMap` trait for it in one go. Keeps matrix entries to one line.
     macro_rules! matrix_map {
         ($map:ident, $layout:ty) => {
             pub type $map<K, V, S = DefaultHashBuilder> =
@@ -312,10 +302,10 @@ pub mod matrix_types {
     }
 
     // Separate-overflow at 16-slot (shift indexed)
-    matrix_map!(Byte1_8bitMap,        Byte1_8bit);
-    matrix_map!(Byte0_128_8bitMap,    Byte0_128_8bit);
-    matrix_map!(Byte0_1bitMap,        Byte0_1bit);
-    matrix_map!(Byte0_128_1bitMap,    Byte0_128_1bit);
+    matrix_map!(Byte1_8bitMap, Byte1_8bit);
+    matrix_map!(Byte0_128_8bitMap, Byte0_128_8bit);
+    matrix_map!(Byte0_1bitMap, Byte0_1bit);
+    matrix_map!(Byte0_128_1bitMap, Byte0_128_1bit);
 
     // Separate-overflow at 16-slot (AND indexed)
     matrix_map!(Byte7_128_1bitAndMap, Byte7_128_1bitAnd);
@@ -324,64 +314,64 @@ pub mod matrix_types {
     matrix_map!(Byte7_255_8bitAndMap, Byte7_255_8bitAnd);
 
     // Separate-overflow at 32-slot (AVX2)
-    matrix_map!(Splitsies32Map,           Splitsies32Layout);
-    matrix_map!(Splitsies32_1bitMap,      Splitsies32_1bit);
-    matrix_map!(Byte1_8bit32Map,          Byte1_8bit32);
-    matrix_map!(Byte0_128_8bit32Map,      Byte0_128_8bit32);
-    matrix_map!(Byte0_128_1bit32Map,      Byte0_128_1bit32);
-    matrix_map!(Byte7_128_1bitAnd32Map,   Byte7_128_1bitAnd32);
-    matrix_map!(Byte7_255_1bitAnd32Map,   Byte7_255_1bitAnd32);
-    matrix_map!(Byte7_128_8bitAnd32Map,   Byte7_128_8bitAnd32);
-    matrix_map!(Byte7_255_8bitAnd32Map,   Byte7_255_8bitAnd32);
+    matrix_map!(Splitsies32Map, Splitsies32Layout);
+    matrix_map!(Splitsies32_1bitMap, Splitsies32_1bit);
+    matrix_map!(Byte1_8bit32Map, Byte1_8bit32);
+    matrix_map!(Byte0_128_8bit32Map, Byte0_128_8bit32);
+    matrix_map!(Byte0_128_1bit32Map, Byte0_128_1bit32);
+    matrix_map!(Byte7_128_1bitAnd32Map, Byte7_128_1bitAnd32);
+    matrix_map!(Byte7_255_1bitAnd32Map, Byte7_255_1bitAnd32);
+    matrix_map!(Byte7_128_8bitAnd32Map, Byte7_128_8bitAnd32);
+    matrix_map!(Byte7_255_8bitAnd32Map, Byte7_255_8bitAnd32);
 
     // Separate-overflow at 64-slot (AVX-512 / tiered fallback)
-    matrix_map!(Splitsies64Map,           Splitsies64Layout);
-    matrix_map!(Splitsies64_1bitMap,      Splitsies64_1bit);
-    matrix_map!(Byte1_8bit64Map,          Byte1_8bit64);
-    matrix_map!(Byte0_128_8bit64Map,      Byte0_128_8bit64);
-    matrix_map!(Byte0_128_1bit64Map,      Byte0_128_1bit64);
-    matrix_map!(Byte7_128_1bitAnd64Map,   Byte7_128_1bitAnd64);
-    matrix_map!(Byte7_255_1bitAnd64Map,   Byte7_255_1bitAnd64);
-    matrix_map!(Byte7_128_8bitAnd64Map,   Byte7_128_8bitAnd64);
-    matrix_map!(Byte7_255_8bitAnd64Map,   Byte7_255_8bitAnd64);
+    matrix_map!(Splitsies64Map, Splitsies64Layout);
+    matrix_map!(Splitsies64_1bitMap, Splitsies64_1bit);
+    matrix_map!(Byte1_8bit64Map, Byte1_8bit64);
+    matrix_map!(Byte0_128_8bit64Map, Byte0_128_8bit64);
+    matrix_map!(Byte0_128_1bit64Map, Byte0_128_1bit64);
+    matrix_map!(Byte7_128_1bitAnd64Map, Byte7_128_1bitAnd64);
+    matrix_map!(Byte7_255_1bitAnd64Map, Byte7_255_1bitAnd64);
+    matrix_map!(Byte7_128_8bitAnd64Map, Byte7_128_8bitAnd64);
+    matrix_map!(Byte7_255_8bitAnd64Map, Byte7_255_8bitAnd64);
 
     // Embedded-overflow (UFM/Gaps-style) — byte-0 tag, all three widths
-    matrix_map!(Ufm32Map,  Ufm32Layout);
+    matrix_map!(Ufm32Map, Ufm32Layout);
     matrix_map!(Gaps32Map, Gaps32Layout);
-    matrix_map!(Ufm64Map,  Ufm64Layout);
+    matrix_map!(Ufm64Map, Ufm64Layout);
     matrix_map!(Gaps64Map, Gaps64Layout);
 
     // Embedded-overflow — Byte1 (decorrelated 255 tag, shift indexing)
-    matrix_map!(Byte1_EmbMap,      Byte1_Emb);
-    matrix_map!(Byte1_EmbP2Map,    Byte1_EmbP2);
-    matrix_map!(Byte1_Emb32Map,    Byte1_Emb32);
-    matrix_map!(Byte1_EmbP232Map,  Byte1_EmbP232);
-    matrix_map!(Byte1_Emb64Map,    Byte1_Emb64);
-    matrix_map!(Byte1_EmbP264Map,  Byte1_EmbP264);
+    matrix_map!(Byte1_EmbMap, Byte1_Emb);
+    matrix_map!(Byte1_EmbP2Map, Byte1_EmbP2);
+    matrix_map!(Byte1_Emb32Map, Byte1_Emb32);
+    matrix_map!(Byte1_EmbP232Map, Byte1_EmbP232);
+    matrix_map!(Byte1_Emb64Map, Byte1_Emb64);
+    matrix_map!(Byte1_EmbP264Map, Byte1_EmbP264);
 
     // Embedded-overflow — Byte0_128 (128-value low tag, faster hash_tag, shift)
-    matrix_map!(Byte0_128_EmbMap,      Byte0_128_Emb);
-    matrix_map!(Byte0_128_EmbP2Map,    Byte0_128_EmbP2);
-    matrix_map!(Byte0_128_Emb32Map,    Byte0_128_Emb32);
-    matrix_map!(Byte0_128_EmbP232Map,  Byte0_128_EmbP232);
-    matrix_map!(Byte0_128_Emb64Map,    Byte0_128_Emb64);
-    matrix_map!(Byte0_128_EmbP264Map,  Byte0_128_EmbP264);
+    matrix_map!(Byte0_128_EmbMap, Byte0_128_Emb);
+    matrix_map!(Byte0_128_EmbP2Map, Byte0_128_EmbP2);
+    matrix_map!(Byte0_128_Emb32Map, Byte0_128_Emb32);
+    matrix_map!(Byte0_128_EmbP232Map, Byte0_128_EmbP232);
+    matrix_map!(Byte0_128_Emb64Map, Byte0_128_Emb64);
+    matrix_map!(Byte0_128_EmbP264Map, Byte0_128_EmbP264);
 
     // Embedded-overflow — Byte7_128Ch + AND indexing (first AND-indexed embedded)
-    matrix_map!(Byte7_128Ch_EmbAndMap,      Byte7_128Ch_EmbAnd);
-    matrix_map!(Byte7_128Ch_EmbP2AndMap,    Byte7_128Ch_EmbP2And);
-    matrix_map!(Byte7_128Ch_EmbAnd32Map,    Byte7_128Ch_EmbAnd32);
-    matrix_map!(Byte7_128Ch_EmbP2And32Map,  Byte7_128Ch_EmbP2And32);
-    matrix_map!(Byte7_128Ch_EmbAnd64Map,    Byte7_128Ch_EmbAnd64);
-    matrix_map!(Byte7_128Ch_EmbP2And64Map,  Byte7_128Ch_EmbP2And64);
+    matrix_map!(Byte7_128Ch_EmbAndMap, Byte7_128Ch_EmbAnd);
+    matrix_map!(Byte7_128Ch_EmbP2AndMap, Byte7_128Ch_EmbP2And);
+    matrix_map!(Byte7_128Ch_EmbAnd32Map, Byte7_128Ch_EmbAnd32);
+    matrix_map!(Byte7_128Ch_EmbP2And32Map, Byte7_128Ch_EmbP2And32);
+    matrix_map!(Byte7_128Ch_EmbAnd64Map, Byte7_128Ch_EmbAnd64);
+    matrix_map!(Byte7_128Ch_EmbP2And64Map, Byte7_128Ch_EmbP2And64);
 
     // Embedded-overflow — Byte7_255Ch + AND indexing
-    matrix_map!(Byte7_255Ch_EmbAndMap,      Byte7_255Ch_EmbAnd);
-    matrix_map!(Byte7_255Ch_EmbP2AndMap,    Byte7_255Ch_EmbP2And);
-    matrix_map!(Byte7_255Ch_EmbAnd32Map,    Byte7_255Ch_EmbAnd32);
-    matrix_map!(Byte7_255Ch_EmbP2And32Map,  Byte7_255Ch_EmbP2And32);
-    matrix_map!(Byte7_255Ch_EmbAnd64Map,    Byte7_255Ch_EmbAnd64);
-    matrix_map!(Byte7_255Ch_EmbP2And64Map,  Byte7_255Ch_EmbP2And64);
+    matrix_map!(Byte7_255Ch_EmbAndMap, Byte7_255Ch_EmbAnd);
+    matrix_map!(Byte7_255Ch_EmbP2AndMap, Byte7_255Ch_EmbP2And);
+    matrix_map!(Byte7_255Ch_EmbAnd32Map, Byte7_255Ch_EmbAnd32);
+    matrix_map!(Byte7_255Ch_EmbP2And32Map, Byte7_255Ch_EmbP2And32);
+    matrix_map!(Byte7_255Ch_EmbAnd64Map, Byte7_255Ch_EmbAnd64);
+    matrix_map!(Byte7_255Ch_EmbP2And64Map, Byte7_255Ch_EmbP2And64);
 
     // Tombstone variants — IPO/IPO64 take TombstoneTag instead of a layout.
     //
@@ -397,16 +387,16 @@ pub mod matrix_types {
     //
     // Byte7_254_Tomb64Map is intentionally unsafe — IPO64 uses shift indexing,
     // so byte 7 IS the group index. Used to verify the symmetric collision claim.
-    ipo_map!(Byte0_254_TombMap,     Byte0_254);
-    ipo_map!(Byte2_254_TombMap,     Byte2_254);
-    ipo_map!(Byte7_128_TombMap,     Byte7_128);
+    ipo_map!(Byte0_254_TombMap, Byte0_254);
+    ipo_map!(Byte2_254_TombMap, Byte2_254);
+    ipo_map!(Byte7_128_TombMap, Byte7_128);
     ipo64_map!(Byte7_254_Tomb64Map, Byte7_254);
 }
 
 // ── Traits ──────────────────────────────────────────────────────────────────
 
 pub use raw::hash::IsAvalanching;
-pub use traits::Map;
+pub use traits::HashedMap;
 pub use traits::OccupiedError;
 pub use traits::Set;
 pub use traits::SortedMap;

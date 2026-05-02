@@ -377,12 +377,20 @@ fn select_backend<K, V>(hint: Hint, capacity: usize) -> MapType {
         Hint::ReadHeavy => {
             // Hit-heavy: IPO wins up to ~1M, then UFM/overflow wins at DRAM scale.
             // Splitsies is the closest drop-in tombstone-free design.
-            if capacity >= TOMBSTONE_DRAM_CLIFF { MapType::Splitsies } else { MapType::Ipo }
+            if capacity >= TOMBSTONE_DRAM_CLIFF {
+                MapType::Splitsies
+            } else {
+                MapType::Ipo
+            }
         }
         Hint::WriteHeavy => {
             // Inserts: IPO is competitive at cache-resident sizes; tombstone
             // accumulation eats it at large N. Splitsies stays flat.
-            if capacity >= TOMBSTONE_DRAM_CLIFF { MapType::Splitsies } else { MapType::Ipo }
+            if capacity >= TOMBSTONE_DRAM_CLIFF {
+                MapType::Splitsies
+            } else {
+                MapType::Ipo
+            }
         }
         Hint::Churn => MapType::Splitsies, // tombstone-free, flat at high load
         Hint::Iteration => MapType::Gaps,
@@ -500,10 +508,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 }
 
-fn build_inner<K: Hash + Eq, V>(
-    map_type: MapType,
-    capacity: usize,
-) -> Inner<K, V> {
+fn build_inner<K: Hash + Eq, V>(map_type: MapType, capacity: usize) -> Inner<K, V> {
     match map_type {
         MapType::Ufm => Inner::Ufm(UnorderedFlatMap::with_capacity(capacity)),
         MapType::Splitsies => Inner::Splitsies(Splitsies::with_capacity(capacity)),
@@ -683,7 +688,11 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 
     /// Tries to insert a key-value pair, failing if the key already exists.
-    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    pub fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
         dispatch_mut!(self, try_insert, key, value)
     }
 
@@ -691,36 +700,34 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     /// manipulation.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         match &mut self.inner {
-            Inner::Ufm(m) => {
-                match m.entry(key) {
-                    crate::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ufm(e)),
-                    crate::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ufm(e)),
+            Inner::Ufm(m) => match m.entry(key) {
+                crate::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ufm(e)),
+                crate::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ufm(e)),
+            },
+            Inner::Splitsies(m) => match m.entry(key) {
+                crate::split_overflow::map::Entry::Occupied(e) => {
+                    Entry::Occupied(OccupiedEntry::Splitsies(e))
                 }
-            }
-            Inner::Splitsies(m) => {
-                match m.entry(key) {
-                    crate::split_overflow::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Splitsies(e)),
-                    crate::split_overflow::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Splitsies(e)),
+                crate::split_overflow::map::Entry::Vacant(e) => {
+                    Entry::Vacant(VacantEntry::Splitsies(e))
                 }
-            }
-            Inner::Ipo(m) => {
-                match m.entry(key) {
-                    crate::in_place_overflow::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo(e)),
-                    crate::in_place_overflow::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo(e)),
+            },
+            Inner::Ipo(m) => match m.entry(key) {
+                crate::in_place_overflow::map::Entry::Occupied(e) => {
+                    Entry::Occupied(OccupiedEntry::Ipo(e))
                 }
-            }
-            Inner::Gaps(m) => {
-                match m.entry(key) {
-                    crate::gaps::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Gaps(e)),
-                    crate::gaps::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Gaps(e)),
+                crate::in_place_overflow::map::Entry::Vacant(e) => {
+                    Entry::Vacant(VacantEntry::Ipo(e))
                 }
-            }
-            Inner::Ipo64(m) => {
-                match m.entry(key) {
-                    crate::ipo64::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo64(e)),
-                    crate::ipo64::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo64(e)),
-                }
-            }
+            },
+            Inner::Gaps(m) => match m.entry(key) {
+                crate::gaps::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Gaps(e)),
+                crate::gaps::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Gaps(e)),
+            },
+            Inner::Ipo64(m) => match m.entry(key) {
+                crate::ipo64::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo64(e)),
+                crate::ipo64::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo64(e)),
+            },
         }
     }
 
@@ -776,11 +783,31 @@ impl<K: Hash + Eq + fmt::Debug, V: fmt::Debug> fmt::Debug for OptiMap<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut map = f.debug_map();
         match &self.inner {
-            Inner::Ufm(m) => { for (k, v) in m.iter() { map.entry(k, v); } }
-            Inner::Splitsies(m) => { for (k, v) in m.iter() { map.entry(k, v); } }
-            Inner::Ipo(m) => { for (k, v) in m.iter() { map.entry(k, v); } }
-            Inner::Gaps(m) => { for (k, v) in m.iter() { map.entry(k, v); } }
-            Inner::Ipo64(m) => { for (k, v) in m.iter() { map.entry(k, v); } }
+            Inner::Ufm(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
+            Inner::Splitsies(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
+            Inner::Ipo(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
+            Inner::Gaps(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
+            Inner::Ipo64(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
         }
         map.finish()
     }
@@ -813,7 +840,10 @@ impl<K: Hash + Eq, V: PartialEq> PartialEq for OptiMap<K, V> {
                 for (k, v) in $m.iter() {
                     match other.get(k) {
                         Some(v2) if v == v2 => {}
-                        _ => { eq = false; break; }
+                        _ => {
+                            eq = false;
+                            break;
+                        }
                     }
                 }
             };
@@ -880,7 +910,7 @@ where
 
 // ── Map trait impl ─────────────────────────────────────────────────────────
 
-impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
+impl<K: Hash + Eq, V> crate::HashedMap<K, V> for OptiMap<K, V> {
     fn new() -> Self {
         OptiMap::new()
     }
@@ -997,11 +1027,7 @@ impl<K: Hash + Eq, V> crate::Map<K, V> for OptiMap<K, V> {
         OptiMap::drain(self)
     }
 
-    fn try_insert(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
         OptiMap::try_insert(self, key, value)
     }
 
@@ -1033,7 +1059,13 @@ mod tests {
 
     #[test]
     fn pinned_backends() {
-        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+        for mt in [
+            MapType::Ufm,
+            MapType::Splitsies,
+            MapType::Ipo,
+            MapType::Gaps,
+            MapType::Ipo64,
+        ] {
             let mut map = OptiMap::<u64, u64>::with_type(mt);
             for i in 0..100 {
                 map.insert(i, i * 2);
@@ -1047,7 +1079,10 @@ mod tests {
     #[test]
     fn named_constructors() {
         assert_eq!(OptiMap::<u64, u64>::ufm().map_type(), MapType::Ufm);
-        assert_eq!(OptiMap::<u64, u64>::splitsies().map_type(), MapType::Splitsies);
+        assert_eq!(
+            OptiMap::<u64, u64>::splitsies().map_type(),
+            MapType::Splitsies
+        );
         assert_eq!(OptiMap::<u64, u64>::ipo().map_type(), MapType::Ipo);
         assert_eq!(OptiMap::<u64, u64>::gaps().map_type(), MapType::Gaps);
         assert_eq!(OptiMap::<u64, u64>::ipo64().map_type(), MapType::Ipo64);
@@ -1173,7 +1208,11 @@ mod tests {
             map.insert(i, i);
         }
         map.reserve(2_000_000);
-        assert_eq!(map.map_type(), MapType::Splitsies, "should fall back to Splitsies above DRAM cliff");
+        assert_eq!(
+            map.map_type(),
+            MapType::Splitsies,
+            "should fall back to Splitsies above DRAM cliff"
+        );
         for i in 0..100u64 {
             assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
         }
@@ -1245,9 +1284,9 @@ mod tests {
 
     #[test]
     fn map_trait_usage() {
-        use crate::Map;
+        use crate::HashedMap;
 
-        fn fill<M: Map<u64, u64>>(m: &mut M, n: u64) {
+        fn fill<M: HashedMap<u64, u64>>(m: &mut M, n: u64) {
             for i in 0..n {
                 m.insert(i, i);
             }
@@ -1335,7 +1374,13 @@ mod tests {
 
     #[test]
     fn entry_or_insert() {
-        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+        for mt in [
+            MapType::Ufm,
+            MapType::Splitsies,
+            MapType::Ipo,
+            MapType::Gaps,
+            MapType::Ipo64,
+        ] {
             let mut map = OptiMap::<u64, u64>::with_type(mt);
             map.entry(1).or_insert(10);
             assert_eq!(map.get(&1), Some(&10));
@@ -1439,7 +1484,13 @@ mod tests {
 
     #[test]
     fn entry_counting_all_backends() {
-        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+        for mt in [
+            MapType::Ufm,
+            MapType::Splitsies,
+            MapType::Ipo,
+            MapType::Gaps,
+            MapType::Ipo64,
+        ] {
             let mut map = OptiMap::<u64, u64>::with_type(mt);
             for &key in &[1, 2, 3, 1, 2, 1] {
                 map.entry(key).and_modify(|c| *c += 1).or_insert(1);
@@ -1452,7 +1503,13 @@ mod tests {
 
     #[test]
     fn try_insert_all_backends() {
-        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+        for mt in [
+            MapType::Ufm,
+            MapType::Splitsies,
+            MapType::Ipo,
+            MapType::Gaps,
+            MapType::Ipo64,
+        ] {
             let mut map = OptiMap::<u64, u64>::with_type(mt);
             assert_eq!(map.try_insert(1, 10), Ok(()));
             assert_eq!(map.try_insert(2, 20), Ok(()));

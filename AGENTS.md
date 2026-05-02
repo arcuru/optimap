@@ -81,7 +81,7 @@ correlate with the AND group index.
 
 ## Project Structure
 
-- `src/` — All implementations behind `Map`/`SortedMap`/`Set`/`SortedSet` traits
+- `src/` — All implementations behind `HashedMap`/`SortedMap`/`Set`/`SortedSet` traits
   - `raw/` — Shared infrastructure:
     - `table_api.rs` — `RawTableApi<K,V>` trait (internal contract for all raw table backends)
     - `group_layout.rs` — `GroupLayout` trait + `Layout16`/`Layout16And` + named layouts
@@ -100,8 +100,8 @@ correlate with the AND group index.
   - `gaps/` — `Gaps` type alias (= `GenericMap` + `GapsLayout`)
   - `soa/` — SoA layout: `SoaRawTable<K,V,L>` + `SoaGenericMap` (separate key/value arrays)
   - `flat_btree/` — FlatBTree (B+ tree, independent architecture)
-  - `traits.rs` — `Map`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std
-  - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any Map via `Map<T, ()>`)
+  - `traits.rs` — `HashedMap`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std (a future `Map` facade trait will wrap whichever underlying trait each impl prefers — see `docs/src/roadmap.md`)
+  - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any hash map via `HashedMap<T, ()>`)
   - `optimap.rs` — `OptiMap<K, V>` smart wrapper with dynamic backend selection
   - `opti_set.rs` — `OptiSet<T>` smart set wrapper (wraps `OptiMap<T, ()>`)
   - `opti_sorted.rs` — `OptiSortedMap<K, V>` and `OptiSortedSet<T>` smart sorted wrappers (wraps `FlatBTree`)
@@ -115,9 +115,9 @@ correlate with the AND group index.
 - Overflow-bit designs (UFM, Splitsies, Gaps) are **tombstone-free** with O(1) miss termination
 - IPO/IPO64 use **tombstones** like hashbrown but with 254 hash values (vs hashbrown's 128)
 - 70% default load factor across all designs
-- Generic `Map` trait allows benchmarking all implementations + hashbrown uniformly
-- `Map` trait covers full std::HashMap interface: get/insert/remove/entry + get_key_value, remove_entry, retain, drain, reserve, shrink_to_fit, iter_mut, keys, values, values_mut, try_insert, into_keys, into_values
-- `Set` trait mirrors Map for sets: insert/contains/get/remove/take/retain/drain/reserve/shrink_to_fit/iter
+- Generic `HashedMap` trait (hash-dispatched) allows benchmarking all hash-map implementations + hashbrown uniformly. Sorted maps live behind `SortedMap` (Ord-dispatched). No type implements both — a structure picks one ordering and is efficient at one dispatch flavor.
+- `HashedMap` trait covers full std::HashMap interface: get/insert/remove/entry + get_key_value, remove_entry, retain, drain, reserve, shrink_to_fit, iter_mut, keys, values, values_mut, try_insert, into_keys, into_values
+- `Set` trait mirrors HashedMap for sets: insert/contains/get/remove/take/retain/drain/reserve/shrink_to_fit/iter
 - `SortedMap` trait covers ordered ops: first/last_key_value, pop_first/pop_last, range, iter_sorted
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range
 - Entry API matches std: or_insert, or_insert_with, or_insert_with_key, or_default, and_modify, into_key

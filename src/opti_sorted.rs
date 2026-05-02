@@ -6,8 +6,8 @@
 
 use std::borrow::Borrow;
 use std::fmt;
-use std::hash::Hash;
 use std::hash::BuildHasher;
+use std::hash::Hash;
 
 use crate::flat_btree::FlatBTree;
 use crate::map::DefaultHashBuilder;
@@ -56,18 +56,24 @@ pub struct OptiSortedMap<K, V, S = DefaultHashBuilder> {
 impl<K: Ord + Clone, V> OptiSortedMap<K, V> {
     /// Create an empty sorted map.
     pub fn new() -> Self {
-        OptiSortedMap { inner: FlatBTree::new() }
+        OptiSortedMap {
+            inner: FlatBTree::new(),
+        }
     }
 
     /// Create a sorted map with at least the given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        OptiSortedMap { inner: FlatBTree::with_capacity(capacity) }
+        OptiSortedMap {
+            inner: FlatBTree::with_capacity(capacity),
+        }
     }
 
     /// Build from input already sorted by key with no duplicates. See
     /// [`FlatBTree::from_sorted_iter`] for details.
     pub fn from_sorted_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        OptiSortedMap { inner: FlatBTree::from_sorted_iter(iter) }
+        OptiSortedMap {
+            inner: FlatBTree::from_sorted_iter(iter),
+        }
     }
 }
 
@@ -202,7 +208,11 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
     }
 
     /// Tries to insert a key-value pair, failing if the key already exists.
-    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    pub fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
         self.inner.try_insert(key, value)
     }
 
@@ -256,8 +266,7 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
 
     /// Iterate over key-value pairs within the given range, yielding mutable
     /// values, in sorted order.
-    pub fn range_mut<'a, Q, R>(&'a mut self, range: R)
-        -> impl Iterator<Item = (&'a K, &'a mut V)>
+    pub fn range_mut<'a, Q, R>(&'a mut self, range: R) -> impl Iterator<Item = (&'a K, &'a mut V)>
     where
         K: Borrow<Q> + 'a,
         V: 'a,
@@ -274,7 +283,9 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> OptiSortedMap<K, V, S> {
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        OptiSortedMap { inner: self.inner.split_off(at) }
+        OptiSortedMap {
+            inner: self.inner.split_off(at),
+        }
     }
 
     /// Moves all entries from `other` into `self`, leaving `other` empty.
@@ -300,11 +311,11 @@ impl<K: Ord + Clone + fmt::Debug, V: fmt::Debug, S: BuildHasher + Default> fmt::
     }
 }
 
-impl<K: Ord + Clone, V: Clone, S: BuildHasher + Default + Clone> Clone
-    for OptiSortedMap<K, V, S>
-{
+impl<K: Ord + Clone, V: Clone, S: BuildHasher + Default + Clone> Clone for OptiSortedMap<K, V, S> {
     fn clone(&self) -> Self {
-        OptiSortedMap { inner: self.inner.clone() }
+        OptiSortedMap {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -316,8 +327,7 @@ impl<K: Ord + Clone + Hash + Eq, V: PartialEq, S: BuildHasher + Default> Partial
     }
 }
 
-impl<K: Ord + Clone + Hash + Eq, V: Eq, S: BuildHasher + Default> Eq
-    for OptiSortedMap<K, V, S> {}
+impl<K: Ord + Clone + Hash + Eq, V: Eq, S: BuildHasher + Default> Eq for OptiSortedMap<K, V, S> {}
 
 impl<K: Hash + Eq + Ord + Clone, V> FromIterator<(K, V)> for OptiSortedMap<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
@@ -363,76 +373,109 @@ where
 
 // ── Map trait impl ─────────────────────────────────────────────────────────
 
-impl<K: Hash + Eq + Ord + Clone, V, S: BuildHasher + Default> crate::Map<K, V>
+impl<K: Hash + Eq + Ord + Clone, V, S: BuildHasher + Default> crate::HashedMap<K, V>
     for OptiSortedMap<K, V, S>
 {
     fn new() -> Self {
-        OptiSortedMap { inner: FlatBTree::with_hasher(S::default()) }
+        OptiSortedMap {
+            inner: FlatBTree::with_hasher(S::default()),
+        }
     }
     fn with_capacity(capacity: usize) -> Self {
-        OptiSortedMap { inner: FlatBTree::with_capacity_and_hasher(capacity, S::default()) }
+        OptiSortedMap {
+            inner: FlatBTree::with_capacity_and_hasher(capacity, S::default()),
+        }
     }
     fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.inner.insert(key, value)
     }
     fn get<Q>(&self, key: &Q) -> Option<&V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
         // FlatBTree's Map impl handles Hash+Eq lookup
-        crate::Map::get(&self.inner, key)
+        crate::HashedMap::get(&self.inner, key)
     }
     fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::get_key_value(&self.inner, key)
+        crate::HashedMap::get_key_value(&self.inner, key)
     }
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::get_mut(&mut self.inner, key)
+        crate::HashedMap::get_mut(&mut self.inner, key)
     }
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::remove(&mut self.inner, key)
+        crate::HashedMap::remove(&mut self.inner, key)
     }
     fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::remove_entry(&mut self.inner, key)
+        crate::HashedMap::remove_entry(&mut self.inner, key)
     }
     fn contains_key<Q>(&self, key: &Q) -> bool
-    where K: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::contains_key(&self.inner, key)
+        crate::HashedMap::contains_key(&self.inner, key)
     }
-    fn len(&self) -> usize { self.inner.len() }
-    fn capacity(&self) -> usize { self.inner.capacity() }
-    fn clear(&mut self) { self.inner.clear() }
-    fn reserve(&mut self, additional: usize) { self.inner.reserve(additional) }
-    fn shrink_to_fit(&mut self) { self.inner.shrink_to_fit() }
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+    fn clear(&mut self) {
+        self.inner.clear()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.inner.reserve(additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        self.inner.shrink_to_fit()
+    }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
-    where K: 'a, V: 'a,
-    { self.inner.iter() }
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.inner.iter()
+    }
 
     fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
-    where K: 'a, V: 'a,
-    { self.inner.iter_mut() }
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.inner.iter_mut()
+    }
 
     fn retain<F>(&mut self, f: F)
-    where F: FnMut(&K, &mut V) -> bool,
-    { self.inner.retain(f) }
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        self.inner.retain(f)
+    }
 
     fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
         self.inner.drain()
     }
 
-    fn try_insert(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
         OptiSortedMap::try_insert(self, key, value)
     }
 
@@ -463,7 +506,9 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
         self.inner.pop_last()
     }
     fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
-    where K: 'a, V: 'a,
+    where
+        K: 'a,
+        V: 'a,
     {
         self.inner.iter_sorted()
     }
@@ -482,7 +527,9 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
         K: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        OptiSortedMap { inner: self.inner.split_off(at) }
+        OptiSortedMap {
+            inner: self.inner.split_off(at),
+        }
     }
 
     fn append(&mut self, other: &mut Self) {
@@ -531,12 +578,16 @@ pub struct OptiSortedSet<T, S = DefaultHashBuilder> {
 impl<T: Ord + Clone> OptiSortedSet<T> {
     /// Create an empty sorted set.
     pub fn new() -> Self {
-        OptiSortedSet { inner: OptiSortedMap::new() }
+        OptiSortedSet {
+            inner: OptiSortedMap::new(),
+        }
     }
 
     /// Create a sorted set with at least the given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        OptiSortedSet { inner: OptiSortedMap::with_capacity(capacity) }
+        OptiSortedSet {
+            inner: OptiSortedMap::with_capacity(capacity),
+        }
     }
 }
 
@@ -676,7 +727,9 @@ impl<T: Ord + Clone, S: BuildHasher + Default> OptiSortedSet<T, S> {
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        OptiSortedSet { inner: self.inner.split_off(at) }
+        OptiSortedSet {
+            inner: self.inner.split_off(at),
+        }
     }
 
     /// Moves all elements from `other` into `self`, leaving `other` empty.
@@ -774,9 +827,7 @@ impl<T: Ord + Clone> Default for OptiSortedSet<T> {
     }
 }
 
-impl<T: Ord + Clone + fmt::Debug, S: BuildHasher + Default> fmt::Debug
-    for OptiSortedSet<T, S>
-{
+impl<T: Ord + Clone + fmt::Debug, S: BuildHasher + Default> fmt::Debug for OptiSortedSet<T, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter_sorted()).finish()
     }
@@ -784,7 +835,9 @@ impl<T: Ord + Clone + fmt::Debug, S: BuildHasher + Default> fmt::Debug
 
 impl<T: Ord + Clone, S: BuildHasher + Default + Clone> Clone for OptiSortedSet<T, S> {
     fn clone(&self) -> Self {
-        OptiSortedSet { inner: self.inner.clone() }
+        OptiSortedSet {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -821,10 +874,8 @@ impl<T: Hash + Eq + Ord + Clone> Extend<T> for OptiSortedSet<T> {
 
 impl<T: Ord + Clone, S: BuildHasher + Default> IntoIterator for OptiSortedSet<T, S> {
     type Item = T;
-    type IntoIter = std::iter::Map<
-        <FlatBTree<T, (), S> as IntoIterator>::IntoIter,
-        fn((T, ())) -> T,
-    >;
+    type IntoIter =
+        std::iter::Map<<FlatBTree<T, (), S> as IntoIterator>::IntoIter, fn((T, ())) -> T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.inner.into_iter().map(|(k, _)| k)
@@ -836,70 +887,108 @@ impl<T: Ord + Clone, S: BuildHasher + Default> IntoIterator for OptiSortedSet<T,
 impl<T: Hash + Eq + Ord + Clone> std::ops::BitOr<&OptiSortedSet<T>> for &OptiSortedSet<T> {
     type Output = OptiSortedSet<T>;
     /// Union: `a | b`.
-    fn bitor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.union(rhs) }
+    fn bitor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> {
+        self.union(rhs)
+    }
 }
 
 impl<T: Hash + Eq + Ord + Clone> std::ops::BitAnd<&OptiSortedSet<T>> for &OptiSortedSet<T> {
     type Output = OptiSortedSet<T>;
     /// Intersection: `a & b`.
-    fn bitand(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.intersection(rhs) }
+    fn bitand(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> {
+        self.intersection(rhs)
+    }
 }
 
 impl<T: Hash + Eq + Ord + Clone> std::ops::BitXor<&OptiSortedSet<T>> for &OptiSortedSet<T> {
     type Output = OptiSortedSet<T>;
     /// Symmetric difference: `a ^ b`.
-    fn bitxor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.symmetric_difference(rhs) }
+    fn bitxor(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> {
+        self.symmetric_difference(rhs)
+    }
 }
 
 impl<T: Hash + Eq + Ord + Clone> std::ops::Sub<&OptiSortedSet<T>> for &OptiSortedSet<T> {
     type Output = OptiSortedSet<T>;
     /// Difference: `a - b`.
-    fn sub(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> { self.difference(rhs) }
+    fn sub(self, rhs: &OptiSortedSet<T>) -> OptiSortedSet<T> {
+        self.difference(rhs)
+    }
 }
 
 // ── Set trait impl ─────────────────────────────────────────────────────────
 
 impl<T: Hash + Eq + Ord + Clone> crate::Set<T> for OptiSortedSet<T> {
-    fn new() -> Self { OptiSortedSet::new() }
-    fn with_capacity(capacity: usize) -> Self { OptiSortedSet::with_capacity(capacity) }
-    fn insert(&mut self, value: T) -> bool { OptiSortedSet::insert(self, value) }
+    fn new() -> Self {
+        OptiSortedSet::new()
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiSortedSet::with_capacity(capacity)
+    }
+    fn insert(&mut self, value: T) -> bool {
+        OptiSortedSet::insert(self, value)
+    }
 
     fn contains<Q>(&self, value: &Q) -> bool
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        // Set trait requires Hash+Eq, delegate through Map trait on inner
-        crate::Map::contains_key(&self.inner, value)
+        // Set trait requires Hash+Eq, delegate through HashedMap trait on inner
+        crate::HashedMap::contains_key(&self.inner, value)
     }
 
     fn get<Q>(&self, value: &Q) -> Option<&T>
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::get_key_value(&self.inner, value).map(|(k, _)| k)
+        crate::HashedMap::get_key_value(&self.inner, value).map(|(k, _)| k)
     }
 
     fn remove<Q>(&mut self, value: &Q) -> bool
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::remove(&mut self.inner, value).is_some()
+        crate::HashedMap::remove(&mut self.inner, value).is_some()
     }
 
     fn take<Q>(&mut self, value: &Q) -> Option<T>
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        crate::Map::remove_entry(&mut self.inner, value).map(|(k, _)| k)
+        crate::HashedMap::remove_entry(&mut self.inner, value).map(|(k, _)| k)
     }
 
-    fn len(&self) -> usize { self.inner.len() }
-    fn capacity(&self) -> usize { self.inner.capacity() }
-    fn clear(&mut self) { self.inner.clear() }
-    fn reserve(&mut self, additional: usize) { self.inner.reserve(additional) }
-    fn shrink_to_fit(&mut self) { self.inner.shrink_to_fit() }
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+    fn clear(&mut self) {
+        self.inner.clear()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.inner.reserve(additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        self.inner.shrink_to_fit()
+    }
 
-    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T> where T: 'a {
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
         self.inner.iter().map(|(k, _)| k)
     }
 
-    fn retain<F>(&mut self, mut f: F) where F: FnMut(&T) -> bool {
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
         self.inner.retain(|k, _| f(k));
     }
 
@@ -923,7 +1012,10 @@ impl<T: Hash + Eq + Ord + Clone> crate::SortedSet<T> for OptiSortedSet<T> {
     fn pop_last(&mut self) -> Option<T> {
         OptiSortedSet::pop_last(self)
     }
-    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = &'a T> where T: 'a {
+    fn iter_sorted<'a>(&'a self) -> impl Iterator<Item = &'a T>
+    where
+        T: 'a,
+    {
         OptiSortedSet::iter_sorted(self)
     }
     fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
@@ -979,8 +1071,7 @@ mod tests {
 
         #[test]
         fn range_query() {
-            let map: OptiSortedMap<i32, i32> =
-                (0..10).map(|i| (i, i * 10)).collect();
+            let map: OptiSortedMap<i32, i32> = (0..10).map(|i| (i, i * 10)).collect();
             let range: Vec<_> = map.range(3..7).map(|(k, _)| *k).collect();
             assert_eq!(range, vec![3, 4, 5, 6]);
         }
@@ -995,8 +1086,7 @@ mod tests {
 
         #[test]
         fn pop_first_last() {
-            let mut map: OptiSortedMap<i32, i32> =
-                (1..=5).map(|i| (i, i)).collect();
+            let mut map: OptiSortedMap<i32, i32> = (1..=5).map(|i| (i, i)).collect();
             assert_eq!(map.pop_first(), Some((1, 1)));
             assert_eq!(map.pop_last(), Some((5, 5)));
             assert_eq!(map.len(), 3);
@@ -1024,8 +1114,7 @@ mod tests {
 
         #[test]
         fn retain() {
-            let mut map: OptiSortedMap<i32, i32> =
-                (0..20).map(|i| (i, i)).collect();
+            let mut map: OptiSortedMap<i32, i32> = (0..20).map(|i| (i, i)).collect();
             map.retain(|&k, _| k % 2 == 0);
             assert_eq!(map.len(), 10);
             assert!(map.contains_key(&0));
@@ -1034,8 +1123,7 @@ mod tests {
 
         #[test]
         fn drain() {
-            let mut map: OptiSortedMap<i32, i32> =
-                (0..10).map(|i| (i, i)).collect();
+            let mut map: OptiSortedMap<i32, i32> = (0..10).map(|i| (i, i)).collect();
             let mut drained: Vec<_> = map.drain().collect();
             drained.sort();
             assert_eq!(drained.len(), 10);
@@ -1044,8 +1132,7 @@ mod tests {
 
         #[test]
         fn clone_and_eq() {
-            let map: OptiSortedMap<i32, i32> =
-                (0..50).map(|i| (i, i)).collect();
+            let map: OptiSortedMap<i32, i32> = (0..50).map(|i| (i, i)).collect();
             let map2 = map.clone();
             assert_eq!(map, map2);
         }
@@ -1069,9 +1156,9 @@ mod tests {
 
         #[test]
         fn map_trait_usage() {
-            use crate::Map;
+            use crate::HashedMap;
 
-            fn fill<M: Map<i32, i32>>(m: &mut M, n: i32) {
+            fn fill<M: HashedMap<i32, i32>>(m: &mut M, n: i32) {
                 for i in 0..n {
                     m.insert(i, i);
                 }
@@ -1084,8 +1171,7 @@ mod tests {
 
         #[test]
         fn range_mut() {
-            let mut map: OptiSortedMap<i32, i32> =
-                (0..30).map(|i| (i, i)).collect();
+            let mut map: OptiSortedMap<i32, i32> = (0..30).map(|i| (i, i)).collect();
             for (_, v) in map.range_mut(10..20) {
                 *v += 1000;
             }

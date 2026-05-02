@@ -1,18 +1,24 @@
-//! Common trait for all OptiMap hash map implementations.
+//! Common traits for all OptiMap map implementations.
 //!
-//! The `Map` trait defines the key-to-value mapping interface.
-//! The hash function is an implementation detail of each concrete type,
-//! not part of the trait.
+//! The [`HashedMap`] trait defines the hash-dispatched key-to-value mapping
+//! interface; the [`SortedMap`] trait (in this module) defines the
+//! ordering-dispatched interface. The hash function is an implementation
+//! detail of each concrete type, not part of the trait.
+//!
+//! No type implements both `HashedMap` and `SortedMap` — a data structure
+//! stores keys in one order and is efficient at one dispatch flavor. A future
+//! `Map` facade trait will let generic code call into either via the impl's
+//! preferred path.
 //!
 //! Users calling methods on concrete types (e.g. `Splitsies::insert`)
-//! do NOT need to import this trait — inherent methods work automatically.
-//! The trait is only needed for generic code over multiple implementations.
+//! do NOT need to import these traits — inherent methods work automatically.
+//! The traits are only needed for generic code over multiple implementations.
 
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
-/// Error returned by [`Map::try_insert`] when the key already exists.
+/// Error returned by [`HashedMap::try_insert`] when the key already exists.
 ///
 /// Contains the key and value that were not inserted.
 #[derive(Debug, PartialEq, Eq)]
@@ -35,11 +41,16 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for OccupiedError<K, V> {
 
 impl<K: fmt::Debug, V: fmt::Debug> std::error::Error for OccupiedError<K, V> {}
 
-/// Core hash map interface. Maps keys to values.
+/// Core hash-dispatched map interface. Maps keys to values via `Hash + Eq`.
 ///
 /// The hash function is an implementation detail — each concrete type
-/// carries its own hasher internally. Generic code uses `Map<K, V>`
+/// carries its own hasher internally. Generic code uses `HashedMap<K, V>`
 /// without knowing or caring about the hasher.
+///
+/// Sorted-dispatch maps (e.g. `FlatBTree`, `std::BTreeMap`) implement
+/// [`SortedMap`] instead. No type implements both: hash dispatch can't
+/// efficiently navigate an `Ord`-sorted store, so a hybrid impl would
+/// silently degenerate into O(n) scans on one of the call paths.
 ///
 /// # Usage
 ///
@@ -51,13 +62,13 @@ impl<K: fmt::Debug, V: fmt::Debug> std::error::Error for OccupiedError<K, V> {}
 ///
 /// For generic code, import the trait:
 /// ```
-/// use optimap::Map;
-/// fn count<M: Map<String, usize>>(m: &mut M, key: String) {
+/// use optimap::HashedMap;
+/// fn count<M: HashedMap<String, usize>>(m: &mut M, key: String) {
 ///     let val = m.get(&key).copied().unwrap_or(0);
 ///     m.insert(key, val + 1);
 /// }
 /// ```
-pub trait Map<K: Hash + Eq, V> {
+pub trait HashedMap<K: Hash + Eq, V> {
     /// Create an empty map with the default hasher.
     fn new() -> Self;
 
@@ -178,11 +189,7 @@ pub trait Map<K: Hash + Eq, V> {
     ///
     /// Returns `Ok(())` if the pair was inserted, or `Err(OccupiedError)`
     /// containing the key and value that were not inserted.
-    fn try_insert(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<(), OccupiedError<K, V>> {
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), OccupiedError<K, V>> {
         if self.contains_key(&key) {
             Err(OccupiedError { key, value })
         } else {
@@ -204,7 +211,7 @@ pub trait Map<K: Hash + Eq, V> {
 
 /// Trait for sorted map implementations that support ordered operations.
 ///
-/// Unlike [`Map`], this does not require `Hash` — it works with any
+/// Unlike [`HashedMap`], this does not require `Hash` — it works with any
 /// key type that supports ordering.
 pub trait SortedMap<K, V> {
     /// Returns the first (minimum) key-value pair.
@@ -302,7 +309,7 @@ impl<K: Ord, V> SortedMap<K, V> for std::collections::BTreeMap<K, V> {
 
 macro_rules! impl_map_trait {
     ($type:ident) => {
-        impl<K, V, S> $crate::traits::Map<K, V> for $type<K, V, S>
+        impl<K, V, S> $crate::traits::HashedMap<K, V> for $type<K, V, S>
         where
             K: ::std::hash::Hash + Eq,
             S: ::std::hash::BuildHasher + Default,
@@ -417,7 +424,7 @@ pub(crate) use impl_map_trait;
 
 // ── hashbrown implementation ─────────────────────────────────────────────────
 
-impl<K, V, S> Map<K, V> for hashbrown::HashMap<K, V, S>
+impl<K, V, S> HashedMap<K, V> for hashbrown::HashMap<K, V, S>
 where
     K: Hash + Eq,
     S: BuildHasher + Default,
@@ -521,7 +528,7 @@ where
 
 // ── std::HashMap implementation ─────────────────────────────────────────────
 
-impl<K, V, S> Map<K, V> for std::collections::HashMap<K, V, S>
+impl<K, V, S> HashedMap<K, V> for std::collections::HashMap<K, V, S>
 where
     K: Hash + Eq,
     S: BuildHasher + Default,
@@ -846,7 +853,7 @@ pub(crate) use impl_set_trait;
 impl<T, M> Set<T> for crate::generic_set::GenericSet<T, M>
 where
     T: Hash + Eq,
-    M: Map<T, ()>,
+    M: HashedMap<T, ()>,
 {
     fn new() -> Self {
         crate::generic_set::GenericSet::new()
@@ -1074,7 +1081,7 @@ where
 impl<T, M> SortedSet<T> for crate::generic_set::GenericSet<T, M>
 where
     T: Hash + Eq,
-    M: Map<T, ()> + crate::SortedMap<T, ()>,
+    M: HashedMap<T, ()> + crate::SortedMap<T, ()>,
 {
     fn first(&self) -> Option<&T> {
         crate::generic_set::GenericSet::first(self)

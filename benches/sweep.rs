@@ -17,7 +17,7 @@ mod bench_helpers;
 
 use bench_helpers::{OptiMapBench, Sfc64};
 use optimap::matrix_types::*;
-use optimap::{Gaps, IPO64, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
+use optimap::{Gaps, IPO64, InPlaceOverflow, HashedMap, Splitsies, UnorderedFlatMap};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -126,7 +126,7 @@ fn calibrate_repeats(ops: usize, mut f: impl FnMut(usize)) -> usize {
 /// Insert is special: it's incremental and each batch changes the table state,
 /// so we can't repeat the same batch. Instead we run the full sweep `trials`
 /// times and take the median per point.
-fn sweep_insert<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_insert<M: HashedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     // Collect all trials
     let num_points = points.len();
     let mut all_ns: Vec<Vec<f64>> = vec![Vec::with_capacity(trials); num_points];
@@ -159,12 +159,7 @@ fn sweep_insert<M: Map<u64, u64>>(design: &str, points: &[usize], keys: &[u64], 
 
 /// Lookup hit sweep: grow table incrementally, measure lookups at each size.
 /// Multiple trials per point with calibrated op count.
-fn sweep_lookup_hit<M: Map<u64, u64>>(
-    design: &str,
-    points: &[usize],
-    keys: &[u64],
-    trials: usize,
-) {
+fn sweep_lookup_hit<M: HashedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     let mut map = M::new();
     let mut prev_n = 0;
 
@@ -202,7 +197,7 @@ fn sweep_lookup_hit<M: Map<u64, u64>>(
 }
 
 /// Lookup miss sweep: grow table incrementally, measure misses at each size.
-fn sweep_lookup_miss<M: Map<u64, u64>>(
+fn sweep_lookup_miss<M: HashedMap<u64, u64>>(
     design: &str,
     points: &[usize],
     keys: &[u64],
@@ -250,12 +245,7 @@ fn sweep_lookup_miss<M: Map<u64, u64>>(
 
 /// Remove sweep: build table to size N, then remove a batch.
 /// Rebuilds per trial since remove is destructive.
-fn sweep_remove<M: Map<u64, u64>>(
-    design: &str,
-    points: &[usize],
-    keys: &[u64],
-    trials: usize,
-) {
+fn sweep_remove<M: HashedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     for &n in points {
         let ops = n.min(50_000);
         let mut samples = Vec::with_capacity(trials);
@@ -279,12 +269,7 @@ fn sweep_remove<M: Map<u64, u64>>(
 }
 
 /// Iteration sweep: grow table incrementally, measure full scan at each size.
-fn sweep_iterate<M: Map<u64, u64>>(
-    design: &str,
-    points: &[usize],
-    keys: &[u64],
-    trials: usize,
-) {
+fn sweep_iterate<M: HashedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     let mut map = M::new();
     let mut prev_n = 0;
 

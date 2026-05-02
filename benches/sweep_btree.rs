@@ -38,8 +38,10 @@ const MIN_MEASUREMENT_NS: u64 = 500_000; // 0.5ms
 // ── BTreeBench trait ────────────────────────────────────────────────────────
 
 /// Static-dispatch trait over ordered-map implementations. Implemented by
-/// calling each map's *inherent* `Ord`-based methods (not the `Map<K, V>`
+/// calling each map's *inherent* `Ord`-based methods (not the `HashedMap<K, V>`
 /// trait, whose `Hash + Eq` bound would force FlatBTree into an O(n) scan).
+/// Slated for replacement by `M: SortedMap<u64, u64>` once `SortedMap` carries
+/// full CRUD (roadmap task 9).
 trait BTreeBench {
     fn new() -> Self;
     fn insert(&mut self, k: u64, v: u64) -> Option<u64>;

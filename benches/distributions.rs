@@ -19,7 +19,7 @@ use criterion::{
     measurement::WallTime,
 };
 
-use optimap::{InPlaceOverflow, Map, SoaMap, Splitsies, UnorderedFlatMap};
+use optimap::{InPlaceOverflow, HashedMap, SoaMap, Splitsies, UnorderedFlatMap};
 
 // ── Table geometry ──────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ fn make_byteswapped_keys(n: usize) -> Vec<u64> {
 
 // ── Generic distribution helper ─────────────────────────────────────────────
 
-fn bench_lookup_hit_dist_for<M: Map<u64, u64>>(
+fn bench_lookup_hit_dist_for<M: HashedMap<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     dist_name: &str,
@@ -69,7 +69,7 @@ fn bench_lookup_hit_dist_for<M: Map<u64, u64>>(
     );
 }
 
-fn bench_lookup_miss_dist_for<M: Map<u64, u64>>(
+fn bench_lookup_miss_dist_for<M: HashedMap<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     dist_name: &str,
@@ -100,7 +100,7 @@ fn bench_lookup_miss_dist_for<M: Map<u64, u64>>(
     );
 }
 
-fn bench_insert_dist_for<M: Map<u64, u64>>(
+fn bench_insert_dist_for<M: HashedMap<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     dist_name: &str,
@@ -307,7 +307,7 @@ fn bench_insert_by_distribution(c: &mut Criterion) {
     group.finish();
 }
 
-// ── String key sizes (manual — String types not on Map<u64,u64>) ────────────
+// ── String key sizes (manual — String types not on HashedMap<u64,u64>) ─────
 
 fn bench_string_key_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("distribution/string_keys");

@@ -12,7 +12,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
+use optimap::{InPlaceOverflow, HashedMap, Splitsies, UnorderedFlatMap};
 
 // ── Load factor helpers ─────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ fn compute_load_info(capacity: usize, load_pct: usize) -> (usize, f64) {
 }
 
 /// Generic helper: benchmark lookup hit at a specific load level with label.
-fn bench_lf_hit_for<M: Map<u64, u64>>(
+fn bench_lf_hit_for<M: HashedMap<u64, u64>>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     name: &str,
     label: &str,
@@ -55,7 +55,7 @@ fn bench_lf_hit_for<M: Map<u64, u64>>(
     );
 }
 
-fn bench_lf_miss_for<M: Map<u64, u64>>(
+fn bench_lf_miss_for<M: HashedMap<u64, u64>>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     name: &str,
     label: &str,
@@ -82,7 +82,7 @@ fn bench_lf_miss_for<M: Map<u64, u64>>(
     );
 }
 
-fn bench_lf_mixed_for<M: Map<u64, u64>>(
+fn bench_lf_mixed_for<M: HashedMap<u64, u64>>(
     group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
     name: &str,
     label: &str,

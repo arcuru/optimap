@@ -1,7 +1,5 @@
-use optimap::{
-    Gaps, InPlaceOverflow, Map, OccupiedError, Splitsies, UnorderedFlatMap, IPO64,
-};
 use optimap::matrix_types::{Byte0_254_TombMap, Byte2_254_TombMap, Byte7_254_Tomb64Map};
+use optimap::{Gaps, HashedMap, IPO64, InPlaceOverflow, OccupiedError, Splitsies, UnorderedFlatMap};
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -48,8 +46,8 @@ fn op_strategy() -> impl Strategy<Value = Op> {
     ]
 }
 
-fn run_differential<M: Map<u16, u16>>(ops: &[Op]) {
-    let mut test: M = Map::new();
+fn run_differential<M: HashedMap<u16, u16>>(ops: &[Op]) {
+    let mut test: M = HashedMap::new();
     let mut reference: HashMap<u16, u16> = HashMap::new();
 
     for (i, op) in ops.iter().enumerate() {
@@ -162,7 +160,11 @@ fn run_differential<M: Map<u16, u16>>(ops: &[Op]) {
             }
         }
 
-        assert_eq!(test.len(), reference.len(), "op {i}: len mismatch after {op:?}");
+        assert_eq!(
+            test.len(),
+            reference.len(),
+            "op {i}: len mismatch after {op:?}"
+        );
     }
 
     // Final full verification

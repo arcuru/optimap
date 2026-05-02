@@ -68,9 +68,9 @@ pub type SoaIpo<K, V, S = DefaultHashBuilder> =
 pub type SoaByte7_128_Tomb<K, V, S = DefaultHashBuilder> =
     GenericMap<K, V, S, IpoRawTable<K, V, Byte7_128, SoA>>;
 
-// ── Map trait impls ───────────────────────────────────────────────────────
-// GenericMap already implements Map via impl_map_trait!, so SoA type aliases
-// automatically get Map trait support — no extra code needed.
+// ── HashedMap trait impls ─────────────────────────────────────────────────
+// GenericMap already implements HashedMap via impl_map_trait!, so SoA type
+// aliases automatically get HashedMap trait support — no extra code needed.
 
 crate::traits::impl_map_trait!(SoaMap);
 crate::traits::impl_map_trait!(SoaByte0_128);

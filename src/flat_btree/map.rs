@@ -16,8 +16,8 @@ pub type DefaultHashBuilder = foldhash::fast::RandomState;
 /// Keys are stored in sorted order. Iteration yields elements in ascending
 /// key order. Lookup, insert, and remove are O(log n).
 ///
-/// The hasher `S` is carried for [`Map`](crate::Map) trait compatibility
-/// but is never used — all operations use `K: Ord`.
+/// The hasher `S` is carried for [`HashedMap`](crate::HashedMap) trait
+/// compatibility but is never used — all operations use `K: Ord`.
 ///
 /// ```
 /// use optimap::FlatBTree;
@@ -1061,7 +1061,7 @@ impl<K, V> std::iter::FusedIterator for Drain<'_, K, V> {}
 
 // ── Map trait impl (K: Hash + Eq + Ord) ─────────────────────────────────
 
-impl<K, V, S> crate::Map<K, V> for FlatBTree<K, V, S>
+impl<K, V, S> crate::HashedMap<K, V> for FlatBTree<K, V, S>
 where
     K: Hash + Eq + Ord + Clone,
     S: BuildHasher + Default,
@@ -1883,9 +1883,9 @@ mod tests {
 
     #[test]
     fn map_trait_get() {
-        use crate::Map;
+        use crate::HashedMap;
 
-        fn check<M: Map<i32, &'static str>>(m: &M) {
+        fn check<M: HashedMap<i32, &'static str>>(m: &M) {
             assert_eq!(m.get(&1), Some(&"one"));
             assert_eq!(m.get(&3), None);
         }

@@ -1,6 +1,6 @@
 //! Core single-operation throughput benchmarks.
 //!
-//! Uses generic helpers via the Map trait to benchmark all designs
+//! Uses generic helpers via the HashedMap trait to benchmark all designs
 //! with minimal boilerplate. Adding a new design = one line per function.
 
 mod bench_helpers;
