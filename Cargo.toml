@@ -61,6 +61,10 @@ name = "sweep"
 harness = false
 
 [[bench]]
+name = "sweep_btree"
+harness = false
+
+[[bench]]
 name = "matrix"
 harness = false
 
