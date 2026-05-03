@@ -4,12 +4,10 @@
 //! Sorted-map sweep — measures FlatBTree vs `std::BTreeMap` ns/op as N grows.
 //!
 //! Mirrors `sweep.rs`'s harness (log-spaced N points, median-of-trials,
-//! CSV stdout) but for ordered maps. Cannot use the hash-map sweep harness
-//! because the `Map` trait's `Q: Hash + Eq` bound would route FlatBTree's
-//! `get`/`remove` through the O(n) leaf-walk fallback (see comment at
-//! `flat_btree::map.rs::Map for FlatBTree::get`). This bench dispatches
-//! through a private `BTreeBench` trait that calls the inherent
-//! `Ord`-based methods, so both implementations get O(log n).
+//! CSV stdout) but for ordered maps. Dispatches through the `SortedMap`
+//! trait (`Q: Ord` bound) so `get`/`remove` route through each impl's
+//! O(log n) path — the hash-dispatched `HashedMap` trait would force
+//! FlatBTree into an O(n) leaf scan.
 //!
 //! Usage:
 //!   cargo bench --bench sweep_btree                         # full run
@@ -21,7 +19,7 @@
 mod bench_helpers;
 
 use bench_helpers::Sfc64;
-use optimap::FlatBTree;
+use optimap::{FlatBTree, SortedMap};
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
@@ -34,57 +32,6 @@ const DEFAULT_TRIALS: usize = 5;
 /// Target minimum wall time per measurement point. If a single pass is shorter
 /// than this, we increase the ops count to compensate.
 const MIN_MEASUREMENT_NS: u64 = 500_000; // 0.5ms
-
-// ── BTreeBench trait ────────────────────────────────────────────────────────
-
-/// Static-dispatch trait over ordered-map implementations. Implemented by
-/// calling each map's *inherent* `Ord`-based methods (not the `HashedMap<K, V>`
-/// trait, whose `Hash + Eq` bound would force FlatBTree into an O(n) scan).
-/// Slated for replacement by `M: SortedMap<u64, u64>` once `SortedMap` carries
-/// full CRUD (roadmap task 9).
-trait BTreeBench {
-    fn new() -> Self;
-    fn insert(&mut self, k: u64, v: u64) -> Option<u64>;
-    fn get(&self, k: &u64) -> Option<&u64>;
-    fn remove(&mut self, k: &u64) -> Option<u64>;
-    fn iter(&self) -> impl Iterator<Item = (&u64, &u64)> + '_;
-}
-
-impl BTreeBench for FlatBTree<u64, u64> {
-    fn new() -> Self {
-        FlatBTree::new()
-    }
-    fn insert(&mut self, k: u64, v: u64) -> Option<u64> {
-        FlatBTree::insert(self, k, v)
-    }
-    fn get(&self, k: &u64) -> Option<&u64> {
-        FlatBTree::get(self, k)
-    }
-    fn remove(&mut self, k: &u64) -> Option<u64> {
-        FlatBTree::remove(self, k)
-    }
-    fn iter(&self) -> impl Iterator<Item = (&u64, &u64)> + '_ {
-        FlatBTree::iter(self)
-    }
-}
-
-impl BTreeBench for BTreeMap<u64, u64> {
-    fn new() -> Self {
-        BTreeMap::new()
-    }
-    fn insert(&mut self, k: u64, v: u64) -> Option<u64> {
-        BTreeMap::insert(self, k, v)
-    }
-    fn get(&self, k: &u64) -> Option<&u64> {
-        BTreeMap::get(self, k)
-    }
-    fn remove(&mut self, k: &u64) -> Option<u64> {
-        BTreeMap::remove(self, k)
-    }
-    fn iter(&self) -> impl Iterator<Item = (&u64, &u64)> + '_ {
-        BTreeMap::iter(self)
-    }
-}
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
@@ -179,7 +126,7 @@ fn calibrate_repeats(ops: usize, mut f: impl FnMut(usize)) -> usize {
 /// Insert sweep: grow from empty, measure each batch (incremental, can't
 /// repeat the same batch — instead run the full sweep `trials` times and
 /// take the median per point).
-fn sweep_insert<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_insert<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     let num_points = points.len();
     let mut all_ns: Vec<Vec<f64>> = vec![Vec::with_capacity(trials); num_points];
 
@@ -209,7 +156,7 @@ fn sweep_insert<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], tri
 
 /// Lookup hit: grow incrementally, measure lookups at each size with
 /// calibrated op count and trials.
-fn sweep_lookup_hit<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_lookup_hit<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     let mut map = M::new();
     let mut prev_n = 0;
 
@@ -246,7 +193,7 @@ fn sweep_lookup_hit<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64],
 }
 
 /// Lookup miss: grow incrementally, measure misses at each size.
-fn sweep_lookup_miss<M: BTreeBench>(
+fn sweep_lookup_miss<M: SortedMap<u64, u64>>(
     design: &str,
     points: &[usize],
     keys: &[u64],
@@ -294,7 +241,7 @@ fn sweep_lookup_miss<M: BTreeBench>(
 
 /// Remove: build to size N, then remove a batch. Rebuilds per trial since
 /// remove is destructive.
-fn sweep_remove<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_remove<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     for &n in points {
         let ops = n.min(50_000);
         let mut samples = Vec::with_capacity(trials);
@@ -318,7 +265,7 @@ fn sweep_remove<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], tri
 }
 
 /// Iterate: grow incrementally, measure full scan at each size.
-fn sweep_iterate<M: BTreeBench>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_iterate<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
     let mut map = M::new();
     let mut prev_n = 0;
 
