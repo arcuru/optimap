@@ -7,7 +7,7 @@
 //! Linear scan within nodes — the CPU prefetcher loads adjacent cache lines while
 //! scanning the first, making this competitive with binary search for typical fan-outs.
 
-mod map;
+pub(crate) mod map;
 mod node;
 mod raw;
 

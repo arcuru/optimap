@@ -177,7 +177,12 @@ macro_rules! all_sets {
         $helper::<optimap::Ipo64Set<u64>>($group, "IPO64", $($args),*);
         $helper::<optimap::FlatBTreeSet<u64>>($group, "FlatBTree", $($args),*);
         $helper::<hashbrown::HashSet<u64>>($group, "hashbrown", $($args),*);
-        $helper::<OptiSetBench<u64>>($group, "OptiSet", $($args),*);
+        // OptiSet was previously included via `OptiSetBench<u64>`. It no longer
+        // implements the `Set` trait (the FlatBTree backend brings `Q: Ord`,
+        // which `Set`'s `Q: Hash + Eq` bound can't accommodate). Use a
+        // backend-pinned set type (`IpoSet`, `SplitsiesSet`, …) above to
+        // measure the underlying engine; OptiSet's dispatch overhead is
+        // measured in `dispatch.rs`.
     };
 }
 

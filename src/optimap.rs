@@ -10,7 +10,7 @@ use std::iter::FusedIterator;
 use std::mem;
 
 use crate::map::DefaultHashBuilder;
-use crate::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
+use crate::{FlatBTree, Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Enum iterators (zero-cost dispatch, no Box<dyn>) ──────────────────────
 
@@ -21,6 +21,7 @@ pub enum Iter<'a, K, V> {
     Ipo(crate::in_place_overflow::map::Iter<'a, K, V>),
     Gaps(crate::gaps::map::Iter<'a, K, V>),
     Ipo64(crate::ipo64::map::Iter<'a, K, V>),
+    FlatBTree(crate::flat_btree::map::Iter<'a, K, V>),
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
@@ -33,6 +34,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
             Iter::Ipo(i) => i.next(),
             Iter::Gaps(i) => i.next(),
             Iter::Ipo64(i) => i.next(),
+            Iter::FlatBTree(i) => i.next(),
         }
     }
     #[inline]
@@ -43,6 +45,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
             Iter::Ipo(i) => i.size_hint(),
             Iter::Gaps(i) => i.size_hint(),
             Iter::Ipo64(i) => i.size_hint(),
+            Iter::FlatBTree(i) => i.size_hint(),
         }
     }
 }
@@ -55,6 +58,7 @@ pub enum IterMut<'a, K, V> {
     Ipo(crate::in_place_overflow::map::IterMut<'a, K, V>),
     Gaps(crate::gaps::map::IterMut<'a, K, V>),
     Ipo64(crate::ipo64::map::IterMut<'a, K, V>),
+    FlatBTree(crate::flat_btree::map::IterMut<'a, K, V>),
 }
 
 impl<'a, K, V> Iterator for IterMut<'a, K, V> {
@@ -67,6 +71,7 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
             IterMut::Ipo(i) => i.next(),
             IterMut::Gaps(i) => i.next(),
             IterMut::Ipo64(i) => i.next(),
+            IterMut::FlatBTree(i) => i.next(),
         }
     }
     #[inline]
@@ -77,6 +82,7 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
             IterMut::Ipo(i) => i.size_hint(),
             IterMut::Gaps(i) => i.size_hint(),
             IterMut::Ipo64(i) => i.size_hint(),
+            IterMut::FlatBTree(i) => i.size_hint(),
         }
     }
 }
@@ -89,6 +95,7 @@ pub enum IntoIter<K, V> {
     Ipo(crate::in_place_overflow::map::IntoIter<K, V>),
     Gaps(crate::gaps::map::IntoIter<K, V>),
     Ipo64(crate::ipo64::map::IntoIter<K, V>),
+    FlatBTree(crate::flat_btree::map::IntoIter<K, V>),
 }
 
 impl<K, V> Iterator for IntoIter<K, V> {
@@ -101,6 +108,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             IntoIter::Ipo(i) => i.next(),
             IntoIter::Gaps(i) => i.next(),
             IntoIter::Ipo64(i) => i.next(),
+            IntoIter::FlatBTree(i) => i.next(),
         }
     }
     #[inline]
@@ -111,6 +119,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             IntoIter::Ipo(i) => i.size_hint(),
             IntoIter::Gaps(i) => i.size_hint(),
             IntoIter::Ipo64(i) => i.size_hint(),
+            IntoIter::FlatBTree(i) => i.size_hint(),
         }
     }
 }
@@ -120,7 +129,7 @@ impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 type S = DefaultHashBuilder;
 
-/// Dispatches a method on a 5-variant enum, returning the result directly.
+/// Dispatches a method on a 6-variant enum, returning the result directly.
 macro_rules! entry_match {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
         match $self {
@@ -129,6 +138,7 @@ macro_rules! entry_match {
             Self::Ipo(e) => e.$method($($arg),*),
             Self::Gaps(e) => e.$method($($arg),*),
             Self::Ipo64(e) => e.$method($($arg),*),
+            Self::FlatBTree(e) => e.$method($($arg),*),
         }
     };
 }
@@ -147,6 +157,7 @@ pub enum OccupiedEntry<'a, K, V> {
     Ipo(crate::in_place_overflow::map::OccupiedEntry<'a, K, V>),
     Gaps(crate::gaps::map::OccupiedEntry<'a, K, V>),
     Ipo64(crate::ipo64::map::OccupiedEntry<'a, K, V>),
+    FlatBTree(crate::flat_btree::map::OccupiedEntry<'a, K, V>),
 }
 
 /// A view into a vacant entry in an [`OptiMap`].
@@ -156,9 +167,10 @@ pub enum VacantEntry<'a, K, V> {
     Ipo(crate::in_place_overflow::map::VacantEntry<'a, K, V, S>),
     Gaps(crate::gaps::map::VacantEntry<'a, K, V, S>),
     Ipo64(crate::ipo64::map::VacantEntry<'a, K, V, S>),
+    FlatBTree(crate::flat_btree::map::VacantEntry<'a, K, V>),
 }
 
-impl<'a, K: Hash + Eq, V> Entry<'a, K, V> {
+impl<'a, K: Hash + Eq + Ord + Clone, V> Entry<'a, K, V> {
     /// Ensures a value is in the entry by inserting the default if empty.
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
@@ -244,7 +256,7 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
     }
 }
 
-impl<'a, K: Hash + Eq, V> VacantEntry<'a, K, V> {
+impl<'a, K: Hash + Eq + Ord + Clone, V> VacantEntry<'a, K, V> {
     /// Insert a value and return a mutable reference.
     pub fn insert(self, value: V) -> &'a mut V {
         entry_match!(self, insert, value)
@@ -263,7 +275,7 @@ impl<'a, K: Hash + Eq, V> VacantEntry<'a, K, V> {
 
 // ── Public types ───────────────────────────────────────────────────────────
 
-/// Which concrete hash map backend to use.
+/// Which concrete map backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapType {
     Ufm,
@@ -271,6 +283,9 @@ pub enum MapType {
     Ipo,
     Gaps,
     Ipo64,
+    /// Sorted backend ([`FlatBTree`]). Selected by `Hint::Sorted` or pinned
+    /// explicitly. Requires `K: Ord + Clone`.
+    FlatBTree,
 }
 
 /// Workload hint for backend selection.
@@ -287,6 +302,9 @@ pub enum Hint {
     Churn,
     /// Iteration-heavy: optimise for sequential scan.
     Iteration,
+    /// Sorted iteration / range queries — picks [`FlatBTree`].
+    /// Requires `K: Ord + Clone`.
+    Sorted,
 }
 
 /// Backend selection strategy.
@@ -337,6 +355,7 @@ enum Inner<K, V, S = DefaultHashBuilder> {
     Ipo(InPlaceOverflow<K, V, S>),
     Gaps(Gaps<K, V, S>),
     Ipo64(IPO64<K, V, S>),
+    FlatBTree(FlatBTree<K, V, S>),
 }
 
 // ── Policy engine ──────────────────────────────────────────────────────────
@@ -394,6 +413,7 @@ fn select_backend<K, V>(hint: Hint, capacity: usize) -> MapType {
         }
         Hint::Churn => MapType::Splitsies, // tombstone-free, flat at high load
         Hint::Iteration => MapType::Gaps,
+        Hint::Sorted => MapType::FlatBTree, // sorted iteration / range queries
         Hint::Auto => {
             if capacity >= TOMBSTONE_DRAM_CLIFF {
                 // Avoid the tombstone-at-DRAM cliff (5-13× miss regression).
@@ -421,6 +441,7 @@ macro_rules! dispatch {
             Inner::Ipo(m) => m.$method($($arg),*),
             Inner::Gaps(m) => m.$method($($arg),*),
             Inner::Ipo64(m) => m.$method($($arg),*),
+            Inner::FlatBTree(m) => m.$method($($arg),*),
         }
     };
 }
@@ -433,13 +454,14 @@ macro_rules! dispatch_mut {
             Inner::Ipo(m) => m.$method($($arg),*),
             Inner::Gaps(m) => m.$method($($arg),*),
             Inner::Ipo64(m) => m.$method($($arg),*),
+            Inner::FlatBTree(m) => m.$method($($arg),*),
         }
     };
 }
 
 // ── Constructors ───────────────────────────────────────────────────────────
 
-impl<K: Hash + Eq, V> OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
     /// Create an empty map, letting the policy engine choose the backend.
     pub fn new() -> Self {
         Self::with_capacity(0)
@@ -490,6 +512,19 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
         Self::pinned(MapType::Ipo64, 0)
     }
 
+    /// Create a map pinned to the `FlatBTree` backend (sorted iteration,
+    /// range queries). Requires `K: Ord + Clone`.
+    pub fn flat_btree() -> Self {
+        Self::pinned(MapType::FlatBTree, 0)
+    }
+
+    /// Create a map pinned to `FlatBTree` with the given capacity.
+    /// Equivalent to `with_capacity_and_hint(capacity, Hint::Sorted)` but
+    /// pinned (no auto-transition on resize).
+    pub fn sorted_with_capacity(capacity: usize) -> Self {
+        Self::pinned(MapType::FlatBTree, capacity)
+    }
+
     /// Create a map pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         Self::pinned(map_type, 0)
@@ -508,19 +543,20 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     }
 }
 
-fn build_inner<K: Hash + Eq, V>(map_type: MapType, capacity: usize) -> Inner<K, V> {
+fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize) -> Inner<K, V> {
     match map_type {
         MapType::Ufm => Inner::Ufm(UnorderedFlatMap::with_capacity(capacity)),
         MapType::Splitsies => Inner::Splitsies(Splitsies::with_capacity(capacity)),
         MapType::Ipo => Inner::Ipo(InPlaceOverflow::with_capacity(capacity)),
         MapType::Gaps => Inner::Gaps(Gaps::with_capacity(capacity)),
         MapType::Ipo64 => Inner::Ipo64(IPO64::with_capacity(capacity)),
+        MapType::FlatBTree => Inner::FlatBTree(FlatBTree::with_capacity(capacity)),
     }
 }
 
 // ── Core map operations ────────────────────────────────────────────────────
 
-impl<K: Hash + Eq, V> OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
     /// Insert a key-value pair. Returns the previous value if the key existed.
     #[inline(always)]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
@@ -532,7 +568,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch!(self, get, key)
     }
@@ -542,7 +578,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch!(self, get_key_value, key)
     }
@@ -552,7 +588,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch_mut!(self, get_mut, key)
     }
@@ -562,7 +598,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch_mut!(self, remove, key)
     }
@@ -572,7 +608,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch_mut!(self, remove_entry, key)
     }
@@ -582,7 +618,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         dispatch!(self, contains_key, key)
     }
@@ -618,6 +654,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
             Inner::Ipo(_) => MapType::Ipo,
             Inner::Gaps(_) => MapType::Gaps,
             Inner::Ipo64(_) => MapType::Ipo64,
+            Inner::FlatBTree(_) => MapType::FlatBTree,
         }
     }
 
@@ -650,6 +687,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
             Inner::Ipo(m) => Iter::Ipo(m.iter()),
             Inner::Gaps(m) => Iter::Gaps(m.iter()),
             Inner::Ipo64(m) => Iter::Ipo64(m.iter()),
+            Inner::FlatBTree(m) => Iter::FlatBTree(m.iter()),
         }
     }
 
@@ -661,6 +699,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
             Inner::Ipo(m) => IterMut::Ipo(m.iter_mut()),
             Inner::Gaps(m) => IterMut::Gaps(m.iter_mut()),
             Inner::Ipo64(m) => IterMut::Ipo64(m.iter_mut()),
+            Inner::FlatBTree(m) => IterMut::FlatBTree(m.iter_mut()),
         }
     }
 
@@ -728,6 +767,14 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
                 crate::ipo64::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Ipo64(e)),
                 crate::ipo64::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Ipo64(e)),
             },
+            Inner::FlatBTree(m) => match m.entry(key) {
+                crate::flat_btree::map::Entry::Occupied(e) => {
+                    Entry::Occupied(OccupiedEntry::FlatBTree(e))
+                }
+                crate::flat_btree::map::Entry::Vacant(e) => {
+                    Entry::Vacant(VacantEntry::FlatBTree(e))
+                }
+            },
         }
     }
 
@@ -749,6 +796,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
             Inner::Ipo(m) => m.drain().collect(),
             Inner::Gaps(m) => m.drain().collect(),
             Inner::Ipo64(m) => m.drain().collect(),
+            Inner::FlatBTree(m) => m.drain().collect(),
         };
         items.into_iter()
     }
@@ -764,6 +812,7 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
             Inner::Ipo(mut m) => m.drain().collect(),
             Inner::Gaps(mut m) => m.drain().collect(),
             Inner::Ipo64(mut m) => m.drain().collect(),
+            Inner::FlatBTree(mut m) => m.drain().collect(),
         };
         for (k, v) in entries {
             dispatch_mut!(self, insert, k, v);
@@ -773,13 +822,13 @@ impl<K: Hash + Eq, V> OptiMap<K, V> {
 
 // ── Default, Debug, Clone ──────────────────────────────────────────────────
 
-impl<K: Hash + Eq, V> Default for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> Default for OptiMap<K, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: Hash + Eq + fmt::Debug, V: fmt::Debug> fmt::Debug for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone + fmt::Debug, V: fmt::Debug> fmt::Debug for OptiMap<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut map = f.debug_map();
         match &self.inner {
@@ -808,12 +857,17 @@ impl<K: Hash + Eq + fmt::Debug, V: fmt::Debug> fmt::Debug for OptiMap<K, V> {
                     map.entry(k, v);
                 }
             }
+            Inner::FlatBTree(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
         }
         map.finish()
     }
 }
 
-impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V: Clone> Clone for OptiMap<K, V> {
     fn clone(&self) -> Self {
         OptiMap {
             inner: match &self.inner {
@@ -822,13 +876,14 @@ impl<K: Hash + Eq + Clone, V: Clone> Clone for OptiMap<K, V> {
                 Inner::Ipo(m) => Inner::Ipo(m.clone()),
                 Inner::Gaps(m) => Inner::Gaps(m.clone()),
                 Inner::Ipo64(m) => Inner::Ipo64(m.clone()),
+                Inner::FlatBTree(m) => Inner::FlatBTree(m.clone()),
             },
             backend: self.backend,
         }
     }
 }
 
-impl<K: Hash + Eq, V: PartialEq> PartialEq for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V: PartialEq> PartialEq for OptiMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -854,14 +909,15 @@ impl<K: Hash + Eq, V: PartialEq> PartialEq for OptiMap<K, V> {
             Inner::Ipo(m) => check_eq!(m),
             Inner::Gaps(m) => check_eq!(m),
             Inner::Ipo64(m) => check_eq!(m),
+            Inner::FlatBTree(m) => check_eq!(m),
         }
         eq
     }
 }
 
-impl<K: Hash + Eq, V: Eq> Eq for OptiMap<K, V> {}
+impl<K: Hash + Eq + Ord + Clone, V: Eq> Eq for OptiMap<K, V> {}
 
-impl<K: Hash + Eq, V> FromIterator<(K, V)> for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> FromIterator<(K, V)> for OptiMap<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
@@ -873,7 +929,7 @@ impl<K: Hash + Eq, V> FromIterator<(K, V)> for OptiMap<K, V> {
     }
 }
 
-impl<K: Hash + Eq, V> Extend<(K, V)> for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> Extend<(K, V)> for OptiMap<K, V> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         for (k, v) in iter {
             self.insert(k, v);
@@ -881,7 +937,7 @@ impl<K: Hash + Eq, V> Extend<(K, V)> for OptiMap<K, V> {
     }
 }
 
-impl<K: Hash + Eq, V> IntoIterator for OptiMap<K, V> {
+impl<K: Hash + Eq + Ord + Clone, V> IntoIterator for OptiMap<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 
@@ -892,14 +948,15 @@ impl<K: Hash + Eq, V> IntoIterator for OptiMap<K, V> {
             Inner::Ipo(m) => IntoIter::Ipo(m.into_iter()),
             Inner::Gaps(m) => IntoIter::Gaps(m.into_iter()),
             Inner::Ipo64(m) => IntoIter::Ipo64(m.into_iter()),
+            Inner::FlatBTree(m) => IntoIter::FlatBTree(m.into_iter()),
         }
     }
 }
 
 impl<K, Q, V> std::ops::Index<&Q> for OptiMap<K, V>
 where
-    K: Hash + Eq + Borrow<Q>,
-    Q: Hash + Eq + ?Sized,
+    K: Hash + Eq + Ord + Clone + Borrow<Q>,
+    Q: Hash + Eq + Ord + ?Sized,
 {
     type Output = V;
 
@@ -908,141 +965,15 @@ where
     }
 }
 
-// ── Map trait impl ─────────────────────────────────────────────────────────
-
-impl<K: Hash + Eq, V> crate::HashedMap<K, V> for OptiMap<K, V> {
-    fn new() -> Self {
-        OptiMap::new()
-    }
-
-    fn with_capacity(capacity: usize) -> Self {
-        OptiMap::with_capacity(capacity)
-    }
-
-    #[inline]
-    fn insert(&mut self, key: K, value: V) -> Option<V> {
-        OptiMap::insert(self, key, value)
-    }
-
-    #[inline]
-    fn get<Q>(&self, key: &Q) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::get(self, key)
-    }
-
-    #[inline]
-    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::get_key_value(self, key)
-    }
-
-    #[inline]
-    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::get_mut(self, key)
-    }
-
-    #[inline]
-    fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::remove(self, key)
-    }
-
-    #[inline]
-    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::remove_entry(self, key)
-    }
-
-    #[inline]
-    fn contains_key<Q>(&self, key: &Q) -> bool
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        OptiMap::contains_key(self, key)
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        OptiMap::len(self)
-    }
-
-    #[inline]
-    fn capacity(&self) -> usize {
-        OptiMap::capacity(self)
-    }
-
-    fn clear(&mut self) {
-        OptiMap::clear(self)
-    }
-
-    fn reserve(&mut self, additional: usize) {
-        OptiMap::reserve(self, additional)
-    }
-
-    fn shrink_to_fit(&mut self) {
-        OptiMap::shrink_to_fit(self)
-    }
-
-    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
-    where
-        K: 'a,
-        V: 'a,
-    {
-        OptiMap::iter(self)
-    }
-
-    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
-    where
-        K: 'a,
-        V: 'a,
-    {
-        OptiMap::iter_mut(self)
-    }
-
-    fn retain<F>(&mut self, f: F)
-    where
-        F: FnMut(&K, &mut V) -> bool,
-    {
-        OptiMap::retain(self, f)
-    }
-
-    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
-        OptiMap::drain(self)
-    }
-
-    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
-        OptiMap::try_insert(self, key, value)
-    }
-
-    fn into_keys(self) -> impl Iterator<Item = K> {
-        OptiMap::into_keys(self)
-    }
-
-    fn into_values(self) -> impl Iterator<Item = V> {
-        OptiMap::into_values(self)
-    }
-}
-
 // ── Map facade trait impl ──────────────────────────────────────────────────
+//
+// `HashedMap` is intentionally NOT implemented for `OptiMap`. With FlatBTree
+// in the variant set, dispatch into FlatBTree requires `K: Ord + Clone` and
+// `Q: Ord` — bounds the `HashedMap` trait can't express. Generic code that
+// wants a universal `<M: ...>` bound for OptiMap should use `Map` instead.
 
-impl<K: Hash + Eq + Ord, V> crate::Map<K, V> for OptiMap<K, V> {
+
+impl<K: Hash + Eq + Ord + Clone, V> crate::Map<K, V> for OptiMap<K, V> {
     fn new() -> Self {
         OptiMap::new()
     }
@@ -1396,9 +1327,9 @@ mod tests {
 
     #[test]
     fn map_trait_usage() {
-        use crate::HashedMap;
+        use crate::Map;
 
-        fn fill<M: HashedMap<u64, u64>>(m: &mut M, n: u64) {
+        fn fill<M: Map<u64, u64>>(m: &mut M, n: u64) {
             for i in 0..n {
                 m.insert(i, i);
             }
@@ -1416,6 +1347,31 @@ mod tests {
         let s = format!("{:?}", map);
         assert!(s.contains("1"));
         assert!(s.contains("2"));
+    }
+
+    #[test]
+    fn flat_btree_backend() {
+        // Sorted hint picks FlatBTree.
+        let mut map: OptiMap<u32, u32> = OptiMap::with_hint(Hint::Sorted);
+        assert_eq!(map.map_type(), MapType::FlatBTree);
+        map.insert(3, 30);
+        map.insert(1, 10);
+        map.insert(2, 20);
+        assert_eq!(map.get(&2), Some(&20));
+        assert_eq!(map.len(), 3);
+        // Iter on a FlatBTree yields sorted order.
+        let pairs: Vec<_> = map.iter().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(pairs, vec![(1, 10), (2, 20), (3, 30)]);
+
+        // Pinned constructor.
+        let pinned: OptiMap<u32, u32> = OptiMap::flat_btree();
+        assert_eq!(pinned.map_type(), MapType::FlatBTree);
+
+        // Entry API works through the FlatBTree variant.
+        let mut m: OptiMap<u32, u32> = OptiMap::flat_btree();
+        *m.entry(7).or_insert(0) += 1;
+        *m.entry(7).or_insert(0) += 1;
+        assert_eq!(m.get(&7), Some(&2));
     }
 
     #[test]

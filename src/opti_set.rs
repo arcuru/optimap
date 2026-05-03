@@ -42,7 +42,7 @@ pub struct OptiSet<T, S = DefaultHashBuilder> {
 
 // ── Constructors ───────────────────────────────────────────────────────────
 
-impl<T: Hash + Eq> OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     /// Create an empty set, letting the policy engine choose the backend.
     pub fn new() -> Self {
         OptiSet { inner: OptiMap::new() }
@@ -88,6 +88,12 @@ impl<T: Hash + Eq> OptiSet<T> {
         OptiSet { inner: OptiMap::ipo64() }
     }
 
+    /// Create a set pinned to the `FlatBTree` backend (sorted iteration,
+    /// range queries). Requires `T: Ord + Clone`.
+    pub fn flat_btree() -> Self {
+        OptiSet { inner: OptiMap::flat_btree() }
+    }
+
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         OptiSet { inner: OptiMap::with_type(map_type) }
@@ -101,7 +107,7 @@ impl<T: Hash + Eq> OptiSet<T> {
 
 // ── Core set operations ────────────────────────────────────────────────────
 
-impl<T: Hash + Eq> OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     /// Adds a value to the set. Returns `true` if newly inserted.
     #[inline(always)]
     pub fn insert(&mut self, value: T) -> bool {
@@ -113,7 +119,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     pub fn contains<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.inner.contains_key(value)
     }
@@ -123,7 +129,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     pub fn get<Q>(&self, value: &Q) -> Option<&T>
     where
         T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.inner.get_key_value(value).map(|(k, _)| k)
     }
@@ -133,7 +139,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     pub fn remove<Q>(&mut self, value: &Q) -> bool
     where
         T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.inner.remove(value).is_some()
     }
@@ -143,7 +149,7 @@ impl<T: Hash + Eq> OptiSet<T> {
     pub fn take<Q>(&mut self, value: &Q) -> Option<T>
     where
         T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.inner.remove_entry(value).map(|(k, _)| k)
     }
@@ -206,7 +212,7 @@ impl<T: Hash + Eq> OptiSet<T> {
 
 // ── Set algebra operations ─────────────────────────────────────────────────
 
-impl<T: Hash + Eq + Clone> OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     /// Returns `true` if `self` has no elements in common with `other`.
     pub fn is_disjoint(&self, other: &Self) -> bool {
         if self.len() <= other.len() {
@@ -287,25 +293,25 @@ impl<T: Hash + Eq + Clone> OptiSet<T> {
 
 // ── Trait implementations ──────────────────────────────────────────────────
 
-impl<T: Hash + Eq> Default for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> Default for OptiSet<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Hash + Eq + fmt::Debug> fmt::Debug for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone + fmt::Debug> fmt::Debug for OptiSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }
 }
 
-impl<T: Hash + Eq + Clone> Clone for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> Clone for OptiSet<T> {
     fn clone(&self) -> Self {
         OptiSet { inner: self.inner.clone() }
     }
 }
 
-impl<T: Hash + Eq> PartialEq for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> PartialEq for OptiSet<T> {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -314,9 +320,9 @@ impl<T: Hash + Eq> PartialEq for OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq> Eq for OptiSet<T> {}
+impl<T: Hash + Eq + Ord + Clone> Eq for OptiSet<T> {}
 
-impl<T: Hash + Eq> FromIterator<T> for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> FromIterator<T> for OptiSet<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
@@ -328,7 +334,7 @@ impl<T: Hash + Eq> FromIterator<T> for OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq> Extend<T> for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> Extend<T> for OptiSet<T> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
             self.insert(item);
@@ -336,7 +342,7 @@ impl<T: Hash + Eq> Extend<T> for OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq> IntoIterator for OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> IntoIterator for OptiSet<T> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
 
@@ -347,7 +353,7 @@ impl<T: Hash + Eq> IntoIterator for OptiSet<T> {
 
 // ── Bitwise operators (std::HashSet parity) ─────────────────────────────────
 
-impl<T: Hash + Eq + Clone> std::ops::BitOr<&OptiSet<T>> for &OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitOr<&OptiSet<T>> for &OptiSet<T> {
     type Output = OptiSet<T>;
     /// Union: `a | b`.
     fn bitor(self, rhs: &OptiSet<T>) -> OptiSet<T> {
@@ -355,7 +361,7 @@ impl<T: Hash + Eq + Clone> std::ops::BitOr<&OptiSet<T>> for &OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq + Clone> std::ops::BitAnd<&OptiSet<T>> for &OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitAnd<&OptiSet<T>> for &OptiSet<T> {
     type Output = OptiSet<T>;
     /// Intersection: `a & b`.
     fn bitand(self, rhs: &OptiSet<T>) -> OptiSet<T> {
@@ -363,7 +369,7 @@ impl<T: Hash + Eq + Clone> std::ops::BitAnd<&OptiSet<T>> for &OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq + Clone> std::ops::BitXor<&OptiSet<T>> for &OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> std::ops::BitXor<&OptiSet<T>> for &OptiSet<T> {
     type Output = OptiSet<T>;
     /// Symmetric difference: `a ^ b`.
     fn bitxor(self, rhs: &OptiSet<T>) -> OptiSet<T> {
@@ -371,7 +377,7 @@ impl<T: Hash + Eq + Clone> std::ops::BitXor<&OptiSet<T>> for &OptiSet<T> {
     }
 }
 
-impl<T: Hash + Eq + Clone> std::ops::Sub<&OptiSet<T>> for &OptiSet<T> {
+impl<T: Hash + Eq + Ord + Clone> std::ops::Sub<&OptiSet<T>> for &OptiSet<T> {
     type Output = OptiSet<T>;
     /// Difference: `a - b`.
     fn sub(self, rhs: &OptiSet<T>) -> OptiSet<T> {
@@ -379,54 +385,10 @@ impl<T: Hash + Eq + Clone> std::ops::Sub<&OptiSet<T>> for &OptiSet<T> {
     }
 }
 
-// ── Set trait impl ─────────────────────────────────────────────────────────
-
-impl<T: Hash + Eq> crate::Set<T> for OptiSet<T> {
-    fn new() -> Self { OptiSet::new() }
-    fn with_capacity(capacity: usize) -> Self { OptiSet::with_capacity(capacity) }
-    #[inline]
-    fn insert(&mut self, value: T) -> bool { OptiSet::insert(self, value) }
-
-    #[inline]
-    fn contains<Q>(&self, value: &Q) -> bool
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
-    { OptiSet::contains(self, value) }
-
-    #[inline]
-    fn get<Q>(&self, value: &Q) -> Option<&T>
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
-    { OptiSet::get(self, value) }
-
-    #[inline]
-    fn remove<Q>(&mut self, value: &Q) -> bool
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
-    { OptiSet::remove(self, value) }
-
-    #[inline]
-    fn take<Q>(&mut self, value: &Q) -> Option<T>
-    where T: Borrow<Q>, Q: Hash + Eq + ?Sized,
-    { OptiSet::take(self, value) }
-
-    #[inline]
-    fn len(&self) -> usize { OptiSet::len(self) }
-    #[inline]
-    fn capacity(&self) -> usize { OptiSet::capacity(self) }
-    fn clear(&mut self) { OptiSet::clear(self) }
-    fn reserve(&mut self, additional: usize) { OptiSet::reserve(self, additional) }
-    fn shrink_to_fit(&mut self) { OptiSet::shrink_to_fit(self) }
-
-    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T> where T: 'a {
-        OptiSet::iter(self)
-    }
-
-    fn retain<F>(&mut self, f: F) where F: FnMut(&T) -> bool {
-        OptiSet::retain(self, f)
-    }
-
-    fn drain(&mut self) -> impl Iterator<Item = T> {
-        OptiSet::drain(self)
-    }
-}
+// `Set` is intentionally NOT implemented for `OptiSet` — the FlatBTree
+// variant brings `Q: Ord` into the dispatch path, which the `Set` trait's
+// `Q: Hash + Eq` bound can't accommodate. Use inherent methods, or wrap
+// a specific backend type if a `Set`-bound generic is needed.
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -573,20 +535,9 @@ mod tests {
         assert!(a.is_superset(&sub));
     }
 
-    #[test]
-    fn set_trait_usage() {
-        use crate::Set;
-
-        fn fill<S: Set<u64>>(s: &mut S, n: u64) {
-            for i in 0..n {
-                s.insert(i);
-            }
-        }
-
-        let mut set = OptiSet::new();
-        fill(&mut set, 100);
-        assert_eq!(set.len(), 100);
-    }
+    // The `set_trait_usage` test was removed when OptiSet stopped implementing
+    // the `Set` trait (FlatBTree backend brings `Q: Ord`, incompatible with
+    // `Set`'s `Q: Hash + Eq`). The inherent API still covers the same ground.
 
     #[test]
     fn debug_display() {

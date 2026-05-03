@@ -9,7 +9,7 @@ use std::borrow::Borrow;
 use std::hash::Hash;
 
 use criterion::{BenchmarkGroup, BenchmarkId, black_box, measurement::WallTime};
-use optimap::HashedMap;
+use optimap::Map;
 use optimap::optimap::MapType;
 
 // ── OptiMap wrappers pinned per backend for benchmarking ───────────────────
@@ -63,7 +63,7 @@ pub struct OptiMapBenchBackend<K: Hash + Eq, V, B: OptiBackend>(
 /// OptiMap row in the existing all-design benches).
 pub type OptiMapBench<K, V> = OptiMapBenchBackend<K, V, OptiIpo>;
 
-impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K, V, B> {
+impl<K: Hash + Eq + Ord + Clone, V, B: OptiBackend> Map<K, V> for OptiMapBenchBackend<K, V, B> {
     fn new() -> Self {
         OptiMapBenchBackend(
             optimap::OptiMap::with_type(B::MAP_TYPE),
@@ -84,7 +84,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.get(key)
     }
@@ -92,7 +92,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.get_key_value(key)
     }
@@ -100,7 +100,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.get_mut(key)
     }
@@ -108,7 +108,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.remove(key)
     }
@@ -116,7 +116,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.remove_entry(key)
     }
@@ -124,7 +124,7 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
+        Q: Hash + Eq + Ord + ?Sized,
     {
         self.0.contains_key(key)
     }
@@ -175,95 +175,16 @@ impl<K: Hash + Eq, V, B: OptiBackend> HashedMap<K, V> for OptiMapBenchBackend<K,
     }
 }
 
-impl<K: Hash + Eq + Clone, V: Clone, B: OptiBackend> Clone for OptiMapBenchBackend<K, V, B> {
+impl<K: Hash + Eq + Ord + Clone, V: Clone, B: OptiBackend> Clone for OptiMapBenchBackend<K, V, B> {
     fn clone(&self) -> Self {
         OptiMapBenchBackend(self.0.clone(), std::marker::PhantomData)
     }
 }
 
-// ── OptiSet wrapper pinned to IPO for benchmarking ──────────────────────────
-
-/// Thin wrapper around `OptiSet` pinned to the IPO backend.
-pub struct OptiSetBench<T: Hash + Eq>(optimap::OptiSet<T>);
-
-impl<T: Hash + Eq> optimap::Set<T> for OptiSetBench<T> {
-    fn new() -> Self {
-        OptiSetBench(optimap::OptiSet::with_type(MapType::Ipo))
-    }
-    fn with_capacity(capacity: usize) -> Self {
-        OptiSetBench(optimap::OptiSet::with_type_and_capacity(
-            MapType::Ipo,
-            capacity,
-        ))
-    }
-    #[inline(always)]
-    fn insert(&mut self, value: T) -> bool {
-        self.0.insert(value)
-    }
-    #[inline(always)]
-    fn contains<Q>(&self, value: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        self.0.contains(value)
-    }
-    #[inline(always)]
-    fn get<Q>(&self, value: &Q) -> Option<&T>
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        self.0.get(value)
-    }
-    #[inline(always)]
-    fn remove<Q>(&mut self, value: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        self.0.remove(value)
-    }
-    #[inline(always)]
-    fn take<Q>(&mut self, value: &Q) -> Option<T>
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        self.0.take(value)
-    }
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-    fn capacity(&self) -> usize {
-        self.0.capacity()
-    }
-    fn clear(&mut self) {
-        self.0.clear()
-    }
-    fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional)
-    }
-    fn shrink_to_fit(&mut self) {
-        self.0.shrink_to_fit()
-    }
-    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T>
-    where
-        T: 'a,
-    {
-        self.0.iter()
-    }
-    fn retain<F>(&mut self, f: F)
-    where
-        F: FnMut(&T) -> bool,
-    {
-        self.0.retain(f)
-    }
-    fn drain(&mut self) -> impl Iterator<Item = T> {
-        self.0.drain()
-    }
-}
+// `OptiSetBench` (an OptiSet wrapper that impl'd `Set`) was removed when
+// OptiSet absorbed the FlatBTree backend — `Set`'s `Q: Hash + Eq` bound
+// can't accommodate the `Q: Ord` that FlatBTree dispatch needs. Backend-
+// specific set types (`IpoSet`, `SplitsiesSet`, …) cover the same ground.
 
 // ── Fast deterministic RNG (shared across all benchmark files) ──────────────
 
@@ -325,7 +246,7 @@ pub fn entries_for_load(capacity: usize, load_pct: usize) -> usize {
 // ── Generic benchmark functions ─────────────────────────────────────────────
 
 /// Benchmark insert: clear + re-insert into a pre-warmed map.
-pub fn bench_insert_for<M: HashedMap<u64, u64>>(
+pub fn bench_insert_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -349,7 +270,7 @@ pub fn bench_insert_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark lookup hit on a pre-built map.
-pub fn bench_lookup_hit_for<M: HashedMap<u64, u64>>(
+pub fn bench_lookup_hit_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -373,7 +294,7 @@ pub fn bench_lookup_hit_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark lookup miss on a pre-built map.
-pub fn bench_lookup_miss_for<M: HashedMap<u64, u64>>(
+pub fn bench_lookup_miss_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -400,7 +321,7 @@ pub fn bench_lookup_miss_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark remove: fill then remove all keys.
-pub fn bench_remove_for<M: HashedMap<u64, u64>>(
+pub fn bench_remove_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -426,7 +347,7 @@ pub fn bench_remove_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark grow from empty (no pre-allocation).
-pub fn bench_grow_for<M: HashedMap<u64, u64>>(
+pub fn bench_grow_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     keys: &[u64],
@@ -444,7 +365,7 @@ pub fn bench_grow_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark with_capacity + fill.
-pub fn bench_with_capacity_for<M: HashedMap<u64, u64>>(
+pub fn bench_with_capacity_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     keys: &[u64],
@@ -462,7 +383,7 @@ pub fn bench_with_capacity_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark clone on a pre-built map.
-pub fn bench_clone_for<M: HashedMap<u64, u64> + Clone>(
+pub fn bench_clone_for<M: Map<u64, u64> + Clone>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     keys: &[u64],
@@ -478,7 +399,7 @@ pub fn bench_clone_for<M: HashedMap<u64, u64> + Clone>(
 }
 
 /// Build a map at a specific load level, returning (map, keys).
-pub fn build_map_at_load<M: HashedMap<u64, u64>>(
+pub fn build_map_at_load<M: Map<u64, u64>>(
     target_capacity: usize,
     num_entries: usize,
     seed: u64,
@@ -495,7 +416,7 @@ pub fn build_map_at_load<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark lookup hit at a specific load level (fixed ops count, cycling keys).
-pub fn bench_load_hit_for<M: HashedMap<u64, u64>>(
+pub fn bench_load_hit_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     capacity: usize,
@@ -516,7 +437,7 @@ pub fn bench_load_hit_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark lookup miss at a specific load level.
-pub fn bench_load_miss_for<M: HashedMap<u64, u64>>(
+pub fn bench_load_miss_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     capacity: usize,
@@ -543,7 +464,7 @@ pub fn bench_load_miss_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark mixed ops (50% insert, 30% lookup, 20% remove) at a specific load.
-pub fn bench_load_mixed_for<M: HashedMap<u64, u64>>(
+pub fn bench_load_mixed_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     capacity: usize,
@@ -576,7 +497,7 @@ pub fn bench_load_mixed_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark post-delete lookup: build, remove half, measure lookup of all keys.
-pub fn bench_post_delete_for<M: HashedMap<u64, u64>>(
+pub fn bench_post_delete_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -606,7 +527,7 @@ pub fn bench_post_delete_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark remove+reinsert pattern on a pre-built map.
-pub fn bench_remove_reinsert_for<M: HashedMap<u64, u64>>(
+pub fn bench_remove_reinsert_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -634,7 +555,7 @@ pub fn bench_remove_reinsert_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark miss ratio sweep: lookup with a mix of hit/miss keys.
-pub fn bench_miss_ratio_for<M: HashedMap<u64, u64>>(
+pub fn bench_miss_ratio_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     keys: &[u64],
@@ -664,7 +585,7 @@ pub fn bench_miss_ratio_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark equilibrium churn: insert + remove in a loop.
-pub fn bench_churn_for<M: HashedMap<u64, u64>>(
+pub fn bench_churn_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -690,7 +611,7 @@ pub fn bench_churn_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark read-heavy workload: mixed ops on a pre-built map.
-pub fn bench_mixed_workload_for<M: HashedMap<u64, u64>>(
+pub fn bench_mixed_workload_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -727,7 +648,7 @@ pub fn bench_mixed_workload_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark write-heavy workload: 50% read, 30% insert, 20% remove.
-pub fn bench_write_heavy_for<M: HashedMap<u64, u64>>(
+pub fn bench_write_heavy_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
@@ -764,7 +685,7 @@ pub fn bench_write_heavy_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark high-load hit: lookup on a pre-built map (fixed ops, cycling).
-pub fn bench_high_load_hit_for<M: HashedMap<u64, u64>>(
+pub fn bench_high_load_hit_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     keys: &[u64],
@@ -788,7 +709,7 @@ pub fn bench_high_load_hit_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark high-load miss.
-pub fn bench_high_load_miss_for<M: HashedMap<u64, u64>>(
+pub fn bench_high_load_miss_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     num_entries: usize,
@@ -819,7 +740,7 @@ pub fn bench_high_load_miss_for<M: HashedMap<u64, u64>>(
 }
 
 /// Benchmark iteration over a pre-built map.
-pub fn bench_iteration_for<M: HashedMap<u64, u64>>(
+pub fn bench_iteration_for<M: Map<u64, u64>>(
     group: &mut BenchmarkGroup<WallTime>,
     name: &str,
     label: &str,
