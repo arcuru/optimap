@@ -397,6 +397,7 @@ pub mod matrix_types {
 
 pub use raw::hash::IsAvalanching;
 pub use traits::HashedMap;
+pub use traits::Map;
 pub use traits::OccupiedError;
 pub use traits::Set;
 pub use traits::SortedMap;

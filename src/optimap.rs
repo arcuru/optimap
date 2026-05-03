@@ -1040,6 +1040,118 @@ impl<K: Hash + Eq, V> crate::HashedMap<K, V> for OptiMap<K, V> {
     }
 }
 
+// ── Map facade trait impl ──────────────────────────────────────────────────
+
+impl<K: Hash + Eq + Ord, V> crate::Map<K, V> for OptiMap<K, V> {
+    fn new() -> Self {
+        OptiMap::new()
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiMap::with_capacity(capacity)
+    }
+    #[inline]
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        OptiMap::insert(self, key, value)
+    }
+    #[inline]
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::get(self, key)
+    }
+    #[inline]
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::get_key_value(self, key)
+    }
+    #[inline]
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::get_mut(self, key)
+    }
+    #[inline]
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::remove(self, key)
+    }
+    #[inline]
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::remove_entry(self, key)
+    }
+    #[inline]
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiMap::contains_key(self, key)
+    }
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        OptiMap::try_insert(self, key, value)
+    }
+    #[inline]
+    fn len(&self) -> usize {
+        OptiMap::len(self)
+    }
+    #[inline]
+    fn capacity(&self) -> usize {
+        OptiMap::capacity(self)
+    }
+    fn clear(&mut self) {
+        OptiMap::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        OptiMap::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        OptiMap::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        OptiMap::iter(self)
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        OptiMap::iter_mut(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        OptiMap::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        OptiMap::drain(self)
+    }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        OptiMap::into_keys(self)
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        OptiMap::into_values(self)
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

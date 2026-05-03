@@ -1059,7 +1059,13 @@ impl<K, V> Drop for Drain<'_, K, V> {
 impl<K, V> ExactSizeIterator for Drain<'_, K, V> {}
 impl<K, V> std::iter::FusedIterator for Drain<'_, K, V> {}
 
-// ── Map trait impl (K: Hash + Eq + Ord) ─────────────────────────────────
+// ── HashedMap trait impl (O(n) leaf scan, FlatBTreeSet compat) ──────────
+//
+// FlatBTreeSet = GenericSet<T, FlatBTree<T, ()>> requires `M: HashedMap`,
+// so this impl exists to satisfy that bound. Lookups walk the leaves
+// linearly — accepting any `Q: Hash + Eq` makes navigation by `Ord`
+// impossible. Generic code that doesn't need set-by-hash should use the
+// `Map` facade or `SortedMap` directly to get O(log n) dispatch.
 
 impl<K, V, S> crate::HashedMap<K, V> for FlatBTree<K, V, S>
 where
@@ -1729,6 +1735,117 @@ impl<K: Ord + Clone, V, S: Default> crate::SortedMap<K, V> for FlatBTree<K, V, S
 
     fn append(&mut self, other: &mut Self) {
         FlatBTree::append(self, other);
+    }
+}
+
+// ── Map facade trait impl ───────────────────────────────────────────────
+//
+// FlatBTree implements both HashedMap (O(n) leaf-walk fallback, kept for
+// FlatBTreeSet compatibility via GenericSet's HashedMap bound) and SortedMap
+// (O(log n) native). The Map facade picks the cheap path by forwarding to
+// the inherent methods, which use Ord under the hood.
+
+impl<K: std::hash::Hash + Eq + Ord + Clone, V, S: Default> crate::Map<K, V> for FlatBTree<K, V, S> {
+    fn new() -> Self {
+        FlatBTree::with_hasher(S::default())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        FlatBTree::with_capacity_and_hasher(capacity, S::default())
+    }
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        FlatBTree::insert(self, key, value)
+    }
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::get(self, key)
+    }
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::get_key_value(self, key)
+    }
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::get_mut(self, key)
+    }
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::remove(self, key)
+    }
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::remove_entry(self, key)
+    }
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: std::hash::Hash + Eq + Ord + ?Sized,
+    {
+        FlatBTree::contains_key(self, key)
+    }
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        FlatBTree::try_insert(self, key, value)
+    }
+    fn len(&self) -> usize {
+        FlatBTree::len(self)
+    }
+    fn is_empty(&self) -> bool {
+        FlatBTree::is_empty(self)
+    }
+    fn capacity(&self) -> usize {
+        FlatBTree::capacity(self)
+    }
+    fn clear(&mut self) {
+        FlatBTree::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        FlatBTree::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        FlatBTree::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        FlatBTree::iter(self)
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        FlatBTree::iter_mut(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        FlatBTree::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        FlatBTree::drain(self)
+    }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        FlatBTree::into_keys(self)
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        FlatBTree::into_values(self)
     }
 }
 

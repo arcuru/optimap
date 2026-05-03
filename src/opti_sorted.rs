@@ -669,6 +669,115 @@ impl<K: Ord + Clone, V, S: BuildHasher + Default> crate::SortedMap<K, V>
     }
 }
 
+// ── Map facade trait impl ──────────────────────────────────────────────────
+
+impl<K: Hash + Eq + Ord + Clone, V, S: BuildHasher + Default> crate::Map<K, V>
+    for OptiSortedMap<K, V, S>
+{
+    fn new() -> Self {
+        OptiSortedMap {
+            inner: crate::Map::new(),
+        }
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiSortedMap {
+            inner: crate::Map::with_capacity(capacity),
+        }
+    }
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        OptiSortedMap::insert(self, key, value)
+    }
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::get(self, key)
+    }
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::get_key_value(self, key)
+    }
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::get_mut(self, key)
+    }
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::remove(self, key)
+    }
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::remove_entry(self, key)
+    }
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        OptiSortedMap::contains_key(self, key)
+    }
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+        OptiSortedMap::try_insert(self, key, value)
+    }
+    fn len(&self) -> usize {
+        OptiSortedMap::len(self)
+    }
+    fn capacity(&self) -> usize {
+        OptiSortedMap::capacity(self)
+    }
+    fn clear(&mut self) {
+        OptiSortedMap::clear(self)
+    }
+    fn reserve(&mut self, additional: usize) {
+        OptiSortedMap::reserve(self, additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        OptiSortedMap::shrink_to_fit(self)
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        OptiSortedMap::iter(self)
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        OptiSortedMap::iter_mut(self)
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        OptiSortedMap::retain(self, f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        OptiSortedMap::drain(self)
+    }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        OptiSortedMap::into_keys(self)
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        OptiSortedMap::into_values(self)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // OptiSortedSet
 // ═══════════════════════════════════════════════════════════════════════════
