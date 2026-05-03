@@ -102,6 +102,13 @@
 //! assert_eq!(set.first(), Some(&1));
 //! ```
 //!
+//! [`OptiMap`] now also accepts [`Hint::Sorted`] (or [`OptiMap::flat_btree()`])
+//! to pick the FlatBTree backend through the unified wrapper. That covers
+//! basic CRUD and sorted iteration via `iter()`. Sorted-only ops
+//! (`first_key_value`, `pop_first`, `range`, …) currently live only on
+//! [`OptiSortedMap`] / [`FlatBTree`] — adding them to [`OptiMap`] is the
+//! deferred half of trait-family task 14.
+//!
 //! ## Choosing a design
 //!
 //! - **Let OptiMap decide**: [`OptiMap`] / [`OptiSet`] — auto-selects backend, good default
