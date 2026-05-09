@@ -270,6 +270,31 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     {
         self.inner.range(range).map(|(k, _)| k)
     }
+
+    /// Splits the set at `at`, keeping elements `< at` in `self` and returning
+    /// a new set with elements `>= at`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        OptiSet {
+            inner: self.inner.split_off(at),
+        }
+    }
+
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either `self` or `other` has a non-[`FlatBTree`] backend.
+    pub fn append(&mut self, other: &mut Self) {
+        self.inner.append(&mut other.inner);
+    }
 }
 
 // ── Set algebra operations ─────────────────────────────────────────────────
@@ -715,6 +740,111 @@ mod tests {
         fn range_panics_on_hash_backend() {
             let set: OptiSet<u64> = OptiSet::ufm();
             let _ = set.range(..);
+        }
+
+        #[test]
+        fn split_off() {
+            let mut set = sorted_set();
+            for v in 0..100 {
+                set.insert(v);
+            }
+            let upper = set.split_off(&50);
+            assert_eq!(set.len(), 50);
+            assert_eq!(upper.len(), 50);
+            assert_eq!(set.last(), Some(&49));
+            assert_eq!(upper.first(), Some(&50));
+            for v in 0..50 {
+                assert!(set.contains(&v));
+            }
+            for v in 50..100 {
+                assert!(!set.contains(&v));
+                assert!(upper.contains(&v));
+            }
+        }
+
+        #[test]
+        fn split_off_empty_sides() {
+            let mut set = sorted_set();
+            for v in 0..10 {
+                set.insert(v);
+            }
+            let upper = set.split_off(&0);
+            assert!(set.is_empty());
+            assert_eq!(upper.len(), 10);
+
+            let mut set2 = sorted_set();
+            set2.insert(5);
+            let upper2 = set2.split_off(&100);
+            assert!(upper2.is_empty());
+            assert_eq!(set2.len(), 1);
+        }
+
+        #[test]
+        fn append_disjoint() {
+            let mut a = sorted_set();
+            let mut b = sorted_set();
+            for v in 0..50 {
+                a.insert(v);
+            }
+            for v in 50..100 {
+                b.insert(v);
+            }
+            a.append(&mut b);
+            assert_eq!(a.len(), 100);
+            assert!(b.is_empty());
+            for v in 0..100 {
+                assert!(a.contains(&v));
+            }
+        }
+
+        #[test]
+        fn append_empty() {
+            let mut a: OptiSet<i32> = OptiSet::flat_btree();
+            let mut b = sorted_set();
+            b.insert(1);
+            b.insert(2);
+            a.append(&mut b);
+            assert_eq!(a.len(), 2);
+            assert!(b.is_empty());
+
+            let mut c = sorted_set();
+            let mut d: OptiSet<i32> = OptiSet::flat_btree();
+            c.insert(1);
+            let len_before = c.len();
+            c.append(&mut d);
+            assert_eq!(c.len(), len_before);
+        }
+
+        #[test]
+        #[should_panic(expected = "split_off requires a FlatBTree backend")]
+        fn split_off_panics_on_hash_backend() {
+            let mut set: OptiSet<u64> = OptiSet::splitsies();
+            let _ = set.split_off(&42);
+        }
+
+        #[test]
+        #[should_panic(expected = "append requires a FlatBTree backend")]
+        fn append_panics_on_hash_backend() {
+            let mut a: OptiSet<u64> = OptiSet::splitsies();
+            let mut b: OptiSet<u64> = OptiSet::flat_btree();
+            a.append(&mut b);
+        }
+
+        #[test]
+        fn split_off_then_append_roundtrip() {
+            let mut set = sorted_set();
+            for v in 0..200 {
+                set.insert(v);
+            }
+            let mut upper = set.split_off(&100);
+            assert_eq!(set.len(), 100);
+            assert_eq!(upper.len(), 100);
+            set.append(&mut upper);
+            assert_eq!(set.len(), 200);
+            assert!(upper.is_empty());
+            for v in 0..200 {
+                assert!(set.contains(&v));
+            }
         }
     }
 }

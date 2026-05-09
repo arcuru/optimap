@@ -908,6 +908,44 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
         }
     }
 
+    /// Splits the map at `at`, keeping keys `< at` in `self` and returning
+    /// a new map with keys `>= at`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn split_off<Q>(&mut self, at: &Q) -> Self
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        match &mut self.inner {
+            Inner::FlatBTree(m) => {
+                let other = m.split_off(at);
+                OptiMap {
+                    inner: Inner::FlatBTree(other),
+                    backend: Backend::Pinned,
+                }
+            }
+            _ => not_flat_btree("split_off"),
+        }
+    }
+
+    /// Moves all entries from `other` into `self`, leaving `other` empty.
+    ///
+    /// On key collision, `other`'s value wins (matching
+    /// [`std::collections::BTreeMap::append`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if either `self` or `other` has a non-[`FlatBTree`] backend.
+    pub fn append(&mut self, other: &mut Self) {
+        match (&mut self.inner, &mut other.inner) {
+            (Inner::FlatBTree(a), Inner::FlatBTree(b)) => a.append(b),
+            _ => not_flat_btree("append"),
+        }
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     /// Drain all entries from the current backend and re-insert into a new one.
@@ -1843,9 +1881,136 @@ mod tests {
         }
 
         #[test]
-        fn split_off_not_yet() {
-            // Placeholder — split_off is added in the next pass.
-            let _map: OptiMap<i32, i32> = OptiMap::flat_btree();
+        fn split_off() {
+            let mut map = sorted_map();
+            for i in 0..100 {
+                map.insert(i, i);
+            }
+            let upper = map.split_off(&50);
+            assert_eq!(map.len(), 50);
+            assert_eq!(upper.len(), 50);
+            assert_eq!(map.last_key_value(), Some((&49, &49)));
+            assert_eq!(upper.first_key_value(), Some((&50, &50)));
+            for i in 0..50 {
+                assert_eq!(map.get(&i), Some(&i));
+            }
+            for i in 50..100 {
+                assert!(map.get(&i).is_none());
+                assert_eq!(upper.get(&i), Some(&i));
+            }
+        }
+
+        #[test]
+        fn split_off_empty_left() {
+            let mut map = sorted_map();
+            for i in 0..10 {
+                map.insert(i, i);
+            }
+            let upper = map.split_off(&0);
+            assert!(map.is_empty());
+            assert_eq!(upper.len(), 10);
+        }
+
+        #[test]
+        fn split_off_empty_right() {
+            let mut map = sorted_map();
+            for i in 0..10 {
+                map.insert(i, i);
+            }
+            let upper = map.split_off(&100);
+            assert!(upper.is_empty());
+            assert_eq!(map.len(), 10);
+        }
+
+        #[test]
+        fn append_disjoint() {
+            let mut a = sorted_map();
+            let mut b = sorted_map();
+            for i in 0..50 {
+                a.insert(i, i);
+            }
+            for i in 50..100 {
+                b.insert(i, i);
+            }
+            a.append(&mut b);
+            assert_eq!(a.len(), 100);
+            assert!(b.is_empty());
+            for i in 0..100 {
+                assert_eq!(a.get(&i), Some(&i));
+            }
+        }
+
+        #[test]
+        fn append_collision_other_wins() {
+            let mut a: OptiMap<i32, &str> = OptiMap::flat_btree();
+            let mut b: OptiMap<i32, &str> = OptiMap::flat_btree();
+            a.insert(1, "original");
+            b.insert(1, "replacement");
+            a.append(&mut b);
+            assert_eq!(a.get(&1), Some(&"replacement"));
+        }
+
+        #[test]
+        fn append_empty_self() {
+            let mut a: OptiMap<i32, i32> = OptiMap::flat_btree();
+            let mut b = sorted_map();
+            b.insert(1, 10);
+            b.insert(2, 20);
+            a.append(&mut b);
+            assert_eq!(a.len(), 2);
+            assert!(b.is_empty());
+            assert_eq!(a.get(&1), Some(&10));
+        }
+
+        #[test]
+        fn append_empty_other() {
+            let mut a = sorted_map();
+            let mut b: OptiMap<i32, i32> = OptiMap::flat_btree();
+            a.insert(1, 10);
+            let len_before = a.len();
+            a.append(&mut b);
+            assert_eq!(a.len(), len_before);
+            assert!(b.is_empty());
+        }
+
+        #[test]
+        #[should_panic(expected = "split_off requires a FlatBTree backend")]
+        fn split_off_panics_on_hash_backend() {
+            let mut map: OptiMap<u64, u64> = OptiMap::splitsies();
+            let _ = map.split_off(&42);
+        }
+
+        #[test]
+        #[should_panic(expected = "append requires a FlatBTree backend")]
+        fn append_panics_on_hash_backend() {
+            let mut a: OptiMap<u64, u64> = OptiMap::splitsies();
+            let mut b: OptiMap<u64, u64> = OptiMap::flat_btree();
+            a.append(&mut b);
+        }
+
+        #[test]
+        #[should_panic(expected = "append requires a FlatBTree backend")]
+        fn append_panics_if_other_is_hash() {
+            let mut a: OptiMap<u64, u64> = OptiMap::flat_btree();
+            let mut b: OptiMap<u64, u64> = OptiMap::splitsies();
+            a.append(&mut b);
+        }
+
+        #[test]
+        fn split_off_then_append_roundtrip() {
+            let mut map = sorted_map();
+            for i in 0..200 {
+                map.insert(i, i * 2);
+            }
+            let mut upper = map.split_off(&100);
+            assert_eq!(map.len(), 100);
+            assert_eq!(upper.len(), 100);
+            map.append(&mut upper);
+            assert_eq!(map.len(), 200);
+            assert!(upper.is_empty());
+            for i in 0..200 {
+                assert_eq!(map.get(&i), Some(&(i * 2)));
+            }
         }
     }
 }
