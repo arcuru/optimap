@@ -296,3 +296,108 @@ impl TombstoneTag for Byte7_254 {
         if b < 2 { b + 2 } else { b }
     }
 }
+
+// ── Hash reduction helpers (inlined, independent of crate features) ───────
+
+/// Map a byte to a non-zero value using the pure-Rust fallback.
+///
+/// `b | (b == 0) as u8` — 3 instructions on x86_64:
+///   test al, al
+///   sete cl
+///   or  al, cl
+///
+/// 255 distinct values; only collision is {0, 1} → 1.
+#[inline(always)]
+fn reduce_255_pure(b: u8) -> u8 {
+    b | (b == 0) as u8
+}
+
+/// Map a byte to a non-zero value using the `cmp; adc` asm idiom (2 instructions).
+/// Falls back to [`reduce_255_pure`] on non-x86_64 or under miri.
+///
+/// 255 distinct values; only collision is {254, 255} → 255.
+#[inline(always)]
+fn reduce_255_asm(b: u8) -> u8 {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let result: u8;
+        unsafe {
+            core::arch::asm!(
+                "cmp {h}, 0xFF",
+                "adc {h}, 0",
+                h = inout(reg_byte) b => result,
+            );
+        }
+        result
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    {
+        reduce_255_pure(b)
+    }
+}
+
+// ── ByteN_255Pure variants (always pure Rust, independent of features) ────
+//
+// These mirror the existing ByteN_255 strategies but use `reduce_255_pure`
+// instead of `crate::hash_tag`. This gives per-strategy control over hash
+// reduction instead of the crate-wide feature flag.
+
+/// Tag from byte 0, 255 values, always pure Rust.
+#[derive(Clone, Copy)]
+pub struct Byte0_255Pure;
+
+impl TagStrategy for Byte0_255Pure {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        reduce_255_pure(h as u8)
+    }
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << (h & 7)
+    }
+}
+
+/// Tag from byte 1 (bits 8-15), 255 values, always pure Rust.
+#[derive(Clone, Copy)]
+pub struct Byte1_255Pure;
+
+impl TagStrategy for Byte1_255Pure {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        reduce_255_pure((h >> 8) as u8)
+    }
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << (h & 7)
+    }
+}
+
+/// Tag from byte 7 (bits 56-63), 255 values, always pure Rust.
+#[derive(Clone, Copy)]
+pub struct Byte7_255Pure;
+
+impl TagStrategy for Byte7_255Pure {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        reduce_255_pure((h >> 56) as u8)
+    }
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << (h & 7)
+    }
+}
+
+/// Tag from byte 7 (bits 56-63), 255 values, shifted channel, always pure Rust.
+#[derive(Clone, Copy)]
+pub struct Byte7_255ChPure;
+
+impl TagStrategy for Byte7_255ChPure {
+    #[inline(always)]
+    fn tag(h: u64) -> u8 {
+        reduce_255_pure((h >> 56) as u8)
+    }
+    #[inline(always)]
+    fn overflow_channel(h: u64) -> u8 {
+        1u8 << ((h >> 45) & 7)
+    }
+}

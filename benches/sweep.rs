@@ -329,6 +329,11 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Byte7_128_8bitAndMap<u64,u64>, "Byte7_128_8bitAnd" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_255_1bitAndMap<u64,u64>, "Byte7_255_1bitAnd" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_255_8bitAndMap<u64,u64>, "Byte7_255_8bitAnd" $(, $arg)*);
+        // Pure Rust tag variants (independent of cfg features)
+        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAndMap<u64,u64>, "Byte7_255Pure_1bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAndMap<u64,u64>, "Byte7_255Pure_8bitAnd" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte0_255PureLayoutMap<u64,u64>, "Byte0_255Pure" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte1_255PureLayoutMap<u64,u64>, "Byte1_255Pure" $(, $arg)*);
         // 16-slot embedded-overflow variants (non-Ufm/Gaps tags)
         for_each_design!(@run $config, $callback, Byte1_EmbMap<u64,u64>, "Byte1_Emb" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte1_EmbP2Map<u64,u64>, "Byte1_EmbP2" $(, $arg)*);
@@ -348,6 +353,8 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Byte7_255_1bitAnd32Map<u64,u64>, "Byte7_255_1bitAnd32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_128_8bitAnd32Map<u64,u64>, "Byte7_128_8bitAnd32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_255_8bitAnd32Map<u64,u64>, "Byte7_255_8bitAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAnd32Map<u64,u64>, "Byte7_255Pure_1bitAnd32" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAnd32Map<u64,u64>, "Byte7_255Pure_8bitAnd32" $(, $arg)*);
         // 32-slot embedded-overflow variants
         for_each_design!(@run $config, $callback, Ufm32Map<u64,u64>, "Ufm32" $(, $arg)*);
         for_each_design!(@run $config, $callback, Gaps32Map<u64,u64>, "Gaps32" $(, $arg)*);
@@ -369,6 +376,8 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Byte7_255_1bitAnd64Map<u64,u64>, "Byte7_255_1bitAnd64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_128_8bitAnd64Map<u64,u64>, "Byte7_128_8bitAnd64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_255_8bitAnd64Map<u64,u64>, "Byte7_255_8bitAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAnd64Map<u64,u64>, "Byte7_255Pure_1bitAnd64" $(, $arg)*);
+        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAnd64Map<u64,u64>, "Byte7_255Pure_8bitAnd64" $(, $arg)*);
         // 64-slot embedded-overflow variants
         for_each_design!(@run $config, $callback, Ufm64Map<u64,u64>, "Ufm64" $(, $arg)*);
         for_each_design!(@run $config, $callback, Gaps64Map<u64,u64>, "Gaps64" $(, $arg)*);

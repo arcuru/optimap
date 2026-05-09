@@ -420,7 +420,10 @@ pub type Gaps64Layout = Layout64EmbP2<Byte0_255>;
 // ── Matrix entries ─────────────────────────────────────────────────────────
 
 use super::overflow_strategy::BitSeparate;
-use super::tag_strategy::{Byte0_128, Byte1_255, Byte7_128, Byte7_128Ch, Byte7_255, Byte7_255Ch};
+use super::tag_strategy::{
+    Byte0_128, Byte0_255Pure, Byte1_255, Byte1_255Pure, Byte7_128, Byte7_128Ch, Byte7_255,
+    Byte7_255Ch, Byte7_255ChPure, Byte7_255Pure,
+};
 
 /// Byte1_8bit: decorrelated tag (byte 1) + 8-channel byte overflow.
 pub type Byte1_8bit = Layout16<Byte1_255, ByteSeparate>;
@@ -506,6 +509,37 @@ pub type Byte7_128_8bitAnd64 = Layout64And<Byte7_128Ch, ByteSeparate>;
 
 /// Byte7_255_8bitAnd64: 64-slot AND-indexed, 255-value top tag + 8-channel overflow.
 pub type Byte7_255_8bitAnd64 = Layout64And<Byte7_255Ch, ByteSeparate>;
+
+// ── Pure Rust tag variants (always pure, independent of crate features) ───
+//
+// These mirror existing ByteN_255 layouts but use `ByteN_255Pure` tag
+// strategies. The per-strategy choice decouples hash reduction from the
+// crate-wide `reduced-hash-asm` / `reduced-hash-128` feature flags.
+// Useful for cross-platform consistency or A/B testing tag reduction costs.
+
+/// Byte7_255Pure_1bitAnd: 255-value pure-Rust top-bit tag + 1-bit overflow + AND indexing.
+pub type Byte7_255Pure_1bitAnd = Layout16And<Byte7_255Pure, BitSeparate>;
+
+/// Byte7_255Pure_8bitAnd: 255-value pure-Rust top-bit tag + 8-channel overflow + AND indexing.
+pub type Byte7_255Pure_8bitAnd = Layout16And<Byte7_255ChPure, ByteSeparate>;
+
+/// Byte7_255Pure_1bitAnd32: 32-slot pure-Rust top-bit tag + 1-bit overflow.
+pub type Byte7_255Pure_1bitAnd32 = Layout32And<Byte7_255Pure, BitSeparate>;
+
+/// Byte7_255Pure_8bitAnd32: 32-slot pure-Rust top-bit tag + 8-channel overflow.
+pub type Byte7_255Pure_8bitAnd32 = Layout32And<Byte7_255ChPure, ByteSeparate>;
+
+/// Byte7_255Pure_1bitAnd64: 64-slot pure-Rust top-bit tag + 1-bit overflow.
+pub type Byte7_255Pure_1bitAnd64 = Layout64And<Byte7_255Pure, BitSeparate>;
+
+/// Byte7_255Pure_8bitAnd64: 64-slot pure-Rust top-bit tag + 8-channel overflow.
+pub type Byte7_255Pure_8bitAnd64 = Layout64And<Byte7_255ChPure, ByteSeparate>;
+
+/// Byte0_255PureLayout: shift-indexed pure-Rust low-byte tag + 8-channel overflow.
+pub type Byte0_255PureLayout = Layout16<Byte0_255Pure, ByteSeparate>;
+
+/// Byte1_255PureLayout: shift-indexed decorrelated pure-Rust tag + 8-channel overflow.
+pub type Byte1_255PureLayout = Layout16<Byte1_255Pure, ByteSeparate>;
 
 // ── Embedded-overflow matrix entries ──────────────────────────────────────
 // Covers all tag × stride × indexing combinations at 15/31/63-slot widths
