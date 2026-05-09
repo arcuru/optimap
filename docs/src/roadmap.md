@@ -87,7 +87,7 @@ Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
 
 | # | Item | Difficulty | Notes |
 |---|------|-----------|-------|
-| 14b | Port `OptiSortedMap`'s sorted-only API to `OptiMap` (first/last_key_value, pop_first/last, iter_sorted, range, range_mut, split_off, append) — and the parallel set methods to `OptiSet`. Then retire `OptiSortedMap` / `OptiSortedSet`. | Medium | Phase 2 of task 14. Open API design question: how to behave when invoked on a non-FlatBTree variant. Options: panic with a clear message, return None / empty iterator, or expose only via a typed accessor (`as_sorted() -> Option<&FlatBTree>`). Phase 1 (FlatBTree backend addition) shipped without this. |
+| 14b | Port `OptiSortedMap`'s sorted-only API to `OptiMap` (first/last_key_value, pop_first/last, iter_sorted, range, range_mut, split_off, append) — and the parallel set methods to `OptiSet`. Then retire `OptiSortedMap` / `OptiSortedSet`. | Medium | Phase 2 of task 14. **Query half done (May 2026):** `first_key_value`, `last_key_value`, `pop_first`, `pop_last`, `iter_sorted`, `range`, `range_mut` on `OptiMap`; `first`, `last`, `pop_first`, `pop_last`, `iter_sorted`, `range` on `OptiSet`. All panic with a clear message on non-FlatBTree backends. 16 new tests. **Remaining:** `split_off`, `append` on both types, plus retirement of `OptiSortedMap`/`OptiSortedSet`. |
 | 11 | Future: `HashedBTree<K, V>` — tree sorted by `hash(K)` instead of `K`. Implements `HashedMap`, *not* `SortedMap`. | Future | Provides "btree-as-hashmap" without violating the no-mixing invariant. |
 | 13 | Future: `OrderedMap<K, V>` — insertion-ordered map (LRU-like). | Future | Third dispatch flavor alongside `HashedMap` / `SortedMap`. |
 
