@@ -208,6 +208,68 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     pub fn drain(&mut self) -> impl Iterator<Item = T> {
         self.inner.drain().map(|(k, _)| k)
     }
+
+    // ── Sorted operations (require FlatBTree backend) ──────────────────────
+
+    /// Returns a reference to the first (minimum) element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`]. Use
+    /// [`OptiSet::flat_btree`] or [`Hint::Sorted`] to guarantee a sorted backend.
+    pub fn first(&self) -> Option<&T> {
+        self.inner.first_key_value().map(|(k, _)| k)
+    }
+
+    /// Returns a reference to the last (maximum) element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn last(&self) -> Option<&T> {
+        self.inner.last_key_value().map(|(k, _)| k)
+    }
+
+    /// Removes and returns the first (minimum) element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn pop_first(&mut self) -> Option<T> {
+        self.inner.pop_first().map(|(k, _)| k)
+    }
+
+    /// Removes and returns the last (maximum) element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn pop_last(&mut self) -> Option<T> {
+        self.inner.pop_last().map(|(k, _)| k)
+    }
+
+    /// Iterate over all elements in sorted order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn iter_sorted(&self) -> impl Iterator<Item = &T> {
+        self.inner.iter_sorted().map(|(k, _)| k)
+    }
+
+    /// Iterate over elements within the given range, in sorted order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = &'a T>
+    where
+        T: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        self.inner.range(range).map(|(k, _)| k)
+    }
 }
 
 // ── Set algebra operations ─────────────────────────────────────────────────
@@ -568,5 +630,91 @@ mod tests {
         assert!(xor.contains(&1) && xor.contains(&4) && xor.len() == 2);
         let diff = &a - &b;
         assert!(diff.contains(&1) && diff.len() == 1);
+    }
+
+    mod sorted_ops {
+        use super::*;
+
+        fn sorted_set() -> OptiSet<i32> {
+            OptiSet::flat_btree()
+        }
+
+        #[test]
+        fn first_last() {
+            let mut set = sorted_set();
+            for v in [5, 1, 3] {
+                set.insert(v);
+            }
+            assert_eq!(set.first(), Some(&1));
+            assert_eq!(set.last(), Some(&5));
+        }
+
+        #[test]
+        fn first_last_empty() {
+            let set: OptiSet<i32> = OptiSet::flat_btree();
+            assert_eq!(set.first(), None);
+            assert_eq!(set.last(), None);
+        }
+
+        #[test]
+        fn pop_first_last() {
+            let mut set = sorted_set();
+            for v in 1..=5 {
+                set.insert(v);
+            }
+            assert_eq!(set.pop_first(), Some(1));
+            assert_eq!(set.pop_last(), Some(5));
+            assert_eq!(set.len(), 3);
+            assert_eq!(set.first(), Some(&2));
+            assert_eq!(set.last(), Some(&4));
+        }
+
+        #[test]
+        fn iter_sorted() {
+            let mut set = sorted_set();
+            for v in [5, 3, 1, 4, 2] {
+                set.insert(v);
+            }
+            let items: Vec<_> = set.iter_sorted().copied().collect();
+            assert_eq!(items, vec![1, 2, 3, 4, 5]);
+        }
+
+        #[test]
+        fn range_query() {
+            let mut set = sorted_set();
+            for v in 0..10 {
+                set.insert(v);
+            }
+            let range: Vec<_> = set.range(3..7).copied().collect();
+            assert_eq!(range, vec![3, 4, 5, 6]);
+        }
+
+        #[test]
+        #[should_panic(expected = "first_key_value requires a FlatBTree backend")]
+        fn first_panics_on_hash_backend() {
+            let set: OptiSet<u64> = OptiSet::splitsies();
+            let _ = set.first();
+        }
+
+        #[test]
+        #[should_panic(expected = "pop_first requires a FlatBTree backend")]
+        fn pop_first_panics_on_hash_backend() {
+            let mut set: OptiSet<u64> = OptiSet::ipo();
+            let _ = set.pop_first();
+        }
+
+        #[test]
+        #[should_panic(expected = "iter_sorted requires a FlatBTree backend")]
+        fn iter_sorted_panics_on_hash_backend() {
+            let set: OptiSet<u64> = OptiSet::gaps();
+            let _ = set.iter_sorted();
+        }
+
+        #[test]
+        #[should_panic(expected = "range requires a FlatBTree backend")]
+        fn range_panics_on_hash_backend() {
+            let set: OptiSet<u64> = OptiSet::ufm();
+            let _ = set.range(..);
+        }
     }
 }

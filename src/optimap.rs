@@ -801,6 +801,113 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
         items.into_iter()
     }
 
+    // ── Sorted operations (require FlatBTree backend) ──────────────────────
+
+    /// Returns the first (minimum) key-value pair.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`]. Use
+    /// [`OptiMap::flat_btree`] or [`Hint::Sorted`] to guarantee a sorted backend.
+    pub fn first_key_value(&self) -> Option<(&K, &V)> {
+        match &self.inner {
+            Inner::FlatBTree(m) => m.first_key_value(),
+            _ => not_flat_btree("first_key_value"),
+        }
+    }
+
+    /// Returns the last (maximum) key-value pair.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn last_key_value(&self) -> Option<(&K, &V)> {
+        match &self.inner {
+            Inner::FlatBTree(m) => m.last_key_value(),
+            _ => not_flat_btree("last_key_value"),
+        }
+    }
+
+    /// Removes and returns the first (minimum) key-value pair.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn pop_first(&mut self) -> Option<(K, V)> {
+        match &mut self.inner {
+            Inner::FlatBTree(m) => m.pop_first(),
+            _ => not_flat_btree("pop_first"),
+        }
+    }
+
+    /// Removes and returns the last (maximum) key-value pair.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn pop_last(&mut self) -> Option<(K, V)> {
+        match &mut self.inner {
+            Inner::FlatBTree(m) => m.pop_last(),
+            _ => not_flat_btree("pop_last"),
+        }
+    }
+
+    /// Iterate over all key-value pairs in sorted order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn iter_sorted(&self) -> impl Iterator<Item = (&K, &V)> {
+        match &self.inner {
+            Inner::FlatBTree(m) => {
+                let iter: crate::flat_btree::map::Iter<'_, K, V> = m.iter();
+                iter
+            }
+            _ => not_flat_btree("iter_sorted"),
+        }
+    }
+
+    /// Iterate over key-value pairs within the given range, in sorted order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn range<'a, Q, R>(&'a self, range: R) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        match &self.inner {
+            Inner::FlatBTree(m) => {
+                let iter: crate::flat_btree::map::RangeIter<'_, K, V> = m.range(range);
+                iter
+            }
+            _ => not_flat_btree("range"),
+        }
+    }
+
+    /// Iterate over key-value pairs within the given range, yielding mutable
+    /// values, in sorted order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current backend is not [`FlatBTree`].
+    pub fn range_mut<'a, Q, R>(&'a mut self, range: R) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: Borrow<Q> + 'a,
+        Q: Ord + ?Sized,
+        R: std::ops::RangeBounds<Q> + 'a,
+    {
+        match &mut self.inner {
+            Inner::FlatBTree(m) => {
+                let iter: crate::flat_btree::map::RangeIterMut<'_, K, V> = m.range_mut(range);
+                iter
+            }
+            _ => not_flat_btree("range_mut"),
+        }
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     /// Drain all entries from the current backend and re-insert into a new one.
@@ -1081,6 +1188,20 @@ impl<K: Hash + Eq + Ord + Clone, V> crate::Map<K, V> for OptiMap<K, V> {
     fn into_values(self) -> impl Iterator<Item = V> {
         OptiMap::into_values(self)
     }
+}
+
+// ── Private helpers ────────────────────────────────────────────────────────
+
+/// Cold path: panics with a clear message when a sorted-only method is called
+/// on a non-FlatBTree backend. The `!` return type coerces to any concrete
+/// iterator or value type.
+#[cold]
+#[track_caller]
+fn not_flat_btree(method: &str) -> ! {
+    panic!(
+        "{method} requires a FlatBTree backend. \
+         Use OptiMap::flat_btree() or Hint::Sorted to guarantee a sorted backend."
+    )
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -1584,6 +1705,147 @@ mod tests {
             assert!(map.try_insert(1, 30).is_err());
             assert_eq!(map.get(&1), Some(&10)); // unchanged
             assert_eq!(map.len(), 2);
+        }
+    }
+
+    mod sorted_ops {
+        use super::*;
+
+        fn sorted_map() -> OptiMap<i32, i32> {
+            OptiMap::flat_btree()
+        }
+
+        fn sorted_map_str() -> OptiMap<i32, &'static str> {
+            OptiMap::flat_btree()
+        }
+
+        #[test]
+        fn first_last_key_value() {
+            let mut map = sorted_map_str();
+            map.insert(1, "a");
+            map.insert(5, "e");
+            map.insert(3, "c");
+            assert_eq!(map.first_key_value(), Some((&1, &"a")));
+            assert_eq!(map.last_key_value(), Some((&5, &"e")));
+        }
+
+        #[test]
+        fn first_last_key_value_empty() {
+            let map: OptiMap<i32, i32> = OptiMap::flat_btree();
+            assert_eq!(map.first_key_value(), None);
+            assert_eq!(map.last_key_value(), None);
+        }
+
+        #[test]
+        fn pop_first_last() {
+            let mut map = sorted_map();
+            for i in 1..=5 {
+                map.insert(i, i);
+            }
+            assert_eq!(map.pop_first(), Some((1, 1)));
+            assert_eq!(map.pop_last(), Some((5, 5)));
+            assert_eq!(map.len(), 3);
+            // Remaining keys are 2,3,4 in sorted order
+            assert_eq!(map.first_key_value(), Some((&2, &2)));
+            assert_eq!(map.last_key_value(), Some((&4, &4)));
+        }
+
+        #[test]
+        fn iter_sorted() {
+            let mut map = OptiMap::flat_btree();
+            for i in [5, 3, 1, 4, 2] {
+                map.insert(i, i * 10);
+            }
+            let keys: Vec<_> = map.iter_sorted().map(|(k, _)| *k).collect();
+            assert_eq!(keys, vec![1, 2, 3, 4, 5]);
+        }
+
+        #[test]
+        fn iter_sorted_is_sorted_even_after_mutations() {
+            let mut map = OptiMap::flat_btree();
+            map.insert(100, ());
+            map.insert(50, ());
+            map.insert(75, ());
+            map.remove(&50);
+            map.insert(25, ());
+            let keys: Vec<_> = map.iter_sorted().map(|(k, _)| *k).collect();
+            assert_eq!(keys, vec![25, 75, 100]);
+        }
+
+        #[test]
+        fn range_query() {
+            let mut map = sorted_map();
+            for i in 0..10 {
+                map.insert(i, i * 10);
+            }
+            let range: Vec<_> = map.range(3..7).map(|(k, _)| *k).collect();
+            assert_eq!(range, vec![3, 4, 5, 6]);
+        }
+
+        #[test]
+        fn range_mut() {
+            let mut map = sorted_map();
+            for i in 0..30 {
+                map.insert(i, i);
+            }
+            for (_, v) in map.range_mut(10..20) {
+                *v += 1000;
+            }
+            for i in 0..30 {
+                let want = if (10..20).contains(&i) { i + 1000 } else { i };
+                assert_eq!(map.get(&i), Some(&want));
+            }
+        }
+
+        #[test]
+        #[should_panic(expected = "first_key_value requires a FlatBTree backend")]
+        fn first_key_value_panics_on_hash_backend() {
+            let map: OptiMap<u64, u64> = OptiMap::splitsies();
+            let _ = map.first_key_value();
+        }
+
+        #[test]
+        #[should_panic(expected = "pop_first requires a FlatBTree backend")]
+        fn pop_first_panics_on_hash_backend() {
+            let mut map: OptiMap<u64, u64> = OptiMap::ipo();
+            let _ = map.pop_first();
+        }
+
+        #[test]
+        #[should_panic(expected = "iter_sorted requires a FlatBTree backend")]
+        fn iter_sorted_panics_on_hash_backend() {
+            let map: OptiMap<u64, u64> = OptiMap::gaps();
+            let _ = map.iter_sorted();
+        }
+
+        #[test]
+        #[should_panic(expected = "range requires a FlatBTree backend")]
+        fn range_panics_on_hash_backend() {
+            let map: OptiMap<u64, u64> = OptiMap::ufm();
+            let _ = map.range(..);
+        }
+
+        #[test]
+        #[should_panic(expected = "range_mut requires a FlatBTree backend")]
+        fn range_mut_panics_on_hash_backend() {
+            let mut map: OptiMap<u64, u64> = OptiMap::ipo64();
+            let _ = map.range_mut(..);
+        }
+
+        #[test]
+        fn hint_sorted_works() {
+            let mut map: OptiMap<u32, u32> = OptiMap::with_hint(Hint::Sorted);
+            map.insert(3, 30);
+            map.insert(1, 10);
+            map.insert(2, 20);
+            let keys: Vec<_> = map.iter_sorted().map(|(k, _)| *k).collect();
+            assert_eq!(keys, vec![1, 2, 3]);
+        }
+
+        #[test]
+        fn split_off_not_yet() {
+            // Placeholder — split_off is added in the next pass.
+            let _map: OptiMap<i32, i32> = OptiMap::flat_btree();
         }
     }
 }
