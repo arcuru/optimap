@@ -91,6 +91,14 @@ Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
 | 11 | Future: `HashedBTree<K, V>` — tree sorted by `hash(K)` instead of `K`. Implements `HashedMap`, *not* `SortedMap`. | Future | Provides "btree-as-hashmap" without violating the no-mixing invariant. |
 | 13 | Future: `OrderedMap<K, V>` — insertion-ordered map (LRU-like). | Future | Third dispatch flavor alongside `HashedMap` / `SortedMap`. |
 
+### Recently Completed (May 2026 — Ava)
+
+| # | Item | Notes |
+|---|------|-------|
+| 14b-q | Port sorted query API to OptiMap/OptiSet | `first_key_value`/`last_key_value`/`pop_first`/`pop_last`/`iter_sorted`/`range`/`range_mut` on OptiMap; `first`/`last`/`pop_first`/`pop_last`/`iter_sorted`/`range` on OptiSet. Panic on non-FlatBTree. 16 tests. |
+| 14b-m | Port `split_off`/`append` to OptiMap/OptiSet | Returns/takes OptiMap/OptiSet wrappers. Panic on non-FlatBTree. 17 tests. |
+| — | Pure Rust tag strategies | `Byte0_255Pure`, `Byte1_255Pure`, `Byte7_255Pure`, `Byte7_255ChPure` TagStrategy variants + 8 GroupLayout aliases + 8 matrix types. Per-backend hash reduction control independent of crate features. |
+
 ## Open — Hash Maps
 
 ### API Completeness

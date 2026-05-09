@@ -17,6 +17,8 @@ Total duplication: ~8,500 lines across 15 files.
 
 ## Solution: Two Generic Abstractions
 
+The design matrix is parameterized via several composable trait layers:
+
 ### GenericMap<K, V, S, R: RawTableApi>
 
 A single map wrapper that replaces all 5 `map.rs` files. Contains:
@@ -206,3 +208,35 @@ To add a new overflow-bit variant (e.g., Splitsies-1bit):
 3. Add `impl_map_trait!(Splitsies1Bit);` for the `Map` trait
 
 That's it. No new probe loops, no new entry API, no new iterators.
+
+### TagStrategy & Hash Reduction
+
+Each `GroupLayout` has an associated `TagStrategy` that determines:
+- How the hash tag byte is extracted from the 64-bit hash
+- How the overflow channel bits are selected
+
+The tag byte for a given key is computed once during insertion and stored
+as the metadata byte. During probing, the SIMD group match compares stored
+tags against the probe key's tag.
+
+Tag strategies come in two families:
+
+| Strategy | Byte | Values | Reduction | Indexing |
+|----------|------|--------|-----------|----------|
+| `Byte0_255` | 0 (low) | 255 | crate `hash_tag()` | Shift |
+| `Byte0_128` | 0 (low) | 128 | `b \| 1` (inline) | Shift |
+| `Byte0_255Pure` | 0 (low) | 255 | `b \| (b==0) as u8` | Shift |
+| `Byte1_255` | 1 | 255 | crate `hash_tag()` | Shift |
+| `Byte7_128` | 7 (high) | 128 | `b \| 0x80` (inline) | AND |
+| `Byte7_255` | 7 (high) | 255 | crate `hash_tag()` | AND |
+| `Byte7_255Pure` | 7 (high) | 255 | `b \| (b==0) as u8` | AND |
+
+The `Pure` variants always use a pure-Rust hash reduction (3 instructions:
+`test; sete; or`), independent of the crate's `reduced-hash-asm` feature.
+The non-Pure variants route through `crate::hash_tag()` which selects the
+asm idiom (`cmp; adc`) on x86_64 or the pure-Rust fallback elsewhere.
+`Byte0_128` and `Byte7_128` inline their own 1-instruction reduction and
+never call `crate::hash_tag()`.
+
+This per-strategy control lets different backends choose different hash
+reduction strategies, decoupling from the global feature flag.
