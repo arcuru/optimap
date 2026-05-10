@@ -86,33 +86,33 @@
 //! let mut map = OptiMap::<u64, u64>::with_hint(Hint::Churn);
 //! ```
 //!
-//! For sorted containers, [`OptiSortedMap`] and [`OptiSortedSet`] wrap
-//! [`FlatBTree`] with sorted iteration, range queries, and first/last access:
+//! For sorted containers, pin [`OptiMap`] / [`OptiSet`] to the [`FlatBTree`]
+//! backend via [`OptiMap::flat_btree()`] / [`OptiSet::flat_btree()`] (or
+//! [`Hint::Sorted`] through the auto-policy):
 //!
 //! ```
-//! use optimap::{OptiSortedMap, OptiSortedSet};
+//! use optimap::{OptiMap, OptiSet};
 //!
-//! let mut map = OptiSortedMap::new();
+//! let mut map = OptiMap::flat_btree();
 //! map.insert(3, "three");
 //! map.insert(1, "one");
 //! let keys: Vec<_> = map.iter_sorted().map(|(k, _)| *k).collect();
 //! assert_eq!(keys, vec![1, 3]);
 //!
-//! let mut set: OptiSortedSet<i32> = [3, 1, 2].into_iter().collect();
+//! let set: OptiSet<i32> = OptiSet::from_sorted_iter([1, 2, 3]);
 //! assert_eq!(set.first(), Some(&1));
 //! ```
 //!
-//! [`OptiMap`] now also accepts [`Hint::Sorted`] (or [`OptiMap::flat_btree()`])
-//! to pick the FlatBTree backend through the unified wrapper. That covers
-//! basic CRUD and sorted iteration via `iter()`. Sorted-only ops
-//! (`first_key_value`, `pop_first`, `range`, …) currently live only on
-//! [`OptiSortedMap`] / [`FlatBTree`] — adding them to [`OptiMap`] is the
-//! deferred half of trait-family task 14.
+//! The full sorted API — `first_key_value`, `pop_first`, `range`,
+//! `range_mut`, `split_off`, `append`, etc. — is available on
+//! [`OptiMap`] / [`OptiSet`] when the backend is `FlatBTree`. Calling
+//! these on a hash backend panics; pin the backend (or use
+//! [`Hint::Sorted`]) to guarantee them.
 //!
 //! ## Choosing a design
 //!
 //! - **Let OptiMap decide**: [`OptiMap`] / [`OptiSet`] — auto-selects backend, good default
-//! - **Sorted**: [`OptiSortedMap`] / [`OptiSortedSet`] — sorted iteration, range queries
+//! - **Sorted**: [`OptiMap::flat_btree()`] / [`OptiSet::flat_btree()`] — sorted iteration, range queries
 //! - **General purpose**: [`InPlaceOverflow`] — closest to hashbrown, best
 //!   lookup hit, fastest insert
 //! - **Delete-heavy / churn**: [`Splitsies`] — tombstone-free deletion,
@@ -216,7 +216,6 @@ pub mod in_place_overflow;
 pub mod ipo64;
 pub(crate) mod map;
 mod opti_set;
-mod opti_sorted;
 pub mod optimap;
 pub mod raw;
 mod set;
@@ -240,8 +239,6 @@ pub use soa::SoaMap;
 // ── Smart wrapper ──────────────────────────────────────────────────────────
 
 pub use opti_set::OptiSet;
-pub use opti_sorted::OptiSortedMap;
-pub use opti_sorted::OptiSortedSet;
 pub use optimap::Entry;
 pub use optimap::Hint;
 pub use optimap::MapType;

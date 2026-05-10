@@ -7,16 +7,16 @@
 //!   `IPO64`, `Gaps`, hashbrown, `std::HashMap`.
 //! - [`SortedMap`] — ord-dispatched (`K: Ord`, `Q: Ord`). Adds sorted-only
 //!   ops: `first/last_key_value`, `pop_first/last`, `range`, `split_off`,
-//!   `append`. Implemented by `FlatBTree`, `std::BTreeMap`, `OptiSortedMap`.
+//!   `append`. Implemented by `FlatBTree` and `std::BTreeMap`.
 //! - [`Map`] — universal facade (`K: Hash + Eq + Ord`). Use this in generic
 //!   code that wants to accept both flavors and doesn't care about ordering.
 //!
 //! Most concrete types implement only one of `HashedMap` / `SortedMap`. The
-//! exceptions are `FlatBTree` and `OptiSortedMap`, which carry a `HashedMap`
-//! impl (O(n) leaf scan) for backward compatibility with `GenericSet`'s
-//! `HashedMap` bound — the [`Map`] facade for these types delegates to their
-//! cheap `SortedMap` path. The hash function is an implementation detail of
-//! each concrete type, not part of any trait.
+//! exception is `FlatBTree`, which carries a `HashedMap` impl (O(n) leaf
+//! scan) for backward compatibility with `GenericSet`'s `HashedMap` bound —
+//! the [`Map`] facade routes `FlatBTree` through its cheap `SortedMap` path.
+//! The hash function is an implementation detail of each concrete type, not
+//! part of any trait.
 //!
 //! Users calling methods on concrete types (e.g. `Splitsies::insert`)
 //! do NOT need to import these traits — inherent methods work automatically.
@@ -56,10 +56,10 @@ impl<K: fmt::Debug, V: fmt::Debug> std::error::Error for OccupiedError<K, V> {}
 /// without knowing or caring about the hasher.
 ///
 /// Sorted-dispatch maps (e.g. `std::BTreeMap`) implement [`SortedMap`]
-/// instead. `FlatBTree` and `OptiSortedMap` carry a `HashedMap` impl too
-/// (O(n) leaf scan, kept for `GenericSet` compatibility) — generic code
-/// that doesn't care about ordering should prefer the [`Map`] facade,
-/// which routes those types through `SortedMap`.
+/// instead. `FlatBTree` carries a `HashedMap` impl too (O(n) leaf scan,
+/// kept for `GenericSet` compatibility) — generic code that doesn't care
+/// about ordering should prefer the [`Map`] facade, which routes
+/// `FlatBTree` through `SortedMap`.
 ///
 /// # Usage
 ///
@@ -225,9 +225,9 @@ pub trait HashedMap<K: Hash + Eq, V> {
 /// and use comparison to navigate (e.g. `FlatBTree`, `std::BTreeMap`).
 ///
 /// Most types implement only one of `HashedMap` / `SortedMap`. `FlatBTree`
-/// and `OptiSortedMap` carry a `HashedMap` impl (O(n) leaf scan) for
-/// `GenericSet` compatibility — the [`Map`] facade routes them through
-/// `SortedMap` instead.
+/// carries a `HashedMap` impl (O(n) leaf scan) for `GenericSet`
+/// compatibility — the [`Map`] facade routes it through `SortedMap`
+/// instead.
 pub trait SortedMap<K: Ord, V> {
     // ── Construction ────────────────────────────────────────────────────
 

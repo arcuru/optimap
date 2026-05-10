@@ -1544,6 +1544,21 @@ mod tests {
     }
 
     #[test]
+    fn from_sorted_iter_pins_flat_btree() {
+        let map: OptiMap<u32, u32> =
+            OptiMap::from_sorted_iter((0..100u32).map(|i| (i, i * 10)));
+        assert_eq!(map.map_type(), MapType::FlatBTree);
+        assert_eq!(map.len(), 100);
+        assert_eq!(map.get(&0), Some(&0));
+        assert_eq!(map.get(&99), Some(&990));
+        // Sorted iteration in ascending order.
+        let pairs: Vec<_> = map.iter_sorted().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(pairs.len(), 100);
+        assert_eq!(pairs[0], (0, 0));
+        assert_eq!(pairs[99], (99, 990));
+    }
+
+    #[test]
     fn into_iterator() {
         let map: OptiMap<u64, u64> = (0..50).map(|i| (i, i * 3)).collect();
         let mut pairs: Vec<(u64, u64)> = map.into_iter().collect();

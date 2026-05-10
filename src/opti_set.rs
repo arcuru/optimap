@@ -691,6 +691,21 @@ mod tests {
         }
 
         #[test]
+        fn from_sorted_iter_constructor() {
+            let set: OptiSet<u32> = OptiSet::from_sorted_iter(0..50);
+            assert_eq!(set.len(), 50);
+            assert_eq!(set.first(), Some(&0));
+            assert_eq!(set.last(), Some(&49));
+            // sorted_with_capacity also pins to FlatBTree.
+            let mut s2: OptiSet<u32> = OptiSet::sorted_with_capacity(8);
+            for v in [3, 1, 2] {
+                s2.insert(v);
+            }
+            let items: Vec<_> = s2.iter_sorted().copied().collect();
+            assert_eq!(items, vec![1, 2, 3]);
+        }
+
+        #[test]
         fn first_last_empty() {
             let set: OptiSet<i32> = OptiSet::flat_btree();
             assert_eq!(set.first(), None);
