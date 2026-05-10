@@ -13,6 +13,7 @@
 //! | `InPlaceOverflow`    | `OptiMap_Ipo`               |
 //! | `Gaps`               | `OptiMap_Gaps`              |
 //! | `IPO64`              | `OptiMap_Ipo64`             |
+//! | `FlatBTree`          | `OptiMap_FlatBTree`         |
 //!
 //! Same key set, same capacity, fixed backend pinning, identical helpers via
 //! the `Map` trait → the *only* delta is the enum match in `OptiMap::get` /
@@ -33,7 +34,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
+use optimap::{FlatBTree, Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Sizes ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,12 @@ macro_rules! dispatch_pairs {
         // Pair: IPO64
         $helper::<IPO64<u64, u64>>($group, "Ipo64_raw",              $($args),*);
         $helper::<OptiMapBenchBackend<u64, u64, OptiIpo64>>($group, "Ipo64_opti", $($args),*);
+        // Pair: FlatBTree (sorted, ord-dispatched). The wrapper goes through
+        // the same Inner::FlatBTree(FlatBTree) variant that `Hint::Sorted` /
+        // `OptiMap::flat_btree()` selects, so this row tracks the dispatch
+        // overhead on the sorted path after task 14b's OptiSortedMap retirement.
+        $helper::<FlatBTree<u64, u64>>($group, "FlatBTree_raw",      $($args),*);
+        $helper::<OptiMapBenchBackend<u64, u64, OptiFlatBTree>>($group, "FlatBTree_opti", $($args),*);
     };
 }
 

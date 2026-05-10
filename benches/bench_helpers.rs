@@ -29,6 +29,7 @@ pub struct OptiSplitsies;
 pub struct OptiIpo;
 pub struct OptiGaps;
 pub struct OptiIpo64;
+pub struct OptiFlatBTree;
 
 impl OptiBackend for OptiUfm {
     const MAP_TYPE: MapType = MapType::Ufm;
@@ -49,6 +50,10 @@ impl OptiBackend for OptiGaps {
 impl OptiBackend for OptiIpo64 {
     const MAP_TYPE: MapType = MapType::Ipo64;
     const NAME: &'static str = "OptiMap_Ipo64";
+}
+impl OptiBackend for OptiFlatBTree {
+    const MAP_TYPE: MapType = MapType::FlatBTree;
+    const NAME: &'static str = "OptiMap_FlatBTree";
 }
 
 /// Thin wrapper around `OptiMap` pinned to a specific backend (`B`).
