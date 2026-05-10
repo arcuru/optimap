@@ -525,6 +525,16 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
         Self::pinned(MapType::FlatBTree, capacity)
     }
 
+    /// Build a sorted map from input already sorted by key with no
+    /// duplicates. Pins the backend to `FlatBTree`. See
+    /// [`FlatBTree::from_sorted_iter`] for details.
+    pub fn from_sorted_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        OptiMap {
+            inner: Inner::FlatBTree(FlatBTree::from_sorted_iter(iter)),
+            backend: Backend::Pinned,
+        }
+    }
+
     /// Create a map pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         Self::pinned(map_type, 0)

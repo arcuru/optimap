@@ -2,8 +2,7 @@
 //! both hash-dispatched and ord-dispatched backends through a single bound.
 
 use optimap::{
-    FlatBTree, Gaps, IPO64, InPlaceOverflow, Map, OptiMap, OptiSortedMap, Splitsies,
-    UnorderedFlatMap,
+    FlatBTree, Gaps, IPO64, InPlaceOverflow, Map, OptiMap, Splitsies, UnorderedFlatMap,
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -112,6 +111,26 @@ fn map_facade_std_btreemap() {
 }
 
 #[test]
-fn map_facade_opti_sorted() {
-    exercise::<OptiSortedMap<i32, i32>>();
+fn map_facade_optimap_flat_btree() {
+    // OptiMap pinned to FlatBTree exercises the Map facade through the
+    // sorted dispatch path. Mirrors the hash-backend exercise above but
+    // constructs via `OptiMap::flat_btree()` instead of `Map::new()`,
+    // which would otherwise route through the auto policy.
+    let mut m: OptiMap<i32, i32> = OptiMap::flat_btree();
+    assert!(m.is_empty());
+    assert_eq!(Map::insert(&mut m, 2, 20), None);
+    assert_eq!(Map::insert(&mut m, 1, 10), None);
+    assert_eq!(Map::insert(&mut m, 3, 30), None);
+    assert_eq!(Map::insert(&mut m, 2, 200), Some(20));
+    assert_eq!(Map::len(&m), 3);
+    assert!(Map::contains_key(&m, &1));
+    assert_eq!(Map::get(&m, &1), Some(&10));
+    assert_eq!(Map::get_key_value(&m, &2), Some((&2, &200)));
+    *Map::get_mut(&mut m, &1).unwrap() = 11;
+    assert_eq!(Map::remove(&mut m, &3), Some(30));
+    assert_eq!(Map::remove_entry(&mut m, &1), Some((1, 11)));
+    Map::retain(&mut m, |k, _| *k == 2);
+    assert_eq!(Map::len(&m), 1);
+    Map::clear(&mut m);
+    assert!(m.is_empty());
 }

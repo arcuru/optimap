@@ -94,6 +94,22 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
         OptiSet { inner: OptiMap::flat_btree() }
     }
 
+    /// Create a set pinned to `FlatBTree` with the given capacity.
+    /// Equivalent to `with_capacity_and_hint(capacity, Hint::Sorted)` but
+    /// pinned (no auto-transition on resize).
+    pub fn sorted_with_capacity(capacity: usize) -> Self {
+        OptiSet { inner: OptiMap::sorted_with_capacity(capacity) }
+    }
+
+    /// Build a sorted set from input already sorted with no duplicates.
+    /// Pins the backend to `FlatBTree`. See
+    /// [`FlatBTree::from_sorted_iter`] for details.
+    pub fn from_sorted_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        OptiSet {
+            inner: OptiMap::from_sorted_iter(iter.into_iter().map(|t| (t, ()))),
+        }
+    }
+
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         OptiSet { inner: OptiMap::with_type(map_type) }
