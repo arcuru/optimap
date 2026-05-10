@@ -102,9 +102,8 @@ correlate with the AND group index.
   - `flat_btree/` — FlatBTree (B+ tree, independent architecture)
   - `traits.rs` — `HashedMap`/`Set`/`SortedMap`/`SortedSet` traits + impls for hashbrown/std (a future `Map` facade trait will wrap whichever underlying trait each impl prefers — see `docs/src/roadmap.md`)
   - `generic_set.rs` — `GenericSet<T, M>` wrapper (set from any hash map via `HashedMap<T, ()>`)
-  - `optimap.rs` — `OptiMap<K, V>` smart wrapper with dynamic backend selection
-  - `opti_set.rs` — `OptiSet<T>` smart set wrapper (wraps `OptiMap<T, ()>`)
-  - `opti_sorted.rs` — `OptiSortedMap<K, V>` and `OptiSortedSet<T>` smart sorted wrappers (wraps `FlatBTree`)
+  - `optimap.rs` — `OptiMap<K, V>` smart wrapper with dynamic backend selection (FlatBTree available via `OptiMap::flat_btree()` or `Hint::Sorted`)
+  - `opti_set.rs` — `OptiSet<T>` smart set wrapper (wraps `OptiMap<T, ()>`; sorted via `OptiSet::flat_btree()` / `from_sorted_iter`)
 - `benches/` — Criterion benchmarks (throughput, construction, distributions, workloads, load_factor, sets)
 - `tests/` — Integration tests
 - `docs/` — mdbook: designs, benchmarks, optimization logs, roadmap
@@ -124,7 +123,7 @@ correlate with the AND group index.
 - OptiMap has full entry API via enum `Entry`/`OccupiedEntry`/`VacantEntry` types with `entry_match!` macro dispatch
 - `OptiMap<K, V>` wraps all backends behind an enum with policy-driven backend selection (by capacity, KV size, workload hint) and optional auto-transition on resize
 - `OptiSet<T>` wraps `OptiMap<T, ()>` with set-specific API, inheriting all Hint/MapType/Backend selection
-- `OptiSortedMap<K, V>` and `OptiSortedSet<T>` wrap `FlatBTree` for sorted containers (single backend for now, extensible)
+- Sorted containers go through `OptiMap` / `OptiSet` pinned to `MapType::FlatBTree` (constructors: `OptiMap::flat_btree()`, `OptiMap::sorted_with_capacity()`, `OptiMap::from_sorted_iter()`, plus the parallel `OptiSet` variants; `Hint::Sorted` selects FlatBTree through the auto policy). Sorted-only ops (`first/last_key_value`, `pop_first/last`, `iter_sorted`, `range`, `range_mut`, `split_off`, `append`) panic on hash backends.
 
 ## Working Practices
 

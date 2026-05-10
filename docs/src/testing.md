@@ -217,9 +217,9 @@ All tests pass under Miri with **zero UB in production code**:
 | Proptest (`tests/proptest_btree.rs`) | 1 (500 cases) | ~hours |
 
 **Designs covered:** all 5 hash maps (UFM, Splitsies, IPO, IPO64, Gaps),
-FlatBTree, all smart wrappers (OptiMap, OptiSet, OptiSortedMap,
-OptiSortedSet), GenericSet, and the `Map`/`Set`/`SortedMap`/`SortedSet`
-trait implementations.
+FlatBTree, both smart wrappers (OptiMap, OptiSet — sorted code goes
+through `OptiMap::flat_btree()` / `OptiSet::flat_btree()`), GenericSet,
+and the `Map`/`Set`/`SortedMap`/`SortedSet` trait implementations.
 
 ### Bugs Found
 
