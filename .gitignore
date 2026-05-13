@@ -6,3 +6,5 @@ docs/book/
 fuzz/corpus/
 fuzz/artifacts/
 bench-results/
+# Agent-local task state (not project artefacts).
+.pi/
