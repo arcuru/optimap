@@ -699,6 +699,47 @@ impl<K: Ord, V> RawBTree<K, V> {
         None
     }
 
+    /// Same as `search_for_insert` but does not record the descent path.
+    /// Used by the Entry API path, which reconstructs the path on demand
+    /// via parent pointers if (and only if) a split fires.
+    fn search_for_insert_no_path(&self, key: &K) -> (NodeIdx, usize) {
+        debug_assert!(self.root != NO_NODE);
+
+        let mut node_idx = self.root;
+
+        for _ in 0..self.height {
+            let node = self.arena.node_ptr(node_idx);
+            let header = unsafe { NodeLayout::<K, V>::header(node) };
+            let len = header.len as usize;
+
+            let mut child_idx = len;
+            for i in 0..len {
+                let k = unsafe { &*NodeLayout::<K, V>::internal_key_ptr(node, i) };
+                if key < k {
+                    child_idx = i;
+                    break;
+                }
+            }
+
+            node_idx = unsafe { NodeLayout::<K, V>::internal_child_ptr(node, child_idx).read() };
+        }
+
+        let node = self.arena.node_ptr(node_idx);
+        let header = unsafe { NodeLayout::<K, V>::header(node) };
+        let len = header.len as usize;
+
+        let mut pos = len;
+        for i in 0..len {
+            let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(node, i) };
+            if key <= k {
+                pos = i;
+                break;
+            }
+        }
+
+        (node_idx, pos)
+    }
+
     /// Search for the leaf where a key should be inserted.
     /// Returns (leaf_idx, insert_position) where insert_position is the
     /// index at which the key should go to maintain sorted order.
@@ -747,14 +788,15 @@ impl<K: Ord, V> RawBTree<K, V> {
     }
 
     /// Search for a key, returning either the existing location or the
-    /// insertion point. The descent path is written into `path` for use
-    /// by `insert_at_vacant` if a split cascade is needed.
-    pub(crate) fn entry_search(&self, key: &K, path: &mut PathBuf) -> EntrySearch {
+    /// insertion point. No descent path is recorded — if a subsequent
+    /// `insert_at_vacant` triggers a split, the path is reconstructed
+    /// lazily via parent pointers (see `propagate_split_lazy`).
+    pub(crate) fn entry_search(&self, key: &K) -> EntrySearch {
         if self.root == NO_NODE {
             return EntrySearch::EmptyTree;
         }
 
-        let (leaf_idx, pos) = self.search_for_insert(key, path);
+        let (leaf_idx, pos) = self.search_for_insert_no_path(key);
 
         // Check if key already exists at this position
         let node = self.arena.node_ptr(leaf_idx);
@@ -773,12 +815,13 @@ impl<K: Ord, V> RawBTree<K, V> {
 
     /// Insert a value at a pre-located vacant position.
     /// Returns (leaf_idx, slot_idx) of the inserted element.
-    /// Used by VacantEntry::insert.
+    /// Used by VacantEntry::insert. On split cascade, the descent path
+    /// is reconstructed lazily via parent pointers — VacantEntry does
+    /// not carry a PathBuf.
     pub(crate) fn insert_at_vacant(
         &mut self,
         leaf_idx: NodeIdx,
         pos: usize,
-        path: &mut PathBuf,
         key: K,
         value: V,
     ) -> (NodeIdx, usize)
@@ -797,7 +840,7 @@ impl<K: Ord, V> RawBTree<K, V> {
             let (promoted_key, new_leaf_idx) =
                 self.leaf_split_and_insert(leaf_idx, pos, key, value);
             self.len += 1;
-            self.propagate_split(path, promoted_key, new_leaf_idx);
+            self.propagate_split_lazy(leaf_idx, promoted_key, new_leaf_idx);
             // Determine which leaf the element ended up in
             if pos < mid {
                 (leaf_idx, pos)
@@ -1149,6 +1192,80 @@ impl<K: Ord + Clone, V> RawBTree<K, V> {
         let promoted = unsafe { (*NodeLayout::<K, V>::leaf_key_ptr(right_node, 0)).clone() };
 
         (promoted, right_idx)
+    }
+
+    /// Propagate a split upward by chasing parent pointers, one level at a
+    /// time, stopping the moment a parent has room. Used by the Entry API
+    /// path so that `VacantEntry` does not need to carry a `PathBuf`.
+    ///
+    /// Trade vs `propagate_split`: this variant pays a `~INTERNAL_CAP` linear
+    /// scan per cascaded level to find the back-pointer from parent → child.
+    /// Wins because (a) most splits cascade 1–2 levels, (b) no per-insert
+    /// descent push, (c) `Entry` / `VacantEntry` stay small (relevant for
+    /// `OptiMap`'s enum-dispatch size).
+    fn propagate_split_lazy(&mut self, mut child: NodeIdx, mut key: K, mut new_sibling: NodeIdx)
+    where
+        K: Clone,
+    {
+        loop {
+            let child_node = self.arena.node_ptr(child);
+            let parent_idx = unsafe { NodeLayout::<K, V>::header(child_node).parent };
+
+            if parent_idx == NO_NODE {
+                // Cascaded to root — install a new root above (child, new_sibling).
+                let new_root = self.arena.alloc_node();
+                let new_root_node = self.arena.node_ptr(new_root);
+                unsafe {
+                    let h = NodeLayout::<K, V>::header_mut(new_root_node);
+                    h.len = 1;
+                    h.flags = 0; // internal
+                    h.parent = NO_NODE;
+                    NodeLayout::<K, V>::internal_key_ptr(new_root_node, 0).write(key);
+                    NodeLayout::<K, V>::internal_child_ptr(new_root_node, 0).write(child);
+                    NodeLayout::<K, V>::internal_child_ptr(new_root_node, 1).write(new_sibling);
+                }
+                unsafe {
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(child)).parent = new_root;
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(new_sibling)).parent =
+                        new_root;
+                }
+                self.root = new_root;
+                self.height += 1;
+                return;
+            }
+
+            // Find the slot in parent that points back to `child`.
+            let parent_node = self.arena.node_ptr(parent_idx);
+            let parent_len = unsafe { NodeLayout::<K, V>::header(parent_node).len } as usize;
+            let mut child_pos = parent_len + 1;
+            for i in 0..=parent_len {
+                let c = unsafe { NodeLayout::<K, V>::internal_child_ptr(parent_node, i).read() };
+                if c == child {
+                    child_pos = i;
+                    break;
+                }
+            }
+            debug_assert!(
+                child_pos <= parent_len,
+                "propagate_split_lazy: child {child:?} not found in parent {parent_idx:?}"
+            );
+
+            if parent_len < NodeLayout::<K, V>::INTERNAL_CAP {
+                self.internal_insert_at(parent_idx, child_pos, key, new_sibling);
+                unsafe {
+                    NodeLayout::<K, V>::header_mut(self.arena.node_ptr(new_sibling)).parent =
+                        parent_idx;
+                }
+                return;
+            }
+
+            // Parent full → split and cascade.
+            let (promoted, new_internal) =
+                self.internal_split_and_insert(parent_idx, child_pos, key, new_sibling);
+            key = promoted;
+            new_sibling = new_internal;
+            child = parent_idx;
+        }
     }
 
     /// Propagate a split upward from child to parent(s).

@@ -152,9 +152,8 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
 
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
-        use super::raw::{EntrySearch, PathBuf};
-        let mut path = PathBuf::new();
-        match self.tree.entry_search(&key, &mut path) {
+        use super::raw::EntrySearch;
+        match self.tree.entry_search(&key) {
             EntrySearch::Occupied(leaf_idx, slot_idx) => {
                 let node = self.tree.arena.node_ptr(leaf_idx);
                 let value = unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx) };
@@ -164,14 +163,12 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
                 key,
                 leaf_idx,
                 pos,
-                path,
                 tree: &mut self.tree,
             }),
             EntrySearch::EmptyTree => Entry::Vacant(VacantEntry {
                 key,
                 leaf_idx: NO_NODE,
                 pos: 0,
-                path,
                 tree: &mut self.tree,
             }),
         }
@@ -179,10 +176,6 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
 }
 
 /// A view into a single entry in a FlatBTree, which may be vacant or occupied.
-// The Vacant arm is fatter because `VacantEntry` carries a stack-allocated
-// `PathBuf` (descent path). Boxing it would re-introduce the per-insert heap
-// allocation that the stack PathBuf was added to remove.
-#[allow(clippy::large_enum_variant)]
 pub enum Entry<'a, K, V> {
     /// An occupied entry.
     Occupied(OccupiedEntry<'a, K, V>),
@@ -201,9 +194,6 @@ pub struct VacantEntry<'a, K, V> {
     key: K,
     leaf_idx: NodeIdx,
     pos: usize,
-    /// Stack-allocated descent path captured by `entry_search`. Consumed by
-    /// `insert_at_vacant` if a split cascade fires; otherwise dropped cheaply.
-    path: super::raw::PathBuf,
     tree: &'a mut RawBTree<K, V>,
 }
 
@@ -295,20 +285,16 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 
 impl<'a, K: Ord + Clone, V> VacantEntry<'a, K, V> {
     /// Sets the value of the entry and returns a mutable reference to it.
-    pub fn insert(mut self, value: V) -> &'a mut V {
+    pub fn insert(self, value: V) -> &'a mut V {
         if self.leaf_idx == NO_NODE {
             // Empty tree
             self.tree.insert_first(self.key, value);
             let node = self.tree.arena.node_ptr(self.tree.first_leaf);
             unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, 0) }
         } else {
-            let (leaf_idx, slot_idx) = self.tree.insert_at_vacant(
-                self.leaf_idx,
-                self.pos,
-                &mut self.path,
-                self.key,
-                value,
-            );
+            let (leaf_idx, slot_idx) =
+                self.tree
+                    .insert_at_vacant(self.leaf_idx, self.pos, self.key, value);
             let node = self.tree.arena.node_ptr(leaf_idx);
             unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(node, slot_idx) }
         }
