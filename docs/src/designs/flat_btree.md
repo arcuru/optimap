@@ -109,7 +109,7 @@ All benchmarks use `u64` keys and values. Ratios <1.0 = FlatBTree is faster.
 | Workload | Ratio |
 |----------|:-----:|
 | Read-heavy (80/15/5) | **0.83x** |
-| Counting (entry API) | 1.08x |
+| Counting (entry API) | **0.76x** |
 
 ### Key Advantages
 
@@ -118,8 +118,6 @@ All benchmarks use `u64` keys and values. Ratios <1.0 = FlatBTree is faster.
 - **Iteration 1.6-2x faster**: leaf chain traversal, no tree navigation.
 - **Clone 2-5x faster**: bulk arena copy + in-place value cloning.
 - **Remove 1.5-2.3x faster**: lazy removal (shift within leaf, no rebalancing).
-
-### Known Gaps
-
-- **Counting/entry API ~1.08x slower**: VacantEntry re-searches after insert.
-- **Random insert at 1K ~1.10x slower**: tree overhead for small sizes.
+- **Counting/entry API 1.3x faster**: stack-allocated descent (no per-insert
+  `Vec` alloc), lazy split propagation via parent pointers (Entry path
+  carries no descent buffer).
