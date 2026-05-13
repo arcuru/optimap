@@ -6,14 +6,15 @@
 use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
 
 use optimap::raw_entry::RawEntryMut;
-use optimap::{Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
+use optimap::{Gaps, IPO64, InPlaceOverflow, SoaMap, Splitsies, UnorderedFlatMap};
 
 fn hash_one<K: std::hash::Hash, S: BuildHasher>(k: &K, s: &S) -> u64 {
     s.hash_one(k)
 }
 
 /// Run `$body` once per backend. `$map` names the binding (`&mut M`) in scope
-/// inside the block.
+/// inside the block. SoaMap is included to cover the SoA storage layout
+/// (separate key/value arrays) on the raw_entry paths.
 macro_rules! for_each_map {
     ($map:ident, $body:block) => {{
         {
@@ -34,6 +35,10 @@ macro_rules! for_each_map {
         }
         {
             let $map = &mut Gaps::<String, i32>::new();
+            $body
+        }
+        {
+            let $map = &mut SoaMap::<String, i32>::new();
             $body
         }
     }};
