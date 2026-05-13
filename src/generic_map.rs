@@ -185,9 +185,7 @@ where
                 key,
                 hash: h,
                 slot,
-                table: &mut self.table,
-                hash_builder: &self.hash_builder,
-                _marker: std::marker::PhantomData,
+                map: self,
             }),
         }
     }
@@ -318,9 +316,7 @@ pub struct VacantEntry<'a, K, V, S, R: RawTableApi<K, V>> {
     pub(crate) key: K,
     pub(crate) hash: u64,
     pub(crate) slot: Option<(usize, usize, u8)>,
-    pub(crate) table: &'a mut R,
-    pub(crate) hash_builder: &'a S,
-    _marker: std::marker::PhantomData<V>,
+    pub(crate) map: &'a mut GenericMap<K, V, S, R>,
 }
 
 impl<'a, K: Hash + Eq, V, S: BuildHasher, R: RawTableApi<K, V>> Entry<'a, K, V, S, R> {
@@ -398,13 +394,17 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
 impl<'a, K: Hash + Eq, V, S: BuildHasher, R: RawTableApi<K, V>> VacantEntry<'a, K, V, S, R> {
     pub fn insert(self, value: V) -> &'a mut V {
         if let Some((gi, si, full_mask)) = self.slot {
-            self.table
+            self.map
+                .table
                 .insert_at(self.hash, gi, si, self.key, value, full_mask);
-            unsafe { &mut *self.table.value_ptr(gi, si) }
+            unsafe { &mut *self.map.table.value_ptr(gi, si) }
         } else {
-            self.table.ensure_capacity(self.hash_builder);
-            let (gi, si) = self.table.insert_no_check(self.hash, self.key, value);
-            unsafe { &mut *self.table.value_ptr(gi, si) }
+            self.map.table.ensure_capacity(&self.map.hash_builder);
+            let (gi, si) = self
+                .map
+                .table
+                .insert_no_check(self.hash, self.key, value);
+            unsafe { &mut *self.map.table.value_ptr(gi, si) }
         }
     }
 
