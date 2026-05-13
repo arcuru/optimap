@@ -179,6 +179,10 @@ impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
 }
 
 /// A view into a single entry in a FlatBTree, which may be vacant or occupied.
+// The Vacant arm is fatter because `VacantEntry` carries a stack-allocated
+// `PathBuf` (descent path). Boxing it would re-introduce the per-insert heap
+// allocation that the stack PathBuf was added to remove.
+#[allow(clippy::large_enum_variant)]
 pub enum Entry<'a, K, V> {
     /// An occupied entry.
     Occupied(OccupiedEntry<'a, K, V>),
@@ -3063,7 +3067,7 @@ mod tests {
                 (n / 10) as i64,             // 10%
                 (n / 2) as i64,              // mid
                 (n - n / 10) as i64,         // 90%
-                (n - 1).max(0) as i64,       // last key
+                (n - 1) as i64,              // last key
                 n as i64,                    // beyond everything
             ];
             for &pivot in &pivots {
@@ -3409,8 +3413,8 @@ mod tests {
                     (n / 10) as i64,             // p010
                     (n / 2) as i64,              // p050
                     (n - n / 10) as i64,         // p090
-                    (n - n / 100).max(0) as i64, // p099
-                    (n - 1).max(0) as i64,       // last key
+                    (n - n / 100) as i64,        // p099
+                    (n - 1) as i64,              // last key
                     n as i64,                    // beyond everything
                 ]
             };
@@ -3550,10 +3554,9 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    fn build_disjoint_pair(
-        n_a: usize,
-        n_b: usize,
-    ) -> (FlatBTree<u64, u64>, FlatBTree<u64, u64>, Vec<(u64, u64)>) {
+    type DisjointPair = (FlatBTree<u64, u64>, FlatBTree<u64, u64>, Vec<(u64, u64)>);
+
+    fn build_disjoint_pair(n_a: usize, n_b: usize) -> DisjointPair {
         let a: FlatBTree<u64, u64> = (0..n_a as u64).map(|i| (i, i)).collect();
         let b: FlatBTree<u64, u64> = (n_a as u64..(n_a + n_b) as u64)
             .map(|i| (i, i * 2))
@@ -3674,8 +3677,8 @@ mod tests {
         a.append_graft(&mut b);
 
         // Insert into the seam region.
-        a.insert(2999_500, 999_500);
-        assert_eq!(a.get(&2999_500), Some(&999_500));
+        a.insert(2_999_500, 999_500);
+        assert_eq!(a.get(&2_999_500), Some(&999_500));
 
         // Remove around the seam.
         for i in 2_990..3_010u64 {

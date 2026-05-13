@@ -145,6 +145,10 @@ macro_rules! entry_match {
 
 /// A view into a single entry in an [`OptiMap`], which may either be vacant
 /// or occupied.
+// FlatBTree's VacantEntry carries a stack PathBuf (see flat_btree::map);
+// that variance propagates here. Boxing would undo the per-insert
+// no-alloc invariant.
+#[allow(clippy::large_enum_variant)]
 pub enum Entry<'a, K, V> {
     Occupied(OccupiedEntry<'a, K, V>),
     Vacant(VacantEntry<'a, K, V>),
@@ -161,6 +165,9 @@ pub enum OccupiedEntry<'a, K, V> {
 }
 
 /// A view into a vacant entry in an [`OptiMap`].
+// FlatBTree's arm is fatter (stack PathBuf, see flat_btree::map). Boxing it
+// would re-introduce a per-insert allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum VacantEntry<'a, K, V> {
     Ufm(crate::map::VacantEntry<'a, K, V, S>),
     Splitsies(crate::split_overflow::map::VacantEntry<'a, K, V, S>),
