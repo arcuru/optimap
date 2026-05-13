@@ -109,6 +109,39 @@
 //! these on a hash backend panics; pin the backend (or use
 //! [`Hint::Sorted`]) to guarantee them.
 //!
+//! ## Raw entry API (interning, custom equality)
+//!
+//! Every hash-backed map exposes [`raw_entry`] / [`raw_entry_mut`] for cases
+//! the regular `Entry` API can't express — look up by hash + custom equality,
+//! supply a pre-computed hash, intern a borrowed key without allocating until
+//! you need to:
+//!
+//! ```
+//! use optimap::Splitsies;
+//! use optimap::raw_entry::RawEntryMut;
+//! use std::hash::BuildHasher;
+//!
+//! let mut interner: Splitsies<String, u32> = Splitsies::new();
+//! let query: &str = "needle";
+//! let h = interner.hasher().hash_one(query);
+//!
+//! // Look up by &str; only allocate a String when the key is absent.
+//! let id = match interner.raw_entry_mut().from_key_hashed_nocheck(h, query) {
+//!     RawEntryMut::Occupied(e) => *e.get(),
+//!     RawEntryMut::Vacant(e) => {
+//!         let next_id = 42;
+//!         e.insert_hashed_nocheck(h, query.to_string(), next_id);
+//!         next_id
+//!     }
+//! };
+//! assert_eq!(id, 42);
+//! ```
+//!
+//! See [`raw_entry`] for the full builder/entry surface.
+//!
+//! [`raw_entry`]: crate::raw_entry
+//! [`raw_entry_mut`]: crate::raw_entry
+//!
 //! ## Choosing a design
 //!
 //! - **Let OptiMap decide**: [`OptiMap`] / [`OptiSet`] — auto-selects backend, good default

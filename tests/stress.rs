@@ -1,7 +1,9 @@
-use optimap::{SoaMap, UnorderedFlatMap, UnorderedFlatSet};
+use optimap::raw_entry::RawEntryMut;
+use optimap::{SoaMap, Splitsies, UnorderedFlatMap, UnorderedFlatSet};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasher;
 
 /// Compare our map against std::collections::HashMap for correctness.
 #[test]
@@ -362,6 +364,127 @@ fn soa_large_values() {
         map.remove(&i);
     }
     assert_eq!(map.len(), 500);
+}
+
+/// Cross-validate `raw_entry_mut` against `std::collections::HashMap`.
+///
+/// Mixes regular `insert`/`remove`/`get` ops with raw-entry variants: read
+/// via `from_key`/`from_key_hashed_nocheck`/`from_hash`, write via
+/// `RawEntryMut::Occupied::{insert,remove_entry}` and `Vacant::{insert,
+/// insert_hashed_nocheck}`. After every op, optimap and std must agree on
+/// the value for the touched key and on the total length.
+#[test]
+fn raw_entry_matches_std_hashmap() {
+    let mut rng = StdRng::seed_from_u64(0x00C0_FFEE_BEEF);
+    let mut ours: Splitsies<i32, i32> = Splitsies::new();
+    let mut std_map: HashMap<i32, i32> = HashMap::new();
+
+    for _ in 0..20_000 {
+        let op = rng.gen_range(0..7);
+        let key = rng.gen_range(0..500i32);
+        let value = rng.gen_range(0..10_000i32);
+        match op {
+            0 => {
+                // Plain insert (replace if present).
+                let ours_old = ours.insert(key, value);
+                let std_old = std_map.insert(key, value);
+                assert_eq!(ours_old, std_old, "insert key={key}");
+            }
+            1 => {
+                let ours_rm = ours.remove(&key);
+                let std_rm = std_map.remove(&key);
+                assert_eq!(ours_rm, std_rm, "remove key={key}");
+            }
+            2 => {
+                let ours_get = ours.get(&key);
+                let std_get = std_map.get(&key);
+                assert_eq!(ours_get, std_get, "get key={key}");
+            }
+            3 => {
+                // Read via raw_entry().from_key.
+                let ours_kv = ours.raw_entry().from_key(&key);
+                let std_kv = std_map.get_key_value(&key);
+                assert_eq!(ours_kv, std_kv, "raw from_key key={key}");
+            }
+            4 => {
+                // Read via raw_entry().from_key_hashed_nocheck.
+                let h = ours.hasher().hash_one(key);
+                let ours_kv = ours.raw_entry().from_key_hashed_nocheck(h, &key);
+                let std_kv = std_map.get_key_value(&key);
+                assert_eq!(ours_kv, std_kv, "raw from_key_hashed_nocheck key={key}");
+            }
+            5 => {
+                // Write via raw_entry_mut: Vacant inserts, Occupied replaces.
+                match ours.raw_entry_mut().from_key(&key) {
+                    RawEntryMut::Vacant(e) => {
+                        e.insert(key, value);
+                    }
+                    RawEntryMut::Occupied(mut e) => {
+                        e.insert(value);
+                    }
+                }
+                std_map.insert(key, value);
+                assert_eq!(ours.get(&key), std_map.get(&key));
+            }
+            6 => {
+                // Remove via raw_entry_mut's Occupied::remove_entry.
+                let ours_rm = match ours.raw_entry_mut().from_key(&key) {
+                    RawEntryMut::Occupied(e) => Some(e.remove_entry()),
+                    RawEntryMut::Vacant(_) => None,
+                };
+                let std_rm = std_map.remove_entry(&key);
+                assert_eq!(ours_rm, std_rm, "raw remove_entry key={key}");
+            }
+            _ => unreachable!(),
+        }
+
+        assert_eq!(ours.len(), std_map.len(), "length");
+    }
+
+    // Final pass: every std key must be findable via raw_entry too.
+    for (k, v) in &std_map {
+        assert_eq!(ours.raw_entry().from_key(k), Some((k, v)));
+    }
+}
+
+/// `from_hash` with a custom-eq closure: identity-by-prefix lookup.
+///
+/// Inserts a batch of strings, then probes for the *first one with each
+/// distinct first byte* via `raw_entry().from_hash`. The probe must find
+/// some matching key (we don't care which one) for every first byte that
+/// the inserted set covers.
+#[test]
+fn raw_entry_from_hash_custom_eq() {
+    let mut map: UnorderedFlatMap<String, i32> = UnorderedFlatMap::new();
+    let mut seen_first_bytes: HashSet<u8> = HashSet::new();
+    let mut rng = StdRng::seed_from_u64(0xABCD_1234);
+    for i in 0..2_000 {
+        let len = rng.gen_range(2..16);
+        let k: String = (0..len)
+            .map(|_| (b'a' + rng.gen_range(0..26)) as char)
+            .collect();
+        if let Some(&first) = k.as_bytes().first() {
+            seen_first_bytes.insert(first);
+        }
+        map.insert(k, i);
+    }
+    // For each first byte present in the inserted set, pick one stored key
+    // with that prefix and verify from_hash with custom-eq finds *a* match.
+    for &first in &seen_first_bytes {
+        let target_key = map
+            .iter()
+            .find(|(k, _)| k.as_bytes().first() == Some(&first))
+            .map(|(k, _)| k.clone())
+            .unwrap();
+        let h = map.hasher().hash_one(&target_key);
+        let found = map.raw_entry().from_hash(h, |stored| {
+            stored.as_bytes().first() == Some(&first)
+        });
+        assert!(
+            found.is_some(),
+            "from_hash with first-byte eq missed for first=0x{first:02x}"
+        );
+    }
 }
 
 /// Test large capacity to exercise multiple rehashes.
