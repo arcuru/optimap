@@ -75,3 +75,7 @@ harness = false
 [[bench]]
 name = "dispatch"
 harness = false
+
+[[bench]]
+name = "raw_entry"
+harness = false
