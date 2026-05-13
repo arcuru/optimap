@@ -91,7 +91,6 @@ Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
 | # | Item | Difficulty | Notes |
 |---|------|-----------|-------|
 | 11 | Future: `HashedBTree<K, V>` — tree sorted by `hash(K)` instead of `K`. Implements `HashedMap`, *not* `SortedMap`. | Future | Provides "btree-as-hashmap" without violating the no-mixing invariant. Design sketch: [designs/hashed_btree.md](designs/hashed_btree.md). |
-| 13 | Future: `OrderedMap<K, V>` — insertion-ordered map (LRU-like). | Future | Third dispatch flavor alongside `HashedMap` / `SortedMap`. |
 
 ### Recently Completed (May 2026 — Ava)
 
