@@ -2836,7 +2836,6 @@ impl<K: Ord, V> RawBTree<K, V> {
             } else {
                 let new_right = right_arena.alloc_node();
                 let n_keys = new_right_keys.len();
-                let n_children = new_right_children.len();
                 unsafe {
                     let dst_ptr = right_arena.node_ptr(new_right);
                     let header = NodeLayout::<K, V>::header_mut(dst_ptr);
@@ -2850,8 +2849,7 @@ impl<K: Ord, V> RawBTree<K, V> {
                             .write(k);
                     }
                 }
-                for i in 0..n_children {
-                    let c = new_right_children[i];
+                for (i, &c) in new_right_children.iter().enumerate() {
                     unsafe {
                         NodeLayout::<K, V>::internal_child_ptr(
                             right_arena.node_ptr(new_right),
@@ -3146,7 +3144,6 @@ impl<K: Ord, V> RawBTree<K, V> {
             } else {
                 let new_left = left_arena.alloc_node();
                 let n_keys = new_left_keys.len();
-                let n_children = new_left_children.len();
                 unsafe {
                     let dst_ptr = left_arena.node_ptr(new_left);
                     let header = NodeLayout::<K, V>::header_mut(dst_ptr);
@@ -3160,8 +3157,7 @@ impl<K: Ord, V> RawBTree<K, V> {
                             .write(k);
                     }
                 }
-                for i in 0..n_children {
-                    let c = new_left_children[i];
+                for (i, &c) in new_left_children.iter().enumerate() {
                     unsafe {
                         NodeLayout::<K, V>::internal_child_ptr(
                             left_arena.node_ptr(new_left),
