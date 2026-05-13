@@ -866,7 +866,10 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
 
     #[inline(always)]
     unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K {
-        unsafe { &(*self.bucket_ptr(gi, si)).0 }
+        // `&raw const` keeps full provenance from the underlying `*mut (K, V)`
+        // — a `&` reborrow would narrow it to shared, blocking the cast-to-mut
+        // path raw_entry needs for `key_mut` / `insert_key`.
+        unsafe { &raw const (*self.bucket_ptr(gi, si)).0 }
     }
 
     #[inline(always)]

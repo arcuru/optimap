@@ -281,6 +281,27 @@ where
     }
 }
 
+// ── Raw entry API ──────────────────────────────────────────────────────────
+
+impl<K, V, S, R: RawTableApi<K, V>> GenericMap<K, V, S, R>
+where
+    S: BuildHasher,
+{
+    /// Read-only raw-entry builder. See [`crate::raw_entry`] for the lookup
+    /// forms (`from_key`, `from_key_hashed_nocheck`, `from_hash`).
+    #[inline]
+    pub fn raw_entry(&self) -> crate::raw_entry::RawEntryBuilder<'_, K, V, S, R> {
+        crate::raw_entry::RawEntryBuilder { map: self }
+    }
+
+    /// Mutable raw-entry builder. Returns a [`crate::raw_entry::RawEntryMut`]
+    /// once a lookup form is chosen.
+    #[inline]
+    pub fn raw_entry_mut(&mut self) -> crate::raw_entry::RawEntryBuilderMut<'_, K, V, S, R> {
+        crate::raw_entry::RawEntryBuilderMut { map: self }
+    }
+}
+
 // ── Entry API ──────────────────────────────────────────────────────────────
 
 pub enum Entry<'a, K, V, S, R: RawTableApi<K, V>> {

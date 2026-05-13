@@ -92,6 +92,7 @@ correlate with the AND group index.
     - `bitmask.rs`, `hash.rs`, `group.rs` — Bitmask, hash mixing, legacy UFM group ops
     - `mod.rs` — Legacy UFM RawTable (still used by `set.rs`)
   - `generic_map.rs` — `GenericMap<K,V,S,R>` (single map wrapper over any RawTableApi backend)
+  - `raw_entry.rs` — `raw_entry()` / `raw_entry_mut()` builders on `GenericMap` (hash + custom-eq lookup, hashbrown shape)
   - `map.rs` — `UnorderedFlatMap` type alias (= `GenericMap` + `UfmLayout`)
   - `set.rs` — UnorderedFlatSet (hand-tuned set with SIMD fast-path)
   - `split_overflow/` — `Splitsies` type alias (= `GenericMap` + `SplitsiesLayout`)
@@ -116,6 +117,7 @@ correlate with the AND group index.
 - 70% default load factor across all designs
 - Generic `HashedMap` trait (hash-dispatched) allows benchmarking all hash-map implementations + hashbrown uniformly. Sorted maps live behind `SortedMap` (Ord-dispatched). No type implements both — a structure picks one ordering and is efficient at one dispatch flavor.
 - `HashedMap` trait covers full std::HashMap interface: get/insert/remove/entry + get_key_value, remove_entry, retain, drain, reserve, shrink_to_fit, iter_mut, keys, values, values_mut, try_insert, into_keys, into_values
+- `GenericMap` also exposes `raw_entry()` / `raw_entry_mut()` (hashbrown shape) — `from_key` / `from_key_hashed_nocheck` / `from_hash` with a `Fn(&K) -> bool` eq closure. Lives outside the `HashedMap` trait (it's hash-dispatch-only and not offered by std/hashbrown via the trait surface).
 - `Set` trait mirrors HashedMap for sets: insert/contains/get/remove/take/retain/drain/reserve/shrink_to_fit/iter
 - `SortedMap` trait covers ordered ops: first/last_key_value, pop_first/pop_last, range, iter_sorted
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range

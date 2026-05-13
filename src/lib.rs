@@ -218,6 +218,7 @@ pub(crate) mod map;
 mod opti_set;
 pub mod optimap;
 pub mod raw;
+pub mod raw_entry;
 mod set;
 pub mod soa;
 pub mod split_overflow;
