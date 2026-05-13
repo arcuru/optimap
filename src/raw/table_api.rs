@@ -59,13 +59,22 @@ pub trait RawTableApi<K, V>: Sized {
     /// Pointer to the key at (group_index, slot_index).
     ///
     /// # Safety
-    /// `gi` and `si` must be within bounds of an allocated table.
+    /// - `gi` and `si` must be within bounds of an allocated table.
+    /// - Implementations must derive the returned `*const K` via raw pointer
+    ///   arithmetic or `&raw const`, **not** via a `&K` reborrow. The
+    ///   `raw_entry` machinery casts this back to `*mut K` and forms a
+    ///   `&mut K` — that requires the underlying provenance to still be
+    ///   mutable. A `&K` reborrow narrows provenance to shared and breaks
+    ///   the cast-to-mut path (caught by Miri under tree borrows).
     unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K;
 
     /// Pointer to the value at (group_index, slot_index).
     ///
     /// # Safety
     /// `gi` and `si` must be within bounds of an allocated table.
+    /// Same provenance constraint as [`key_ptr`](RawTableApi::key_ptr): derive
+    /// via raw pointer arithmetic or `&raw mut`, never via a `&mut V`
+    /// reborrow into a raw pointer.
     unsafe fn value_ptr(&self, gi: usize, si: usize) -> *mut V;
 
     // ── Lookups ────────────────────────────────────────────────────────────
