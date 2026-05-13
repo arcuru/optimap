@@ -906,17 +906,15 @@ impl<K: Ord, V> RawBTree<K, V> {
 
 /// Result of an entry search on the B-tree.
 ///
-/// The descent path is *not* embedded in the variants — callers pass a
-/// `&mut PathBuf` into `entry_search` and own the path buffer themselves.
-/// Keeping this enum small (~16 bytes vs ~280 bytes if PathBuf were
-/// embedded) avoids large stack copies on every entry() call.
+/// No descent path is recorded during the search. If a subsequent
+/// `insert_at_vacant` triggers a split, the ancestor chain is
+/// reconstructed lazily via parent pointers in `propagate_split_lazy`.
 pub(crate) enum EntrySearch {
     /// Tree is empty.
     EmptyTree,
     /// Key found at (leaf_idx, slot_idx).
     Occupied(NodeIdx, usize),
-    /// Key not found. Insert at (leaf_idx, pos). The descent path is in the
-    /// caller-provided `PathBuf` passed to `entry_search`.
+    /// Key not found. Insert at (leaf_idx, pos).
     Vacant(NodeIdx, usize),
 }
 
