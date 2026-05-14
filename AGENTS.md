@@ -11,11 +11,12 @@ with different performance trade-offs, benchmarked against hashbrown (Rust's std
 |--------|----------|---------|
 | **UnorderedFlatMap** | 15-slot groups, overflow byte | High-load miss, churn |
 | **Splitsies** | 16-slot, separate overflow array | Balanced (miss + insert), tombstone-free |
-| **InPlaceOverflow** | 16-slot Swiss-table style | Lookup hit, insert |
+| **InPlaceOverflow** | 16-slot Swiss-table, 254-value tag (`Byte7_254`) | Lookup hit, insert; miss at large N (wider tag) |
+| **Byte7_128_TombMap** (`MapType::Tomb`) | 16-slot Swiss-table, 128-value tag (hashbrown-equivalent) | `Policy::auto` default; wins hit + remove at most sizes (sweep-2026-05-13) |
 | **IPO64** | 64-slot cache-line, AVX-512 | Specialty: high-load resilience |
 | **Gaps** | 15-slot + power-of-2 buckets | Iteration |
 | **SoaMap** | Separate key/value arrays (SoA) | Large-value workloads |
-| **FlatBTree** | 256-byte B+ tree nodes | Sorted iteration, range queries |
+| **FlatBTree** | 256-byte B+ tree nodes | Sorted iteration, range queries; predictable insert latency (no resize spikes) |
 
 ## Build & Test
 
@@ -123,7 +124,7 @@ correlate with the AND group index.
 - `SortedSet` trait mirrors SortedMap for sets: first/last, pop_first/pop_last, iter_sorted, range
 - Entry API matches std: or_insert, or_insert_with, or_insert_with_key, or_default, and_modify, into_key
 - OptiMap has full entry API via enum `Entry`/`OccupiedEntry`/`VacantEntry` types with `entry_match!` macro dispatch
-- `OptiMap<K, V>` wraps all backends behind an enum with policy-driven backend selection (by capacity, KV size, workload hint) and optional auto-transition on resize
+- `OptiMap<K, V>` wraps seven backends (Ufm/Splitsies/Ipo/Tomb/Gaps/Ipo64/FlatBTree) behind an enum with policy-driven selection. `Policy` is a user-configurable list of `(min_capacity, backend)` bands; `Policy::auto()` is the default (single-band `MapType::Tomb`). Auto-transitions on resize: `OptiMap::insert` reads capacity before/after, and on grow consults the policy — if a different band applies, drains + reinserts into the new backend. Pinned backends (`OptiMap::with_type`/`tomb()`/`ipo()`/…) never transition.
 - `OptiSet<T>` wraps `OptiMap<T, ()>` with set-specific API, inheriting all Hint/MapType/Backend selection
 - Sorted containers go through `OptiMap` / `OptiSet` pinned to `MapType::FlatBTree` (constructors: `OptiMap::flat_btree()`, `OptiMap::sorted_with_capacity()`, `OptiMap::from_sorted_iter()`, plus the parallel `OptiSet` variants; `Hint::Sorted` selects FlatBTree through the auto policy). Sorted-only ops (`first/last_key_value`, `pop_first/last`, `iter_sorted`, `range`, `range_mut`, `split_off`, `append`) panic on hash backends.
 

@@ -68,14 +68,15 @@
 //!
 //! ## Smart wrappers
 //!
-//! [`OptiMap`] dynamically selects a hash map backend based on capacity,
-//! key/value size, and optional workload [`Hint`]s. [`OptiSet`] does the
-//! same for sets. Both can transition backends at resize boundaries:
+//! [`OptiMap`] dynamically selects a hash map backend per its [`Policy`].
+//! [`OptiSet`] does the same for sets. Both transition backends on resize
+//! (organic growth via `insert` or explicit `reserve`) if the new capacity
+//! falls into a different policy band.
 //!
 //! ```
-//! use optimap::{OptiMap, OptiSet, Hint};
+//! use optimap::{OptiMap, OptiSet, Hint, Policy, MapType};
 //!
-//! // Let the policy engine choose:
+//! // Default policy (single-band Tomb — see Policy::auto docs):
 //! let mut map = OptiMap::<String, i32>::new();
 //! map.insert("hello".into(), 42);
 //!
@@ -84,6 +85,12 @@
 //!
 //! // Or hint at your workload:
 //! let mut map = OptiMap::<u64, u64>::with_hint(Hint::Churn);
+//!
+//! // Or define a custom policy with capacity bands:
+//! let policy = Policy::new()
+//!     .band(0, MapType::Splitsies)
+//!     .band(1024, MapType::Tomb);
+//! let mut map = OptiMap::<u64, u64>::with_policy(policy);
 //! ```
 //!
 //! For sorted containers, pin [`OptiMap`] / [`OptiSet`] to the [`FlatBTree`]
@@ -278,6 +285,7 @@ pub use optimap::Hint;
 pub use optimap::MapType;
 pub use optimap::OccupiedEntry;
 pub use optimap::OptiMap;
+pub use optimap::Policy;
 pub use optimap::VacantEntry;
 
 // ── Set types ───────────────────────────────────────────────────────────────

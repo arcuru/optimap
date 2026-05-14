@@ -10,7 +10,28 @@ use std::iter::FusedIterator;
 use std::mem;
 
 use crate::map::DefaultHashBuilder;
+use crate::matrix_types::Byte7_128_TombMap;
 use crate::{FlatBTree, Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
+
+// ── Tomb backend type aliases ─────────────────────────────────────────────
+//
+// `Tomb` is the 16-slot tombstone design with the 128-value tag strategy
+// (`Byte7_128`) — same RawTable family as `InPlaceOverflow` but a different
+// tag instantiation. We give it a peer variant in every enum below so users
+// can target it directly, and so the Auto policy can pick it without
+// requiring the IPO type itself to change tags.
+mod tomb_types {
+    use crate::generic_map;
+    use crate::in_place_overflow::raw;
+    use crate::raw::tag_strategy::Byte7_128;
+    pub type RawTable<K, V> = raw::RawTable<K, V, Byte7_128>;
+    pub type Iter<'a, K, V> = generic_map::Iter<'a, K, V, RawTable<K, V>>;
+    pub type IterMut<'a, K, V> = generic_map::IterMut<'a, K, V, RawTable<K, V>>;
+    pub type IntoIter<K, V> = raw::IntoIter<K, V, Byte7_128>;
+    pub type Entry<'a, K, V, S> = generic_map::Entry<'a, K, V, S, RawTable<K, V>>;
+    pub type OccupiedEntry<'a, K, V> = generic_map::OccupiedEntry<'a, K, V>;
+    pub type VacantEntry<'a, K, V, S> = generic_map::VacantEntry<'a, K, V, S, RawTable<K, V>>;
+}
 
 // ── Enum iterators (zero-cost dispatch, no Box<dyn>) ──────────────────────
 
@@ -19,6 +40,7 @@ pub enum Iter<'a, K, V> {
     Ufm(crate::map::Iter<'a, K, V>),
     Splitsies(crate::split_overflow::map::Iter<'a, K, V>),
     Ipo(crate::in_place_overflow::map::Iter<'a, K, V>),
+    Tomb(tomb_types::Iter<'a, K, V>),
     Gaps(crate::gaps::map::Iter<'a, K, V>),
     Ipo64(crate::ipo64::map::Iter<'a, K, V>),
     FlatBTree(crate::flat_btree::map::Iter<'a, K, V>),
@@ -32,6 +54,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
             Iter::Ufm(i) => i.next(),
             Iter::Splitsies(i) => i.next(),
             Iter::Ipo(i) => i.next(),
+            Iter::Tomb(i) => i.next(),
             Iter::Gaps(i) => i.next(),
             Iter::Ipo64(i) => i.next(),
             Iter::FlatBTree(i) => i.next(),
@@ -43,6 +66,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
             Iter::Ufm(i) => i.size_hint(),
             Iter::Splitsies(i) => i.size_hint(),
             Iter::Ipo(i) => i.size_hint(),
+            Iter::Tomb(i) => i.size_hint(),
             Iter::Gaps(i) => i.size_hint(),
             Iter::Ipo64(i) => i.size_hint(),
             Iter::FlatBTree(i) => i.size_hint(),
@@ -56,6 +80,7 @@ pub enum IterMut<'a, K, V> {
     Ufm(crate::map::IterMut<'a, K, V>),
     Splitsies(crate::split_overflow::map::IterMut<'a, K, V>),
     Ipo(crate::in_place_overflow::map::IterMut<'a, K, V>),
+    Tomb(tomb_types::IterMut<'a, K, V>),
     Gaps(crate::gaps::map::IterMut<'a, K, V>),
     Ipo64(crate::ipo64::map::IterMut<'a, K, V>),
     FlatBTree(crate::flat_btree::map::IterMut<'a, K, V>),
@@ -69,6 +94,7 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
             IterMut::Ufm(i) => i.next(),
             IterMut::Splitsies(i) => i.next(),
             IterMut::Ipo(i) => i.next(),
+            IterMut::Tomb(i) => i.next(),
             IterMut::Gaps(i) => i.next(),
             IterMut::Ipo64(i) => i.next(),
             IterMut::FlatBTree(i) => i.next(),
@@ -80,6 +106,7 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
             IterMut::Ufm(i) => i.size_hint(),
             IterMut::Splitsies(i) => i.size_hint(),
             IterMut::Ipo(i) => i.size_hint(),
+            IterMut::Tomb(i) => i.size_hint(),
             IterMut::Gaps(i) => i.size_hint(),
             IterMut::Ipo64(i) => i.size_hint(),
             IterMut::FlatBTree(i) => i.size_hint(),
@@ -93,6 +120,7 @@ pub enum IntoIter<K, V> {
     Ufm(crate::map::IntoIter<K, V>),
     Splitsies(crate::split_overflow::map::IntoIter<K, V>),
     Ipo(crate::in_place_overflow::map::IntoIter<K, V>),
+    Tomb(tomb_types::IntoIter<K, V>),
     Gaps(crate::gaps::map::IntoIter<K, V>),
     Ipo64(crate::ipo64::map::IntoIter<K, V>),
     FlatBTree(crate::flat_btree::map::IntoIter<K, V>),
@@ -106,6 +134,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             IntoIter::Ufm(i) => i.next(),
             IntoIter::Splitsies(i) => i.next(),
             IntoIter::Ipo(i) => i.next(),
+            IntoIter::Tomb(i) => i.next(),
             IntoIter::Gaps(i) => i.next(),
             IntoIter::Ipo64(i) => i.next(),
             IntoIter::FlatBTree(i) => i.next(),
@@ -117,6 +146,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             IntoIter::Ufm(i) => i.size_hint(),
             IntoIter::Splitsies(i) => i.size_hint(),
             IntoIter::Ipo(i) => i.size_hint(),
+            IntoIter::Tomb(i) => i.size_hint(),
             IntoIter::Gaps(i) => i.size_hint(),
             IntoIter::Ipo64(i) => i.size_hint(),
             IntoIter::FlatBTree(i) => i.size_hint(),
@@ -129,13 +159,14 @@ impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 type S = DefaultHashBuilder;
 
-/// Dispatches a method on a 6-variant enum, returning the result directly.
+/// Dispatches a method on a 7-variant enum, returning the result directly.
 macro_rules! entry_match {
     ($self:expr, $method:ident $(, $arg:expr)*) => {
         match $self {
             Self::Ufm(e) => e.$method($($arg),*),
             Self::Splitsies(e) => e.$method($($arg),*),
             Self::Ipo(e) => e.$method($($arg),*),
+            Self::Tomb(e) => e.$method($($arg),*),
             Self::Gaps(e) => e.$method($($arg),*),
             Self::Ipo64(e) => e.$method($($arg),*),
             Self::FlatBTree(e) => e.$method($($arg),*),
@@ -155,6 +186,7 @@ pub enum OccupiedEntry<'a, K, V> {
     Ufm(crate::map::OccupiedEntry<'a, K, V>),
     Splitsies(crate::split_overflow::map::OccupiedEntry<'a, K, V>),
     Ipo(crate::in_place_overflow::map::OccupiedEntry<'a, K, V>),
+    Tomb(tomb_types::OccupiedEntry<'a, K, V>),
     Gaps(crate::gaps::map::OccupiedEntry<'a, K, V>),
     Ipo64(crate::ipo64::map::OccupiedEntry<'a, K, V>),
     FlatBTree(crate::flat_btree::map::OccupiedEntry<'a, K, V>),
@@ -165,6 +197,7 @@ pub enum VacantEntry<'a, K, V> {
     Ufm(crate::map::VacantEntry<'a, K, V, S>),
     Splitsies(crate::split_overflow::map::VacantEntry<'a, K, V, S>),
     Ipo(crate::in_place_overflow::map::VacantEntry<'a, K, V, S>),
+    Tomb(tomb_types::VacantEntry<'a, K, V, S>),
     Gaps(crate::gaps::map::VacantEntry<'a, K, V, S>),
     Ipo64(crate::ipo64::map::VacantEntry<'a, K, V, S>),
     FlatBTree(crate::flat_btree::map::VacantEntry<'a, K, V>),
@@ -280,7 +313,13 @@ impl<'a, K: Hash + Eq + Ord + Clone, V> VacantEntry<'a, K, V> {
 pub enum MapType {
     Ufm,
     Splitsies,
+    /// 16-slot tombstone backend with 254-value tag (`Byte7_254`) —
+    /// historical `InPlaceOverflow`. Wider tag, fewer false matches on miss.
     Ipo,
+    /// 16-slot tombstone backend with 128-value tag (`Byte7_128`) —
+    /// hashbrown-equivalent tag layout. Default for `Policy::auto`; wins
+    /// lookup_hit + remove at most sizes per sweep-2026-05-13 data.
+    Tomb,
     Gaps,
     Ipo64,
     /// Sorted backend ([`FlatBTree`]). Selected by `Hint::Sorted` or pinned
@@ -307,11 +346,120 @@ pub enum Hint {
     Sorted,
 }
 
+/// Capacity-banded policy that maps "current capacity" → backend choice.
+///
+/// A `Policy` is a sorted list of `(min_capacity, backend)` bands. For a
+/// given capacity, the active backend is the one whose `min_capacity` is
+/// the largest value ≤ the capacity.
+///
+/// `OptiMap` re-evaluates the policy whenever the underlying table resizes
+/// (typically at power-of-2 boundaries), and transitions to a different
+/// backend if a different band now applies. Lookup is O(log n_bands) and
+/// runs only on grow — never on per-operation hot paths.
+///
+/// # Default
+///
+/// [`Policy::auto`] is single-band [`MapType::Tomb`] — the 16-slot tombstone
+/// design with the 128-value tag (hashbrown-equivalent layout). Per
+/// sweep-2026-05-13 data, Tomb is the only design with no catastrophic
+/// regression across the full 100→10M range; competing designs each have
+/// a specific N-window where they fall ≥2× behind on at least one op.
+///
+/// # Example
+///
+/// ```
+/// use optimap::{MapType, OptiMap, Policy};
+///
+/// let policy = Policy::new()
+///     .band(0, MapType::Splitsies)
+///     .band(1024, MapType::Ipo);
+/// let mut map = OptiMap::<u64, u64>::with_policy(policy);
+/// map.insert(1, 1);
+/// ```
+#[derive(Debug, Clone)]
+pub struct Policy {
+    // Sorted ascending by min_capacity. By convention, bands[0].0 == 0.
+    bands: Vec<(usize, MapType)>,
+}
+
+impl Policy {
+    /// Empty policy — no bands. Add at least one band (covering capacity 0)
+    /// via [`Self::band`] before passing to [`OptiMap::with_policy`].
+    pub fn new() -> Self {
+        Self { bands: Vec::new() }
+    }
+
+    /// Single-band policy — fixed backend for any capacity.
+    pub fn pinned(backend: MapType) -> Self {
+        Self {
+            bands: vec![(0, backend)],
+        }
+    }
+
+    /// Add or replace a band. Returns `self` for builder chaining.
+    /// Bands are stored sorted by `min_capacity`; re-adding the same
+    /// `min_capacity` overwrites that band's backend.
+    pub fn band(mut self, min_capacity: usize, backend: MapType) -> Self {
+        match self
+            .bands
+            .binary_search_by_key(&min_capacity, |&(c, _)| c)
+        {
+            Ok(i) => self.bands[i].1 = backend,
+            Err(i) => self.bands.insert(i, (min_capacity, backend)),
+        }
+        self
+    }
+
+    /// Resolve the backend for a given capacity — the band with the largest
+    /// `min_capacity ≤ capacity`. If the policy has no band at or below
+    /// `capacity` (or is empty), returns [`MapType::Splitsies`] as a safe
+    /// default.
+    pub fn backend_for(&self, capacity: usize) -> MapType {
+        let idx = self
+            .bands
+            .partition_point(|&(c, _)| c <= capacity)
+            .saturating_sub(1);
+        self.bands
+            .get(idx)
+            .map(|&(_, b)| b)
+            .unwrap_or(MapType::Splitsies)
+    }
+
+    /// Default policy used by [`Hint::Auto`] — single-band [`MapType::Tomb`].
+    /// See the [`Policy`] type docs for the data backing this choice.
+    pub fn auto() -> Self {
+        Self::pinned(MapType::Tomb)
+    }
+
+    /// Translate a [`Hint`] into its default `Policy`. Existing callers
+    /// using `Hint` (via `with_hint` / `with_capacity_and_hint`) route
+    /// through this mapping.
+    pub fn for_hint(hint: Hint) -> Self {
+        match hint {
+            Hint::Auto => Self::auto(),
+            // Read/Write-heavy: IPO at cache-resident sizes, Splitsies past
+            // the tomb-DRAM cliff. Matches the legacy `select_backend` shape.
+            Hint::ReadHeavy | Hint::WriteHeavy => {
+                Self::pinned(MapType::Ipo).band(TOMBSTONE_DRAM_CLIFF, MapType::Splitsies)
+            }
+            Hint::Churn => Self::pinned(MapType::Splitsies),
+            Hint::Iteration => Self::pinned(MapType::Gaps),
+            Hint::Sorted => Self::pinned(MapType::FlatBTree),
+        }
+    }
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self::auto()
+    }
+}
+
 /// Backend selection strategy.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Backend {
     /// Policy decides and may transition on resize.
-    Auto(Hint),
+    Auto(Policy),
     /// User chose explicitly — never transitions.
     Pinned,
 }
@@ -353,6 +501,7 @@ enum Inner<K, V, S = DefaultHashBuilder> {
     Ufm(UnorderedFlatMap<K, V, S>),
     Splitsies(Splitsies<K, V, S>),
     Ipo(InPlaceOverflow<K, V, S>),
+    Tomb(Byte7_128_TombMap<K, V, S>),
     Gaps(Gaps<K, V, S>),
     Ipo64(IPO64<K, V, S>),
     FlatBTree(FlatBTree<K, V, S>),
@@ -360,75 +509,18 @@ enum Inner<K, V, S = DefaultHashBuilder> {
 
 // ── Policy engine ──────────────────────────────────────────────────────────
 
-/// Capacity threshold above which tombstone designs (IPO, IPO64) start
-/// suffering from the "tombstone-at-DRAM" cliff: lookup_miss probe chains
-/// elongate as deletions accumulate and the table no longer fits in cache.
+/// Capacity threshold above which the wider-tag tombstone designs (IPO =
+/// `Byte7_254`, IPO64 = `Byte0_254`) suffer the "tombstone-at-DRAM" cliff:
+/// lookup_miss probe chains elongate as deletions accumulate and the table
+/// no longer fits in cache.
 ///
-/// Sweep data (sweep-2026-04-20) shows IPO miss latency spiking from ~6 ns
-/// at 100K entries to ~104 ns at 100M (vs ~5 ns for overflow-bit designs at
-/// the same size). Above this threshold, default to a tombstone-free design.
+/// Sweep data (2026-04-20) showed IPO miss latency spiking from ~6 ns at
+/// 100K entries to ~104 ns at 100M (vs ~5 ns for overflow-bit designs at
+/// the same size). Used by `Hint::ReadHeavy` / `WriteHeavy` to switch to
+/// Splitsies past this point. [`Policy::auto`] does not consult this — the
+/// 128-tag [`MapType::Tomb`] variant doesn't hit the cliff, per
+/// sweep-2026-05-13.
 const TOMBSTONE_DRAM_CLIFF: usize = 1_000_000;
-
-/// Capacity threshold below which dispatch overhead and rehash sawtooth
-/// dominate; pick the lowest-overhead design (Splitsies — tombstone-free,
-/// no probe-length penalty).
-const SMALL_CAPACITY: usize = 1024;
-
-/// Choose a backend for the given conditions.
-///
-/// Selection rationale (from sweep-2026-04-20.csv at 100K-100M entries):
-///
-/// | Op          | Best at small/med  | Best at ≥1M                  |
-/// |-------------|--------------------|------------------------------|
-/// | lookup_hit  | IPO/Hi128_Tomb     | hashbrown / UFM (overflow)   |
-/// | lookup_miss | Splitsies / SoaMap | Splitsies / Gaps             |
-/// | insert      | hashbrown / IPO    | UFM / Lo8_1bit (overflow)    |
-/// | remove      | Hi128_Tomb / IPO   | Hi128_Tomb (still wins)      |
-///
-/// Tombstone designs (IPO, IPO64) win remove + hit at small/medium but hit
-/// a 5-13× cliff on lookup_miss at ≥1M entries due to tombstone accumulation.
-/// Auto policy avoids that cliff by switching to Splitsies (tombstone-free,
-/// balanced, no DRAM-scale regression).
-fn select_backend<K, V>(hint: Hint, capacity: usize) -> MapType {
-    let _ = mem::size_of::<K>() + mem::size_of::<V>();
-
-    match hint {
-        Hint::ReadHeavy => {
-            // Hit-heavy: IPO wins up to ~1M, then UFM/overflow wins at DRAM scale.
-            // Splitsies is the closest drop-in tombstone-free design.
-            if capacity >= TOMBSTONE_DRAM_CLIFF {
-                MapType::Splitsies
-            } else {
-                MapType::Ipo
-            }
-        }
-        Hint::WriteHeavy => {
-            // Inserts: IPO is competitive at cache-resident sizes; tombstone
-            // accumulation eats it at large N. Splitsies stays flat.
-            if capacity >= TOMBSTONE_DRAM_CLIFF {
-                MapType::Splitsies
-            } else {
-                MapType::Ipo
-            }
-        }
-        Hint::Churn => MapType::Splitsies, // tombstone-free, flat at high load
-        Hint::Iteration => MapType::Gaps,
-        Hint::Sorted => MapType::FlatBTree, // sorted iteration / range queries
-        Hint::Auto => {
-            if capacity >= TOMBSTONE_DRAM_CLIFF {
-                // Avoid the tombstone-at-DRAM cliff (5-13× miss regression).
-                MapType::Splitsies
-            } else if capacity >= SMALL_CAPACITY {
-                // Cache-resident: IPO wins hit + remove decisively.
-                MapType::Ipo
-            } else {
-                // Small: rehash sawtooth dominates; pick the lowest-overhead
-                // tombstone-free design.
-                MapType::Splitsies
-            }
-        }
-    }
-}
 
 // ── Dispatch macro ─────────────────────────────────────────────────────────
 
@@ -439,6 +531,7 @@ macro_rules! dispatch {
             Inner::Ufm(m) => m.$method($($arg),*),
             Inner::Splitsies(m) => m.$method($($arg),*),
             Inner::Ipo(m) => m.$method($($arg),*),
+            Inner::Tomb(m) => m.$method($($arg),*),
             Inner::Gaps(m) => m.$method($($arg),*),
             Inner::Ipo64(m) => m.$method($($arg),*),
             Inner::FlatBTree(m) => m.$method($($arg),*),
@@ -452,6 +545,7 @@ macro_rules! dispatch_mut {
             Inner::Ufm(m) => m.$method($($arg),*),
             Inner::Splitsies(m) => m.$method($($arg),*),
             Inner::Ipo(m) => m.$method($($arg),*),
+            Inner::Tomb(m) => m.$method($($arg),*),
             Inner::Gaps(m) => m.$method($($arg),*),
             Inner::Ipo64(m) => m.$method($($arg),*),
             Inner::FlatBTree(m) => m.$method($($arg),*),
@@ -479,11 +573,24 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
 
     /// Create a map with both a capacity and a workload hint.
     pub fn with_capacity_and_hint(capacity: usize, hint: Hint) -> Self {
-        let map_type = select_backend::<K, V>(hint, capacity);
+        Self::with_policy_and_capacity(Policy::for_hint(hint), capacity)
+    }
+
+    /// Create a map with a user-defined backend-selection [`Policy`]. The
+    /// policy picks the initial backend (for the given capacity) and is
+    /// re-evaluated on every grow; if the new capacity falls into a band
+    /// with a different backend, the map transitions.
+    pub fn with_policy(policy: Policy) -> Self {
+        Self::with_policy_and_capacity(policy, 0)
+    }
+
+    /// Like [`Self::with_policy`] but pre-reserves `capacity` slots.
+    pub fn with_policy_and_capacity(policy: Policy, capacity: usize) -> Self {
+        let map_type = policy.backend_for(capacity);
         let inner = build_inner(map_type, capacity);
         OptiMap {
             inner,
-            backend: Backend::Auto(hint),
+            backend: Backend::Auto(policy),
         }
     }
 
@@ -497,9 +604,17 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
         Self::pinned(MapType::Splitsies, 0)
     }
 
-    /// Create a map pinned to the `InPlaceOverflow` backend.
+    /// Create a map pinned to the `InPlaceOverflow` backend (16-slot tomb,
+    /// `Byte7_254` tag — wider tag, lower miss false-match rate).
     pub fn ipo() -> Self {
         Self::pinned(MapType::Ipo, 0)
+    }
+
+    /// Create a map pinned to the `Tomb` backend (16-slot tomb,
+    /// `Byte7_128` tag — hashbrown-equivalent layout, the [`Policy::auto`]
+    /// default). Wins lookup_hit + remove at most sizes per sweep data.
+    pub fn tomb() -> Self {
+        Self::pinned(MapType::Tomb, 0)
     }
 
     /// Create a map pinned to the `Gaps` backend.
@@ -558,6 +673,7 @@ fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize
         MapType::Ufm => Inner::Ufm(UnorderedFlatMap::with_capacity(capacity)),
         MapType::Splitsies => Inner::Splitsies(Splitsies::with_capacity(capacity)),
         MapType::Ipo => Inner::Ipo(InPlaceOverflow::with_capacity(capacity)),
+        MapType::Tomb => Inner::Tomb(Byte7_128_TombMap::with_capacity(capacity)),
         MapType::Gaps => Inner::Gaps(Gaps::with_capacity(capacity)),
         MapType::Ipo64 => Inner::Ipo64(IPO64::with_capacity(capacity)),
         MapType::FlatBTree => Inner::FlatBTree(FlatBTree::with_capacity(capacity)),
@@ -568,9 +684,46 @@ fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize
 
 impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
     /// Insert a key-value pair. Returns the previous value if the key existed.
+    ///
+    /// For policy-driven backends (constructed via [`Self::with_hint`] /
+    /// [`Self::with_policy`]), `insert` also detects when the underlying
+    /// table just resized into a different policy band and transitions to
+    /// the new backend. The detection is one capacity read before + after
+    /// for `Auto`; the transition path itself is `#[cold]` and runs at
+    /// most `log2(N)` times per `N` inserts. For pinned backends, this
+    /// reduces to the bare dispatch.
     #[inline(always)]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        dispatch_mut!(self, insert, key, value)
+        match &self.backend {
+            Backend::Pinned => dispatch_mut!(self, insert, key, value),
+            Backend::Auto(_) => self.insert_auto(key, value),
+        }
+    }
+
+    #[inline]
+    fn insert_auto(&mut self, key: K, value: V) -> Option<V> {
+        let cap_before = self.capacity();
+        let result = dispatch_mut!(self, insert, key, value);
+        // Overwrites (Some result) never grow; skip the post-check.
+        if result.is_none() {
+            let cap_after = self.capacity();
+            if cap_after != cap_before {
+                self.maybe_transition_after_grow(cap_after);
+            }
+        }
+        result
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn maybe_transition_after_grow(&mut self, new_cap: usize) {
+        let desired = match &self.backend {
+            Backend::Auto(p) => p.backend_for(new_cap),
+            Backend::Pinned => return,
+        };
+        if desired != self.map_type() {
+            self.transition_to(desired, new_cap);
+        }
     }
 
     /// Look up a value by key.
@@ -662,6 +815,7 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             Inner::Ufm(_) => MapType::Ufm,
             Inner::Splitsies(_) => MapType::Splitsies,
             Inner::Ipo(_) => MapType::Ipo,
+            Inner::Tomb(_) => MapType::Tomb,
             Inner::Gaps(_) => MapType::Gaps,
             Inner::Ipo64(_) => MapType::Ipo64,
             Inner::FlatBTree(_) => MapType::FlatBTree,
@@ -674,12 +828,15 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
     /// if the new capacity crosses a policy threshold.
     pub fn reserve(&mut self, additional: usize) {
         let new_cap = self.len() + additional;
-        if let Backend::Auto(hint) = self.backend {
-            let desired = select_backend::<K, V>(hint, new_cap);
-            if desired != self.map_type() {
-                self.transition_to(desired, new_cap);
-                return;
-            }
+        let desired = match &self.backend {
+            Backend::Auto(p) => Some(p.backend_for(new_cap)),
+            Backend::Pinned => None,
+        };
+        if let Some(d) = desired
+            && d != self.map_type()
+        {
+            self.transition_to(d, new_cap);
+            return;
         }
         dispatch_mut!(self, reserve, additional)
     }
@@ -695,6 +852,7 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             Inner::Ufm(m) => Iter::Ufm(m.iter()),
             Inner::Splitsies(m) => Iter::Splitsies(m.iter()),
             Inner::Ipo(m) => Iter::Ipo(m.iter()),
+            Inner::Tomb(m) => Iter::Tomb(m.iter()),
             Inner::Gaps(m) => Iter::Gaps(m.iter()),
             Inner::Ipo64(m) => Iter::Ipo64(m.iter()),
             Inner::FlatBTree(m) => Iter::FlatBTree(m.iter()),
@@ -707,6 +865,7 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             Inner::Ufm(m) => IterMut::Ufm(m.iter_mut()),
             Inner::Splitsies(m) => IterMut::Splitsies(m.iter_mut()),
             Inner::Ipo(m) => IterMut::Ipo(m.iter_mut()),
+            Inner::Tomb(m) => IterMut::Tomb(m.iter_mut()),
             Inner::Gaps(m) => IterMut::Gaps(m.iter_mut()),
             Inner::Ipo64(m) => IterMut::Ipo64(m.iter_mut()),
             Inner::FlatBTree(m) => IterMut::FlatBTree(m.iter_mut()),
@@ -769,6 +928,14 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
                     Entry::Vacant(VacantEntry::Ipo(e))
                 }
             },
+            Inner::Tomb(m) => match m.entry(key) {
+                crate::generic_map::Entry::Occupied(e) => {
+                    Entry::Occupied(OccupiedEntry::Tomb(e))
+                }
+                crate::generic_map::Entry::Vacant(e) => {
+                    Entry::Vacant(VacantEntry::Tomb(e))
+                }
+            },
             Inner::Gaps(m) => match m.entry(key) {
                 crate::gaps::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Gaps(e)),
                 crate::gaps::map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Gaps(e)),
@@ -804,6 +971,7 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             Inner::Ufm(m) => m.drain().collect(),
             Inner::Splitsies(m) => m.drain().collect(),
             Inner::Ipo(m) => m.drain().collect(),
+            Inner::Tomb(m) => m.drain().collect(),
             Inner::Gaps(m) => m.drain().collect(),
             Inner::Ipo64(m) => m.drain().collect(),
             Inner::FlatBTree(m) => m.drain().collect(),
@@ -965,6 +1133,7 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             Inner::Ufm(mut m) => m.drain().collect(),
             Inner::Splitsies(mut m) => m.drain().collect(),
             Inner::Ipo(mut m) => m.drain().collect(),
+            Inner::Tomb(mut m) => m.drain().collect(),
             Inner::Gaps(mut m) => m.drain().collect(),
             Inner::Ipo64(mut m) => m.drain().collect(),
             Inner::FlatBTree(mut m) => m.drain().collect(),
@@ -1002,6 +1171,11 @@ impl<K: Hash + Eq + Ord + Clone + fmt::Debug, V: fmt::Debug> fmt::Debug for Opti
                     map.entry(k, v);
                 }
             }
+            Inner::Tomb(m) => {
+                for (k, v) in m.iter() {
+                    map.entry(k, v);
+                }
+            }
             Inner::Gaps(m) => {
                 for (k, v) in m.iter() {
                     map.entry(k, v);
@@ -1029,11 +1203,12 @@ impl<K: Hash + Eq + Ord + Clone, V: Clone> Clone for OptiMap<K, V> {
                 Inner::Ufm(m) => Inner::Ufm(m.clone()),
                 Inner::Splitsies(m) => Inner::Splitsies(m.clone()),
                 Inner::Ipo(m) => Inner::Ipo(m.clone()),
+                Inner::Tomb(m) => Inner::Tomb(m.clone()),
                 Inner::Gaps(m) => Inner::Gaps(m.clone()),
                 Inner::Ipo64(m) => Inner::Ipo64(m.clone()),
                 Inner::FlatBTree(m) => Inner::FlatBTree(m.clone()),
             },
-            backend: self.backend,
+            backend: self.backend.clone(),
         }
     }
 }
@@ -1062,6 +1237,7 @@ impl<K: Hash + Eq + Ord + Clone, V: PartialEq> PartialEq for OptiMap<K, V> {
             Inner::Ufm(m) => check_eq!(m),
             Inner::Splitsies(m) => check_eq!(m),
             Inner::Ipo(m) => check_eq!(m),
+            Inner::Tomb(m) => check_eq!(m),
             Inner::Gaps(m) => check_eq!(m),
             Inner::Ipo64(m) => check_eq!(m),
             Inner::FlatBTree(m) => check_eq!(m),
@@ -1101,6 +1277,7 @@ impl<K: Hash + Eq + Ord + Clone, V> IntoIterator for OptiMap<K, V> {
             Inner::Ufm(m) => IntoIter::Ufm(m.into_iter()),
             Inner::Splitsies(m) => IntoIter::Splitsies(m.into_iter()),
             Inner::Ipo(m) => IntoIter::Ipo(m.into_iter()),
+            Inner::Tomb(m) => IntoIter::Tomb(m.into_iter()),
             Inner::Gaps(m) => IntoIter::Gaps(m.into_iter()),
             Inner::Ipo64(m) => IntoIter::Ipo64(m.into_iter()),
             Inner::FlatBTree(m) => IntoIter::FlatBTree(m.into_iter()),
@@ -1275,6 +1452,7 @@ mod tests {
             MapType::Ufm,
             MapType::Splitsies,
             MapType::Ipo,
+            MapType::Tomb,
             MapType::Gaps,
             MapType::Ipo64,
         ] {
@@ -1296,6 +1474,7 @@ mod tests {
             MapType::Splitsies
         );
         assert_eq!(OptiMap::<u64, u64>::ipo().map_type(), MapType::Ipo);
+        assert_eq!(OptiMap::<u64, u64>::tomb().map_type(), MapType::Tomb);
         assert_eq!(OptiMap::<u64, u64>::gaps().map_type(), MapType::Gaps);
         assert_eq!(OptiMap::<u64, u64>::ipo64().map_type(), MapType::Ipo64);
     }
@@ -1395,63 +1574,94 @@ mod tests {
     }
 
     #[test]
-    fn auto_transition_on_reserve() {
-        // Start small — policy picks Splitsies for small capacity
-        let mut map = OptiMap::<u8, u8>::new();
-        assert_eq!(map.map_type(), MapType::Splitsies);
-        for i in 0..10u8 {
-            map.insert(i, i);
+    fn auto_default_is_tomb_everywhere() {
+        // Auto is single-band Tomb per sweep-2026-05-13 — verify the default
+        // does not band-switch with capacity. (Multi-band behavior is
+        // exercised via custom policies in the tests below.)
+        for cap in [0, 100, 10_000, 500_000, 2_000_000] {
+            let m = OptiMap::<u64, u64>::with_capacity(cap);
+            assert_eq!(
+                m.map_type(),
+                MapType::Tomb,
+                "Auto default should pin Tomb at cap={cap}",
+            );
         }
-        // Reserve into the medium band — policy switches to IPO.
-        map.reserve(10_000);
-        assert_eq!(map.map_type(), MapType::Ipo);
-        // Verify data survived the transition
-        for i in 0..10u8 {
-            assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
-        }
-    }
-
-    #[test]
-    fn auto_transition_into_dram_band() {
-        // Medium band: IPO. Resize beyond TOMBSTONE_DRAM_CLIFF → Splitsies.
-        let mut map = OptiMap::<u64, u64>::with_capacity(10_000);
-        assert_eq!(map.map_type(), MapType::Ipo);
-        for i in 0..100u64 {
-            map.insert(i, i);
-        }
-        map.reserve(2_000_000);
-        assert_eq!(
-            map.map_type(),
-            MapType::Splitsies,
-            "should fall back to Splitsies above DRAM cliff"
-        );
-        for i in 0..100u64 {
-            assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
-        }
-    }
-
-    #[test]
-    fn auto_band_thresholds() {
-        // Boundary check: SMALL → Splitsies, MEDIUM → IPO, LARGE → Splitsies.
-        let m = OptiMap::<u64, u64>::with_capacity(0);
-        assert_eq!(m.map_type(), MapType::Splitsies);
-        let m = OptiMap::<u64, u64>::with_capacity(100);
-        assert_eq!(m.map_type(), MapType::Splitsies);
-        let m = OptiMap::<u64, u64>::with_capacity(10_000);
-        assert_eq!(m.map_type(), MapType::Ipo);
-        let m = OptiMap::<u64, u64>::with_capacity(500_000);
-        assert_eq!(m.map_type(), MapType::Ipo);
-        let m = OptiMap::<u64, u64>::with_capacity(2_000_000);
-        assert_eq!(m.map_type(), MapType::Splitsies);
     }
 
     #[test]
     fn read_heavy_hint_band() {
-        // ReadHeavy: IPO at small/medium, Splitsies at DRAM scale.
+        // ReadHeavy: IPO at cache-resident, Splitsies past the tomb-DRAM cliff
+        // (the legacy Hint mapping; not yet retuned to use Tomb).
         let m = OptiMap::<u64, u64>::with_capacity_and_hint(10_000, Hint::ReadHeavy);
         assert_eq!(m.map_type(), MapType::Ipo);
         let m = OptiMap::<u64, u64>::with_capacity_and_hint(5_000_000, Hint::ReadHeavy);
         assert_eq!(m.map_type(), MapType::Splitsies);
+    }
+
+    #[test]
+    fn custom_policy_transition_on_reserve() {
+        // Custom policy: Splitsies < 1024, Ipo above. `reserve(...)` past the
+        // threshold must trigger a transition without losing data.
+        let policy = Policy::new()
+            .band(0, MapType::Splitsies)
+            .band(1024, MapType::Ipo);
+        let mut map = OptiMap::<u8, u8>::with_policy(policy);
+        assert_eq!(map.map_type(), MapType::Splitsies);
+        for i in 0..10u8 {
+            map.insert(i, i);
+        }
+        map.reserve(10_000);
+        assert_eq!(map.map_type(), MapType::Ipo);
+        for i in 0..10u8 {
+            assert_eq!(map.get(&i), Some(&i), "lost key {i} after transition");
+        }
+    }
+
+    #[test]
+    fn custom_policy_drives_transitions() {
+        // User-defined policy: stay on Ipo64 until 500 entries, then UFM.
+        let policy = Policy::new()
+            .band(0, MapType::Ipo64)
+            .band(500, MapType::Ufm);
+        let mut map = OptiMap::<u64, u64>::with_policy(policy);
+        assert_eq!(map.map_type(), MapType::Ipo64);
+        for i in 0..1_000u64 {
+            map.insert(i, i);
+        }
+        assert_eq!(
+            map.map_type(),
+            MapType::Ufm,
+            "custom policy should drive transition at user-specified band"
+        );
+        for i in 0..1_000u64 {
+            assert_eq!(map.get(&i), Some(&i));
+        }
+    }
+
+    #[test]
+    fn policy_backend_for_lookup() {
+        // Policy::backend_for is the building block — exercise the band
+        // lookup directly so transition logic relies on a tested primitive.
+        let p = Policy::new()
+            .band(0, MapType::Splitsies)
+            .band(1024, MapType::Ipo)
+            .band(1_000_000, MapType::Ufm);
+        assert_eq!(p.backend_for(0), MapType::Splitsies);
+        assert_eq!(p.backend_for(1023), MapType::Splitsies);
+        assert_eq!(p.backend_for(1024), MapType::Ipo);
+        assert_eq!(p.backend_for(999_999), MapType::Ipo);
+        assert_eq!(p.backend_for(1_000_000), MapType::Ufm);
+        assert_eq!(p.backend_for(usize::MAX), MapType::Ufm);
+    }
+
+    #[test]
+    fn policy_band_override() {
+        // Re-adding a band at the same min_capacity replaces it.
+        let p = Policy::new()
+            .band(0, MapType::Splitsies)
+            .band(0, MapType::Ipo);
+        assert_eq!(p.backend_for(0), MapType::Ipo);
+        assert_eq!(p.backend_for(100), MapType::Ipo);
     }
 
     #[test]
