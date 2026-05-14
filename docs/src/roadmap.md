@@ -10,6 +10,7 @@ thoroughly investigated and proven unproductive — see
 
 | Item | Scope |
 |------|-------|
+| OptiMap: `MapType::Tomb` + Shape-B transition-on-grow + user `Policy` | Three coupled changes addressing the sweep-2026-05-13 finding that the old `Hint::Auto` was "Splitsies-pinned forever" (organic-growth maps never re-evaluated the policy after the cap-0 initial pick). **(1) `Policy` struct.** New `pub struct Policy { bands: Vec<(usize, MapType)> }` with `band(min_cap, backend)` builder. `Policy::auto()`, `Policy::pinned`, `Policy::for_hint` factories. Replaces the old hardcoded `select_backend(hint, cap)` function. `Backend::Auto(Hint)` becomes `Backend::Auto(Policy)`. New `OptiMap::with_policy()` / `with_policy_and_capacity()` constructors. **(2) Transition-on-grow in `insert`.** `OptiMap::insert` now matches on `&self.backend`: pinned takes the bare `dispatch_mut!` path (compiler eliminates the match); auto goes through `insert_auto` which reads capacity before/after, and on grow with new-key inserts (`result.is_none()`) checks whether `Policy::backend_for(new_cap)` selects a different variant — if so, runs the existing `transition_to` (drain + reinsert into the new backend). Transition path is `#[cold] #[inline(never)]`; the per-insert cost for Auto is two capacity reads + a compare, zero for Pinned. **(3) `MapType::Tomb` variant.** Added `Tomb` (= `Byte7_128_TombMap` from `matrix_types`) as a 7th OptiMap backend alongside Ufm/Splitsies/Ipo/Gaps/Ipo64/FlatBTree. Plumbed through Inner, MapType, Iter/IterMut/IntoIter, Entry/OccupiedEntry/VacantEntry, `dispatch!`/`dispatch_mut!`/`entry_match!` macros, `build_inner`, `map_type`, `transition_to`, Debug/Clone/PartialEq impls, `OptiMap::tomb()` constructor. Local `tomb_types` alias module keeps the `GenericMap<…, RawTable<K, V, Byte7_128>>` type paths readable. **(4) New default policy.** `Policy::auto()` is now single-band `MapType::Tomb` (was 3-band Splitsies/Ipo/Splitsies). Per sweep-2026-05-13 across N = 100→10M and ops insert/hit/miss/remove/iterate, Tomb is the only design with no catastrophic regression — every other candidate has a specific N-window where it's ≥ 2× slower than Tomb on at least one op (OvSplit's 1M hit cliff at 10× slower than Tomb; OvInline's 5M hit cliff at 3× slower; TombWide's hit at 1M+ at 3-5× slower than Tomb on hit). Tomb wins lookup_hit + remove at all sizes ≥ ~10K; loses lookup_miss to overflow-bit family at small N by 50-80% relative (1-2 ns absolute) — judged not worth a band-switch for the unmarked-workload default. **Tests.** 637/637 pass. New: `auto_default_is_tomb_everywhere` (verifies single-band invariant), `auto_transition_on_organic_growth` + `custom_policy_drives_transitions` (Shape-B insert-time transition), `custom_policy_transition_on_reserve` (reserve-time transition), `policy_backend_for_lookup` + `policy_band_override` (Policy primitives). Retired: the 3-band-default-specific tests (`auto_transition_on_reserve`, `auto_transition_into_dram_band`, `auto_band_thresholds`) — replaced by the single-band assertion + custom-policy versions. `Hint::ReadHeavy`/`WriteHeavy` mappings still pin Ipo at cache-resident and switch to Splitsies past the tomb-DRAM cliff (legacy `for_hint` shape, deliberately not retuned in this change). |
 | Entry API: lazy split propagation + single-map-ref VacantEntry | Two struct-shape cleanups that drop the `Entry` API stack footprint by ~5×. **(1) Lazy split prop on the Entry path.** `flat_btree::map::VacantEntry` used to carry a 264 B stack `PathBuf` (the root→leaf descent path) so that `propagate_split` could walk back up on a split cascade. Split into two variants: the eager `RawBTree::insert(k, v)` keeps record-on-descent (its PathBuf lives on the function stack frame, never crosses an API boundary), and the Entry path now uses `propagate_split_lazy` — chases parent pointers one level at a time, scanning each parent's children for the back-pointer, terminating as soon as a parent has room. Drops `flat_btree::map::VacantEntry` 296 → 32 B and `flat_btree::map::Entry` 296 → 32 B. **(2) Single map ref in hash backend VacantEntry.** `generic_map::VacantEntry` was storing `&'a mut R` + `&'a S` (table + hash_builder) — two refs to disjoint fields of the same `GenericMap`. Merged into a single `&'a mut GenericMap<K, V, S, R>` (mirrors what `RawVacantEntryMut` already does in `raw_entry.rs`). Drops `ufm::map::VacantEntry` 64 → 56 B and the 6-arm `optimap::VacantEntry` enum 72 → 64 B. **Combined size summary**: `optimap::Entry` 304 → 64 B (-79 %). **Perf**: criterion vs main, every FlatBTree delta within the std::BTreeMap noise floor on the same run (±5 %) — perf is statistically unchanged. The pre-existing record-on-descent was paying ~6 path pushes per insert that propagate_split mostly didn't consume; the lazy walk skips both the pushes and the wasted ancestor entries. **Side effect**: `clippy::large_enum_variant` warnings that were `#[allow]`-silenced on `optimap::Entry`/`VacantEntry` are no longer triggered — `#[allow]` attributes removed. 635 tests pass; 9 entry-specific miri tests pass including `entry_with_splits`. |
 | Allocator stress test (`tests/alloc_stress.rs`) | Closes the only open "Testing / Quality" hash-map item. New `tests/alloc_stress.rs` installs a `#[global_allocator]` wrapper around `System` that (a) asserts every requested alignment is a power of two and that returned pointers honour it, (b) re-checks alignment on `dealloc` (would catch any bucket-layout math going off by a power-of-two on the way back to the allocator), (c) tracks live alloc count / live bytes via atomics. A single `#[test]` drives four scenarios — full insert / partial-remove / reserve / shrink lifecycle, oversized capacity hint with no inserts, oversized capacity hint with partial fill, 8-cycle insert/remove churn — across all five hash backends (UFM / Splitsies / IPO / IPO64 / Gaps). Each scenario asserts the live-alloc snapshot returns to baseline after drop. A fifth check confirms at least one allocation observes ≥ 8-byte alignment. Single `#[test]` rather than five — keeps the harness from running other test threads in parallel and perturbing the global counter. Gated `#[cfg(not(miri))]` since miri has its own UB / leak tracker. |
 | `raw_entry()` / `raw_entry_mut()` on `GenericMap` | Closes the only open "API Completeness" hash-map item. Mirrors hashbrown's RawEntry API across every GenericMap-backed design (UFM, Splitsies, IPO, IPO64, Gaps, all SoA + matrix variants). New `src/raw_entry.rs` adds `RawEntryBuilder` (read) / `RawEntryBuilderMut` (mut) with three lookup forms: `from_key`, `from_key_hashed_nocheck`, `from_hash` (custom `Fn(&K) -> bool` eq closure). `RawEntryMut::Occupied` exposes `key`/`key_mut`/`into_key`, `get*`/`*_mut`/`into_*` for K and V plus the `(K, V)` joint variants, `insert(value)` / `insert_key(key)`, `remove`, `remove_entry`. `RawEntryMut::Vacant` exposes `insert(K, V)` (re-hashes) and `insert_hashed_nocheck(hash, K, V)` (reuses the builder's hash). Convenience: `RawEntryMut::or_insert` / `or_insert_with` / `and_modify`. Soundness note: a `&` reborrow inside IPO64's `key_ptr` (`&(*bucket).0`) narrowed provenance and blocked the `*const K → *mut K` cast `key_mut`/`insert_key` need; flipped to `&raw const (*bucket).0` so the resulting `*const K` retains the underlying `*mut (K, V)`'s mutability. Tests: 13 scenarios run across all five hash backends (65 total cases) — read forms, mut/vacant inserts, occupied replace/remove, `or_insert` / `and_modify` plumbing, `insert_key` in-place replace, interning pattern, drop-once verification. All pass under Miri (`cargo miri test --test raw_entry`, 13.4s). Deliberately scoped to GenericMap-only: `OptiMap` (multi-backend dispatch over an enum incl. FlatBTree) and `FlatBTree` (no hash) don't get `raw_entry`; the niche pattern that wants it (interning, hash-precomputed lookups) generally pins to a single hash backend anyway. |
@@ -111,6 +112,90 @@ Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
 ### Testing / Quality
 
 (none — allocator stress testing shipped May 2026; see Recently Completed)
+
+### Performance Investigations
+
+#### Retune `Hint::ReadHeavy` / `WriteHeavy` to target `Tomb`
+
+**Difficulty**: Low \
+**Expected impact**: Up to 3× lookup_hit improvement for hinted callers at ≥1M
+
+Both hints currently route through `Policy::for_hint` to a 2-band shape:
+`MapType::Ipo` (= `Byte7_254`, "TombWide") at cache-resident sizes,
+`MapType::Splitsies` past `TOMBSTONE_DRAM_CLIFF` (1M). Per sweep-2026-05-13:
+- `Tomb` (`Byte7_128`) beats TombWide on lookup_hit at 500K–10M by 1.3–3×
+- The "DRAM cliff" that motivated the Splitsies switch is specific to
+  TombWide; `Tomb` doesn't hit it (lookup_hit @ 5M is 18 ns for Tomb vs
+  44 ns for TombWide vs 77 ns for Splitsies)
+
+Simplest retune: both hints become `Policy::pinned(MapType::Tomb)`. Same
+backend as `Hint::Auto`, but the hint signal is preserved on the type
+(useful if we later add miss-heavy vs hit-heavy differentiation). Or
+collapse them entirely and let everyone go through `Auto`.
+
+#### `Hint::MissHeavy` for miss-dominated workloads → `MapType::Ipo` (TombWide)
+
+**Difficulty**: Low (new hint variant + Policy mapping)
+
+`TombWide` (`Byte7_254`, IPO) wins lookup_miss at any N ≥ 500K by 1.3–2× over
+`Tomb`, owing to the wider tag's lower false-match rate (1/254 vs 1/128).
+Real workload: caches with low hit rate, hash-join probe sides. Currently
+no way to ask for this profile without explicitly pinning to `MapType::Ipo`.
+
+#### `Hint::LowLatency` → predictable per-op latency via `FlatBTree`
+
+**Difficulty**: Low (new hint variant)
+
+Sweep-2026-05-13 raw per-N data showed hash inserts spike from 5–10 ns
+steady-state to 100–400 ns at resize-doubling events (e.g. Tomb at N=452:
+370 ns; at N=453: 5 ns). FlatBTree inserts are flat 28–40 ns regardless
+of N — no resize spike. For tail-latency-sensitive callers that can't
+pre-`reserve`, a hint that routes to FlatBTree is a real product
+distinction. Lookup is slower (log N), but jitter-free.
+
+Caveat: trade-off needs to be explicit in the hint docs — "you give up
+2-15× lookup speed and get spike-free insert."
+
+#### Hashbrown wins on insert + lookup_miss at small N — find the gap
+
+**Difficulty**: Medium \
+**Expected impact**: 1-3 ns per op at small sizes if we close it
+
+Sweep-2026-05-13 (curated, max_n=10M) showed hashbrown beats `Tomb`
+(`Byte7_128_TombMap`, the new `Policy::auto` default) at sizes < 2K on two ops:
+
+| op | N<200 | 200≤N<2000 |
+|---|---|---|
+| insert | hashbrown 25 / Tomb 32 (22% slower) | hashbrown 20 / Tomb 25 (22% slower) |
+| lookup_miss | hashbrown 2.66 / Tomb 4.34 (63% slower) | hashbrown 3.04 / Tomb 3.84 (21% slower) |
+
+Surprising because Tomb's tag layout (`Byte7_128`, 128-value tag) is
+hashbrown-equivalent — they should share most of the hot path. Beyond ~10K
+entries the gap closes and Tomb wins lookup_hit + remove decisively.
+
+The deltas are 1-3 ns absolute (noise-floor adjacent), but if we find a
+structural cause we may be able to close the gap and have `Tomb` strictly
+dominate hashbrown at all sizes — the rest of the curve already favors us.
+
+**Suggested investigation steps**:
+1. Disassembly comparison: Tomb's `insert` and `find_or_find_insert_slot`
+   vs hashbrown's at a fixed small-N callsite. Are there extra branches,
+   bounds checks, or initialization paths Tomb is paying for that
+   hashbrown elides via specialization?
+2. Initial-allocation cost: hashbrown defers the bucket allocation until
+   the first insert; does Tomb pay for an eager allocation at
+   `with_capacity(0)` that shows up across all small-batch inserts?
+3. Tombstone bookkeeping during organic growth: at small N, every resize
+   touches a meaningful fraction of the table. Does Tomb scan/clear
+   tombstones during grow that hashbrown skips because it just grew?
+4. Miss path: the 63% gap at N<200 on lookup_miss is striking. Compare
+   probe-termination logic — both should resolve in the home group at low
+   load, so the difference is in per-probe cost. Check whether the SIMD
+   compare + bitmask path differs.
+
+Methodology note: sweep uses small-batch (`keys[prev_n..n]`) measurement
+which is noise-heavier than steady-state. Confirm any gap with a fixed-N
+criterion bench at e.g. N=500 before deep-diving disassembly.
 
 ### Design Space Exploration
 
