@@ -186,6 +186,127 @@ impl<K: Hash + Eq + Ord + Clone, V: Clone, B: OptiBackend> Clone for OptiMapBenc
     }
 }
 
+// ── OptiMap with default (Auto) policy ─────────────────────────────────────
+//
+// `OptiMapAuto` is the sweep counterpart to `OptiMapBenchBackend`: instead of
+// pinning to a specific backend, it lets the policy engine pick. With
+// `M::with_capacity(n)` it picks once at construction for the target N
+// (Splitsies < 1024, IPO < 1M, Splitsies ≥ 1M per the current bands).
+// This is the row in the sweep plots labelled "OptiMap".
+pub struct OptiMapAuto<K: Hash + Eq + Ord + Clone, V>(optimap::OptiMap<K, V>);
+
+impl<K: Hash + Eq + Ord + Clone, V> Map<K, V> for OptiMapAuto<K, V> {
+    fn new() -> Self {
+        OptiMapAuto(optimap::OptiMap::new())
+    }
+    fn with_capacity(capacity: usize) -> Self {
+        OptiMapAuto(optimap::OptiMap::with_capacity(capacity))
+    }
+    #[inline(always)]
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.0.insert(key, value)
+    }
+    #[inline(always)]
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.get(key)
+    }
+    #[inline(always)]
+    fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.get_key_value(key)
+    }
+    #[inline(always)]
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.get_mut(key)
+    }
+    #[inline(always)]
+    fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.remove(key)
+    }
+    #[inline(always)]
+    fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.remove_entry(key)
+    }
+    #[inline(always)]
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + Ord + ?Sized,
+    {
+        self.0.contains_key(key)
+    }
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional)
+    }
+    fn shrink_to_fit(&mut self) {
+        self.0.shrink_to_fit()
+    }
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.0.iter()
+    }
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.0.iter_mut()
+    }
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        self.0.retain(f)
+    }
+    fn drain(&mut self) -> impl Iterator<Item = (K, V)> {
+        self.0.drain()
+    }
+    fn into_keys(self) -> impl Iterator<Item = K> {
+        self.0.into_keys()
+    }
+    fn into_values(self) -> impl Iterator<Item = V> {
+        self.0.into_values()
+    }
+}
+
+impl<K: Hash + Eq + Ord + Clone, V: Clone> Clone for OptiMapAuto<K, V> {
+    fn clone(&self) -> Self {
+        OptiMapAuto(self.0.clone())
+    }
+}
+
 // `OptiSetBench` (an OptiSet wrapper that impl'd `Set`) was removed when
 // OptiSet absorbed the FlatBTree backend — `Set`'s `Q: Hash + Eq` bound
 // can't accommodate the `Q: Ord` that FlatBTree dispatch needs. Backend-
