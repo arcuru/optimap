@@ -10,6 +10,7 @@ thoroughly investigated and proven unproductive — see
 
 | Item | Scope |
 |------|-------|
+| Tombstone-backend rehash specialization (small-N gap, partial) | First concrete cause found for the "hashbrown wins at small N" gap. `RawTable::rehash_with` (the `in_place_overflow` engine shared by Tomb/IPO/Tomb64) reused the general `insert_no_check` for every reinserted entry. On a freshly-allocated destination there are no tombstones, so `insert_no_check`'s per-group `match_byte(TOMBSTONE)` scan, its `first_tombstone` tracking, and its per-entry `len`/`growth_left` updates are all dead work. New `insert_after_resize(h, k, v)` does **one** SIMD op per probed group (`match_empty` only) and writes the slot; `rehash_with` bulk-applies `len`/`growth_left` once after the loop. `rehash_with` and `grow_or_rehash` marked `#[cold] #[inline(never)]` to keep resize code out of the hot insert path's I-footprint. Measured (criterion, full samples, clean pre/post baseline same machine state): `construction/grow_from_empty/Byte7_128_Tomb` **1K 21.1→18.6 µs (−12%)**, **10K 181→161 µs (−11%)**, both p<0.05; hashbrown unchanged (118 µs at 10K, noise); the Tomb-vs-hashbrown grow gap at 10K narrows 52%→36%. Steady-state insert into a warm cleared table unchanged (`throughput/insert` Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb already slightly ahead). 515/515 lib tests pass. **Remaining gap is NOT closed and its cause is NOT initial-table size** (Tomb and hashbrown run near-identical resize cadence by N≈14; the original "smaller initial table" guess is wrong — that only diverges for N<14). A separate ~22% gap exists in *cold allocate-then-fill with zero resizes* (`construction/with_capacity/10000`: Tomb 49 µs vs hashbrown 40 µs) — see Open for the still-unidentified residual. |
 | OptiMap: `MapType::Tomb` + Shape-B transition-on-grow + user `Policy` | Three coupled changes addressing the sweep-2026-05-13 finding that the old `Hint::Auto` was "Splitsies-pinned forever" (organic-growth maps never re-evaluated the policy after the cap-0 initial pick). **(1) `Policy` struct.** New `pub struct Policy { bands: Vec<(usize, MapType)> }` with `band(min_cap, backend)` builder. `Policy::auto()`, `Policy::pinned`, `Policy::for_hint` factories. Replaces the old hardcoded `select_backend(hint, cap)` function. `Backend::Auto(Hint)` becomes `Backend::Auto(Policy)`. New `OptiMap::with_policy()` / `with_policy_and_capacity()` constructors. **(2) Transition-on-grow in `insert`.** `OptiMap::insert` now matches on `&self.backend`: pinned takes the bare `dispatch_mut!` path (compiler eliminates the match); auto goes through `insert_auto` which reads capacity before/after, and on grow with new-key inserts (`result.is_none()`) checks whether `Policy::backend_for(new_cap)` selects a different variant — if so, runs the existing `transition_to` (drain + reinsert into the new backend). Transition path is `#[cold] #[inline(never)]`; the per-insert cost for Auto is two capacity reads + a compare, zero for Pinned. **(3) `MapType::Tomb` variant.** Added `Tomb` (= `Byte7_128_TombMap` from `matrix_types`) as a 7th OptiMap backend alongside Ufm/Splitsies/Ipo/Gaps/Ipo64/FlatBTree. Plumbed through Inner, MapType, Iter/IterMut/IntoIter, Entry/OccupiedEntry/VacantEntry, `dispatch!`/`dispatch_mut!`/`entry_match!` macros, `build_inner`, `map_type`, `transition_to`, Debug/Clone/PartialEq impls, `OptiMap::tomb()` constructor. Local `tomb_types` alias module keeps the `GenericMap<…, RawTable<K, V, Byte7_128>>` type paths readable. **(4) New default policy.** `Policy::auto()` is now single-band `MapType::Tomb` (was 3-band Splitsies/Ipo/Splitsies). Per sweep-2026-05-13 across N = 100→10M and ops insert/hit/miss/remove/iterate, Tomb is the only design with no catastrophic regression — every other candidate has a specific N-window where it's ≥ 2× slower than Tomb on at least one op (OvSplit's 1M hit cliff at 10× slower than Tomb; OvInline's 5M hit cliff at 3× slower; TombWide's hit at 1M+ at 3-5× slower than Tomb on hit). Tomb wins lookup_hit + remove at all sizes ≥ ~10K; loses lookup_miss to overflow-bit family at small N by 50-80% relative (1-2 ns absolute) — judged not worth a band-switch for the unmarked-workload default. **Tests.** 637/637 pass. New: `auto_default_is_tomb_everywhere` (verifies single-band invariant), `auto_transition_on_organic_growth` + `custom_policy_drives_transitions` (Shape-B insert-time transition), `custom_policy_transition_on_reserve` (reserve-time transition), `policy_backend_for_lookup` + `policy_band_override` (Policy primitives). Retired: the 3-band-default-specific tests (`auto_transition_on_reserve`, `auto_transition_into_dram_band`, `auto_band_thresholds`) — replaced by the single-band assertion + custom-policy versions. `Hint::ReadHeavy`/`WriteHeavy` mappings still pin Ipo at cache-resident and switch to Splitsies past the tomb-DRAM cliff (legacy `for_hint` shape, deliberately not retuned in this change). |
 | Entry API: lazy split propagation + single-map-ref VacantEntry | Two struct-shape cleanups that drop the `Entry` API stack footprint by ~5×. **(1) Lazy split prop on the Entry path.** `flat_btree::map::VacantEntry` used to carry a 264 B stack `PathBuf` (the root→leaf descent path) so that `propagate_split` could walk back up on a split cascade. Split into two variants: the eager `RawBTree::insert(k, v)` keeps record-on-descent (its PathBuf lives on the function stack frame, never crosses an API boundary), and the Entry path now uses `propagate_split_lazy` — chases parent pointers one level at a time, scanning each parent's children for the back-pointer, terminating as soon as a parent has room. Drops `flat_btree::map::VacantEntry` 296 → 32 B and `flat_btree::map::Entry` 296 → 32 B. **(2) Single map ref in hash backend VacantEntry.** `generic_map::VacantEntry` was storing `&'a mut R` + `&'a S` (table + hash_builder) — two refs to disjoint fields of the same `GenericMap`. Merged into a single `&'a mut GenericMap<K, V, S, R>` (mirrors what `RawVacantEntryMut` already does in `raw_entry.rs`). Drops `ufm::map::VacantEntry` 64 → 56 B and the 6-arm `optimap::VacantEntry` enum 72 → 64 B. **Combined size summary**: `optimap::Entry` 304 → 64 B (-79 %). **Perf**: criterion vs main, every FlatBTree delta within the std::BTreeMap noise floor on the same run (±5 %) — perf is statistically unchanged. The pre-existing record-on-descent was paying ~6 path pushes per insert that propagate_split mostly didn't consume; the lazy walk skips both the pushes and the wasted ancestor entries. **Side effect**: `clippy::large_enum_variant` warnings that were `#[allow]`-silenced on `optimap::Entry`/`VacantEntry` are no longer triggered — `#[allow]` attributes removed. 635 tests pass; 9 entry-specific miri tests pass including `entry_with_splits`. |
 | Allocator stress test (`tests/alloc_stress.rs`) | Closes the only open "Testing / Quality" hash-map item. New `tests/alloc_stress.rs` installs a `#[global_allocator]` wrapper around `System` that (a) asserts every requested alignment is a power of two and that returned pointers honour it, (b) re-checks alignment on `dealloc` (would catch any bucket-layout math going off by a power-of-two on the way back to the allocator), (c) tracks live alloc count / live bytes via atomics. A single `#[test]` drives four scenarios — full insert / partial-remove / reserve / shrink lifecycle, oversized capacity hint with no inserts, oversized capacity hint with partial fill, 8-cycle insert/remove churn — across all five hash backends (UFM / Splitsies / IPO / IPO64 / Gaps). Each scenario asserts the live-alloc snapshot returns to baseline after drop. A fifth check confirms at least one allocation observes ≥ 8-byte alignment. Single `#[test]` rather than five — keeps the harness from running other test threads in parallel and perturbing the global counter. Gated `#[cfg(not(miri))]` since miri has its own UB / leak tracker. |
@@ -156,46 +157,60 @@ distinction. Lookup is slower (log N), but jitter-free.
 Caveat: trade-off needs to be explicit in the hint docs — "you give up
 2-15× lookup speed and get spike-free insert."
 
-#### Hashbrown wins on insert + lookup_miss at small N — find the gap
+#### Hashbrown wins at small N — residual cold allocate+fill gap
 
 **Difficulty**: Medium \
-**Expected impact**: 1-3 ns per op at small sizes if we close it
+**Status**: One cause found and fixed (rehash specialization — see Recently
+Completed). A second, larger gap remains and its cause is **not yet
+identified**. Two hypotheses tested and rejected.
 
-Sweep-2026-05-13 (curated, max_n=10M) showed hashbrown beats `Tomb`
-(`Byte7_128_TombMap`, the new `Policy::auto` default) at sizes < 2K on two ops:
+**What's established (criterion, fixed-N, not the noisy sweep small-batch):**
 
-| op | N<200 | 200≤N<2000 |
-|---|---|---|
-| insert | hashbrown 25 / Tomb 32 (22% slower) | hashbrown 20 / Tomb 25 (22% slower) |
-| lookup_miss | hashbrown 2.66 / Tomb 4.34 (63% slower) | hashbrown 3.04 / Tomb 3.84 (21% slower) |
+- `construction/grow_from_empty/10000` (cold alloc + grow through all
+  resizes): post-fix Tomb 161 µs vs hashbrown 118 µs — **36% slower**
+  (was 52% pre-fix).
+- `construction/with_capacity/10000` (cold alloc, pre-sized so **zero
+  resizes**, then fill): Tomb 49 µs vs hashbrown 40 µs — **~22% slower**.
+- `throughput/insert/.../medium` (warm table, `clear()` + refill, no
+  alloc, no resize): Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb **faster**.
 
-Surprising because Tomb's tag layout (`Byte7_128`, 128-value tag) is
-hashbrown-equivalent — they should share most of the hot path. Beyond ~10K
-entries the gap closes and Tomb wins lookup_hit + remove decisively.
+So the gap is specific to **cold allocate-then-fill**. It is *not* the
+steady-state insert hot path (warm refill ties/wins), *not* resize cadence
+(Tomb does fewer, not more, resizes than hashbrown to reach 10K — they
+share every boundary from N≈14 up), and *not* initial-table size (that
+only diverges for N<14; irrelevant at 10K). The ~22% zero-resize gap is
+the core mystery: same final load (61%), same bucket count (16384), same
+tag width.
 
-The deltas are 1-3 ns absolute (noise-floor adjacent), but if we find a
-structural cause we may be able to close the gap and have `Tomb` strictly
-dominate hashbrown at all sizes — the rest of the curve already favors us.
+**Rejected hypotheses (do not re-try without new evidence):**
+1. *Smaller initial-table strategy* — hashbrown's 4/8/16-bucket micro-tables
+   only matter for N<14; benches at N≥1K are past that. Cannot explain a
+   10K gap.
+2. *Double-probe in the plain insert path* — `insert_or_replace`'s overflow
+   fallback did `find_by_hash` then `insert_no_check` (two probes) where the
+   entry path uses the fused `find_or_locate`. Rewriting the fallback to use
+   `find_or_locate` + `insert_at` **regressed** `with_capacity/10000` by
+   ~12% (49→55 µs). `find_or_locate` re-probes the home group (already done
+   in the fast path) and crosses an `#[inline(never)]` boundary to
+   `find_or_locate_overflow`; net worse than the redundant simple probe.
+   Reverted.
 
-**Suggested investigation steps**:
-1. Disassembly comparison: Tomb's `insert` and `find_or_find_insert_slot`
-   vs hashbrown's at a fixed small-N callsite. Are there extra branches,
-   bounds checks, or initialization paths Tomb is paying for that
-   hashbrown elides via specialization?
-2. Initial-allocation cost: hashbrown defers the bucket allocation until
-   the first insert; does Tomb pay for an eager allocation at
-   `with_capacity(0)` that shows up across all small-batch inserts?
-3. Tombstone bookkeeping during organic growth: at small N, every resize
-   touches a meaningful fraction of the table. Does Tomb scan/clear
-   tombstones during grow that hashbrown skips because it just grew?
-4. Miss path: the 63% gap at N<200 on lookup_miss is striking. Compare
-   probe-termination logic — both should resolve in the home group at low
-   load, so the difference is in per-probe cost. Check whether the SIMD
-   compare + bitmask path differs.
+**Next steps (need a profiler, not more code-reading):**
+1. `perf stat` / `perf record` on a single-design micro-bench that does only
+   `with_capacity(10000)` + fill, Tomb vs hashbrown. Compare cycles,
+   branch-misses, LLC-misses, page-faults. The zero-resize variant isolates
+   the question cleanly.
+2. Split allocate cost from fill cost: time `with_capacity(10000)` alone
+   (drop without filling) vs fill-only on a warm allocation. Determines
+   whether the gap is in `allocate` (layout math, the memset of metadata,
+   first-touch faulting pattern) or in the per-insert codegen at rising load.
+3. Only after a profiled hotspot is identified: disassembly diff of the
+   identified region vs hashbrown's equivalent.
 
-Methodology note: sweep uses small-batch (`keys[prev_n..n]`) measurement
-which is noise-heavier than steady-state. Confirm any gap with a fixed-N
-criterion bench at e.g. N=500 before deep-diving disassembly.
+Methodology note: the original sweep `keys[prev_n..n]` small-batch numbers
+are noise-heavy and resize-spike-dominated; ignore them for this — use the
+`construction` criterion benches above, which are stable and isolate
+alloc/resize/fill.
 
 ### Design Space Exploration
 
