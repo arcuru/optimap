@@ -322,6 +322,34 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
         }
     }
 
+    /// Insert into a freshly-allocated table during rehash.
+    ///
+    /// Caller guarantees the destination has no tombstones (just-allocated)
+    /// and enough capacity for all rehashed items. Skips tombstone tracking
+    /// and per-entry `len`/`growth_left` updates — caller batches those.
+    /// One SIMD op per probed group vs `insert_no_check`'s two.
+    #[inline(always)]
+    pub(crate) fn insert_after_resize(&mut self, h: u64, key: K, value: V) {
+        let reduced = T::reduced_hash(h);
+        let mut gi = self.group_index(h);
+        let mut probe = 0usize;
+
+        loop {
+            let meta = unsafe { self.meta_ptr(gi) };
+
+            if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                unsafe {
+                    Group::set_meta(meta, si, reduced);
+                    S::write(self.ctrl, self.extra, Self::bucket_index(gi, si), key, value);
+                }
+                return;
+            }
+
+            probe += 1;
+            gi = (gi.wrapping_add(probe)) & self.mask;
+        }
+    }
+
     /// Insert without checking for duplicates or capacity.
     /// Probes until an EMPTY slot is found, tracking the first tombstone seen.
     #[inline(always)]
@@ -478,6 +506,8 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
         self.len += 1;
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hash_builder: &H)
     where
         K: Hash,
@@ -485,6 +515,7 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
         let was_allocated = self.is_allocated();
         let old_num_groups = self.num_groups();
         let old_ctrl = self.ctrl;
+        let old_len = self.len;
         let old_layout = if was_allocated {
             Some(Self::combined_layout(old_num_groups))
         } else {
@@ -515,13 +546,16 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
                     let idx = (gi << 4) | si;
                     let (key, value) = S::read(old_ctrl, old_extra, idx);
                     let h = Self::hash_key(&key, hash_builder);
-                    self.insert_no_check(h, key, value);
+                    self.insert_after_resize(h, key, value);
                 }
             }
 
             let old_alloc = old_ctrl.sub(old_backward);
             alloc::dealloc(old_alloc, old_layout.unwrap());
         }
+
+        self.len = old_len;
+        self.growth_left -= old_len;
     }
 
     pub fn insert_with_rehash<H: BuildHasher>(
@@ -556,6 +590,8 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
     }
 
     /// If len >= capacity * 7/8, grow (double). Else rehash in place (compact tombstones).
+    #[cold]
+    #[inline(never)]
     fn grow_or_rehash<H: BuildHasher>(&mut self, hash_builder: &H)
     where
         K: Hash,
