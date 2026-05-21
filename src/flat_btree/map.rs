@@ -502,8 +502,7 @@ impl<K: Ord, V, S> FlatBTree<K, V, S> {
         Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
-        let (start_leaf, start_idx, end_leaf, end_idx) =
-            self.tree.resolve_range_bounds(range);
+        let (start_leaf, start_idx, end_leaf, end_idx) = self.tree.resolve_range_bounds(range);
         RangeIterMut {
             tree: &mut self.tree as *mut RawBTree<K, V>,
             current_leaf: start_leaf,
@@ -618,10 +617,17 @@ impl<K, V, S> FlatBTree<K, V, S> {
 
 impl<K: Ord + Clone, V, S> FlatBTree<K, V, S> {
     /// Tries to insert a key-value pair, failing if the key already exists.
-    pub fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    pub fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
         match self.entry(key) {
             Entry::Occupied(e) => Err(crate::traits::OccupiedError { key: e.key, value }),
-            Entry::Vacant(e) => { e.insert(value); Ok(()) }
+            Entry::Vacant(e) => {
+                e.insert(value);
+                Ok(())
+            }
         }
     }
 
@@ -1163,11 +1169,7 @@ where
         FlatBTree::drain(self)
     }
 
-    fn try_insert(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<(), crate::traits::OccupiedError<K, V>> {
+    fn try_insert(&mut self, key: K, value: V) -> Result<(), crate::traits::OccupiedError<K, V>> {
         FlatBTree::try_insert(self, key, value)
     }
 
@@ -1543,19 +1545,14 @@ impl<'a, K, V> Iterator for RangeIterMut<'a, K, V> {
             let len = header.len as usize;
 
             if self.current_idx < len {
-                let k = unsafe {
-                    &*NodeLayout::<K, V>::leaf_key_ptr(arena_ptr, self.current_idx)
-                };
-                let v = unsafe {
-                    &mut *NodeLayout::<K, V>::leaf_val_ptr(arena_ptr, self.current_idx)
-                };
+                let k = unsafe { &*NodeLayout::<K, V>::leaf_key_ptr(arena_ptr, self.current_idx) };
+                let v =
+                    unsafe { &mut *NodeLayout::<K, V>::leaf_val_ptr(arena_ptr, self.current_idx) };
                 self.current_idx += 1;
                 return Some((k, v));
             }
 
-            self.current_leaf = unsafe {
-                NodeLayout::<K, V>::leaf_next_ptr(arena_ptr).read()
-            };
+            self.current_leaf = unsafe { NodeLayout::<K, V>::leaf_next_ptr(arena_ptr).read() };
             self.current_idx = 0;
         }
     }
@@ -2131,8 +2128,7 @@ mod tests {
     fn shrink_to_fit_rebuilds() {
         // Insert lots, remove half, shrink. After shrink: capacity should
         // shrink, and lookups should still work.
-        let mut map: FlatBTree<i32, i32> =
-            (0i32..5_000).map(|i| (i, i * 3)).collect();
+        let mut map: FlatBTree<i32, i32> = (0i32..5_000).map(|i| (i, i * 3)).collect();
         for i in 0i32..2_500 {
             assert_eq!(map.remove(&i), Some(i * 3));
         }
@@ -2168,8 +2164,7 @@ mod tests {
         // 100K entries forces a 3-level tree, exercising bulk_load's
         // recursive separator-key promotion (which previously read the
         // wrong key for height ≥ 2 internal nodes).
-        let map: FlatBTree<i32, i32> =
-            (0i32..100_000).map(|i| (i, i.wrapping_mul(13))).collect();
+        let map: FlatBTree<i32, i32> = (0i32..100_000).map(|i| (i, i.wrapping_mul(13))).collect();
         assert_eq!(map.len(), 100_000);
         for i in 0i32..100_000 {
             assert_eq!(map.get(&i), Some(&i.wrapping_mul(13)), "missing key {i}");
@@ -2362,8 +2357,7 @@ mod tests {
     #[should_panic(expected = "strictly ascending")]
     fn from_sorted_iter_unsorted_panics_in_debug() {
         // Only debug builds panic. The test runs under cfg(test) which is debug.
-        let _: FlatBTree<i32, i32> =
-            FlatBTree::from_sorted_iter([(2, 0), (1, 0), (3, 0)]);
+        let _: FlatBTree<i32, i32> = FlatBTree::from_sorted_iter([(2, 0), (1, 0), (3, 0)]);
     }
 
     #[test]
@@ -2802,8 +2796,14 @@ mod tests {
         // Splitting at a key not in the map: everything strictly less stays in self.
         let mut map: FlatBTree<i32, i32> = [10, 20, 30, 40].iter().map(|&i| (i, i)).collect();
         let right = map.split_off(&25);
-        assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![10, 20]);
-        assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![30, 40]);
+        assert_eq!(
+            map.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![10, 20]
+        );
+        assert_eq!(
+            right.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![30, 40]
+        );
     }
 
     #[test]
@@ -2888,8 +2888,14 @@ mod tests {
     fn surgical_split_off_at_missing_key() {
         let mut map: FlatBTree<i32, i32> = [10, 20, 30, 40].iter().map(|&i| (i, i)).collect();
         let right = map.split_off_surgical_right(&25);
-        assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![10, 20]);
-        assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![30, 40]);
+        assert_eq!(
+            map.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![10, 20]
+        );
+        assert_eq!(
+            right.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![30, 40]
+        );
     }
 
     #[test]
@@ -2938,8 +2944,14 @@ mod tests {
         // Tree fits in one leaf (height 0). Surgical must handle the empty-spine case.
         let mut map: FlatBTree<i32, i32> = (0..10).map(|i| (i, i)).collect();
         let right = map.split_off_surgical_right(&5);
-        assert_eq!(map.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
-        assert_eq!(right.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![5, 6, 7, 8, 9]);
+        assert_eq!(
+            map.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            right.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec![5, 6, 7, 8, 9]
+        );
     }
 
     #[test]
@@ -3047,14 +3059,14 @@ mod tests {
         for &n in &[1usize, 7, 15, 16, 30, 100, 500, 5_000, 50_000] {
             // Pick a representative spread of pivots.
             let pivots: Vec<i64> = vec![
-                -1,                    // before everything
-                0,                     // first key
-                (n / 1000).max(1) as i64,    // very-near start
-                (n / 10) as i64,             // 10%
-                (n / 2) as i64,              // mid
-                (n - n / 10) as i64,         // 90%
-                (n - 1) as i64,              // last key
-                n as i64,                    // beyond everything
+                -1,                       // before everything
+                0,                        // first key
+                (n / 1000).max(1) as i64, // very-near start
+                (n / 10) as i64,          // 10%
+                (n / 2) as i64,           // mid
+                (n - n / 10) as i64,      // 90%
+                (n - 1) as i64,           // last key
+                n as i64,                 // beyond everything
             ];
             for &pivot in &pivots {
                 let mut a: FlatBTree<i64, i64> = (0..n as i64).map(|i| (i, i * 3)).collect();
@@ -3137,7 +3149,10 @@ mod tests {
         // surgical_right (small constant-factor advantage at symmetric pivot).
         let r050 = map.tree.estimate_right_fraction(&500).unwrap();
         assert!(r050 > 0.55 && r050 <= 0.65);
-        assert!(r050 <= cutoff, "p050 estimator must route to surgical_right");
+        assert!(
+            r050 <= cutoff,
+            "p050 estimator must route to surgical_right"
+        );
         // p090 / p099: estimator says ≈ 0.29 / 0.01 (actual 0.10 / 0.01)
         //              → below 0.70 → surgical_right (deep-copy small right)
         assert!(map.tree.estimate_right_fraction(&900).unwrap() <= cutoff);
@@ -3187,8 +3202,7 @@ mod tests {
 
     #[test]
     fn surgical_left_split_off_at_missing_key() {
-        let mut map: FlatBTree<i32, i32> =
-            (0..50).map(|i| (i * 2, i)).collect(); // even keys only
+        let mut map: FlatBTree<i32, i32> = (0..50).map(|i| (i * 2, i)).collect(); // even keys only
         let right = map.split_off_surgical_left(&25); // 25 is not present
         assert_eq!(map.len(), 13);
         assert_eq!(right.len(), 37);
@@ -3386,22 +3400,24 @@ mod tests {
         // for the same input + pivot. Covers many sizes including:
         // single-leaf (height 0), height 1 (15..225), height 2 (225..3375),
         // height 3 (>3375), and irregular fills near boundaries.
-        for &n in &[0usize, 1, 7, 15, 16, 30, 100, 224, 225, 226, 500, 5_000, 50_000] {
+        for &n in &[
+            0usize, 1, 7, 15, 16, 30, 100, 224, 225, 226, 500, 5_000, 50_000,
+        ] {
             // Pick a representative spread of pivots, including out-of-range.
             let pivots: Vec<i64> = if n == 0 {
                 vec![0, 5]
             } else {
                 vec![
-                    -1,                          // before everything
-                    0,                           // first key
-                    (n / 1000).max(1) as i64,    // very-near start
-                    (n / 100).max(1) as i64,     // p001
-                    (n / 10) as i64,             // p010
-                    (n / 2) as i64,              // p050
-                    (n - n / 10) as i64,         // p090
-                    (n - n / 100) as i64,        // p099
-                    (n - 1) as i64,              // last key
-                    n as i64,                    // beyond everything
+                    -1,                       // before everything
+                    0,                        // first key
+                    (n / 1000).max(1) as i64, // very-near start
+                    (n / 100).max(1) as i64,  // p001
+                    (n / 10) as i64,          // p010
+                    (n / 2) as i64,           // p050
+                    (n - n / 10) as i64,      // p090
+                    (n - n / 100) as i64,     // p099
+                    (n - 1) as i64,           // last key
+                    n as i64,                 // beyond everything
                 ]
             };
             for &pivot in &pivots {
@@ -3555,8 +3571,7 @@ mod tests {
     #[test]
     fn append_drain_overlapping() {
         // append_drain handles overlap correctly (other wins).
-        let mut a: FlatBTree<u64, u64> =
-            [(1u64, 11u64), (2, 12), (3, 13)].into_iter().collect();
+        let mut a: FlatBTree<u64, u64> = [(1u64, 11u64), (2, 12), (3, 13)].into_iter().collect();
         let mut b: FlatBTree<u64, u64> = [(2u64, 22u64), (3, 23), (4, 24)].into_iter().collect();
         a.append_drain(&mut b);
         assert!(b.is_empty());

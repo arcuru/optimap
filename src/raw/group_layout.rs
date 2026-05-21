@@ -61,7 +61,9 @@ impl<const M: u16> GroupOps for Group<M> {
         unsafe { Group::<M>::match_byte_and_empty(ptr, value) }
     }
     #[inline(always)]
-    fn empty_mask() -> BitMask { BitMask(0) }
+    fn empty_mask() -> BitMask {
+        BitMask(0)
+    }
     #[inline(always)]
     unsafe fn prefetch_read(ptr: *const u8) {
         unsafe { Group::<M>::prefetch_read(ptr) }
@@ -96,7 +98,9 @@ impl<const M: u32> GroupOps for Group32<M> {
         unsafe { Group32::<M>::match_byte_and_empty(ptr, value) }
     }
     #[inline(always)]
-    fn empty_mask() -> BitMask32 { BitMask32(0) }
+    fn empty_mask() -> BitMask32 {
+        BitMask32(0)
+    }
     #[inline(always)]
     unsafe fn prefetch_read(ptr: *const u8) {
         unsafe { Group32::<M>::prefetch_read(ptr) }
@@ -131,7 +135,9 @@ impl<const M: u64> GroupOps for Group64<M> {
         unsafe { Group64::<M>::match_byte_and_empty(ptr, value) }
     }
     #[inline(always)]
-    fn empty_mask() -> BitMask64 { BitMask64(0) }
+    fn empty_mask() -> BitMask64 {
+        BitMask64(0)
+    }
     #[inline(always)]
     unsafe fn prefetch_read(ptr: *const u8) {
         unsafe { Group64::<M>::prefetch_read(ptr) }
@@ -335,14 +341,25 @@ impl OverflowStrategy for EmbeddedOverflow {
     const CHANNELED: bool = true;
 
     #[inline(always)]
-    fn extra_alloc_bytes(_num_groups: usize) -> usize { 0 }
+    fn extra_alloc_bytes(_num_groups: usize) -> usize {
+        0
+    }
     #[inline(always)]
-    fn overflow_bytes_to_zero(_num_groups: usize) -> usize { 0 }
+    fn overflow_bytes_to_zero(_num_groups: usize) -> usize {
+        0
+    }
     #[inline(always)]
-    fn overflow_bytes_to_copy(_num_groups: usize) -> usize { 0 }
+    fn overflow_bytes_to_copy(_num_groups: usize) -> usize {
+        0
+    }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, _mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+    unsafe fn overflow_ptr(
+        metadata: *mut u8,
+        _mask: usize,
+        gi: usize,
+        meta_stride: usize,
+    ) -> *mut u8 {
         unsafe { metadata.add(gi * meta_stride + meta_stride - 1) }
     }
 
@@ -353,7 +370,9 @@ impl OverflowStrategy for EmbeddedOverflow {
 
     #[inline(always)]
     unsafe fn set_overflow(ptr: *mut u8, _gi: usize, channel: u8) {
-        unsafe { *ptr |= channel; }
+        unsafe {
+            *ptr |= channel;
+        }
     }
 }
 
@@ -385,22 +404,57 @@ macro_rules! define_embedded_layout {
 }
 
 // 16-byte metadata, 15 usable slots (byte 15 is overflow)
-define_embedded_layout!(Layout16EmbCompact,    Group<0x7FFF>, 15, 15, 16, false);
-define_embedded_layout!(Layout16EmbP2,         Group<0x7FFF>, 15, 16, 16, false);
+define_embedded_layout!(Layout16EmbCompact, Group<0x7FFF>, 15, 15, 16, false);
+define_embedded_layout!(Layout16EmbP2, Group<0x7FFF>, 15, 16, 16, false);
 define_embedded_layout!(Layout16EmbCompactAnd, Group<0x7FFF>, 15, 15, 16, true);
-define_embedded_layout!(Layout16EmbP2And,      Group<0x7FFF>, 15, 16, 16, true);
+define_embedded_layout!(Layout16EmbP2And, Group<0x7FFF>, 15, 16, 16, true);
 
 // 32-byte metadata, 31 usable slots (byte 31 is overflow)
-define_embedded_layout!(Layout32EmbCompact,    Group32<0x7FFF_FFFF>, 31, 31, 32, false);
-define_embedded_layout!(Layout32EmbP2,         Group32<0x7FFF_FFFF>, 31, 32, 32, false);
-define_embedded_layout!(Layout32EmbCompactAnd, Group32<0x7FFF_FFFF>, 31, 31, 32, true);
-define_embedded_layout!(Layout32EmbP2And,      Group32<0x7FFF_FFFF>, 31, 32, 32, true);
+define_embedded_layout!(Layout32EmbCompact, Group32<0x7FFF_FFFF>, 31, 31, 32, false);
+define_embedded_layout!(Layout32EmbP2, Group32<0x7FFF_FFFF>, 31, 32, 32, false);
+define_embedded_layout!(
+    Layout32EmbCompactAnd,
+    Group32<0x7FFF_FFFF>,
+    31,
+    31,
+    32,
+    true
+);
+define_embedded_layout!(Layout32EmbP2And, Group32<0x7FFF_FFFF>, 31, 32, 32, true);
 
 // 64-byte metadata, 63 usable slots (byte 63 is overflow)
-define_embedded_layout!(Layout64EmbCompact,    Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, false);
-define_embedded_layout!(Layout64EmbP2,         Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, false);
-define_embedded_layout!(Layout64EmbCompactAnd, Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 63, 64, true);
-define_embedded_layout!(Layout64EmbP2And,      Group64<0x7FFF_FFFF_FFFF_FFFF>, 63, 64, 64, true);
+define_embedded_layout!(
+    Layout64EmbCompact,
+    Group64<0x7FFF_FFFF_FFFF_FFFF>,
+    63,
+    63,
+    64,
+    false
+);
+define_embedded_layout!(
+    Layout64EmbP2,
+    Group64<0x7FFF_FFFF_FFFF_FFFF>,
+    63,
+    64,
+    64,
+    false
+);
+define_embedded_layout!(
+    Layout64EmbCompactAnd,
+    Group64<0x7FFF_FFFF_FFFF_FFFF>,
+    63,
+    63,
+    64,
+    true
+);
+define_embedded_layout!(
+    Layout64EmbP2And,
+    Group64<0x7FFF_FFFF_FFFF_FFFF>,
+    63,
+    64,
+    64,
+    true
+);
 
 // ── UFM / Gaps layouts (byte-0 tag + embedded overflow at every width) ────
 
@@ -548,33 +602,33 @@ pub type Byte1_255PureLayout = Layout16<Byte1_255Pure, ByteSeparate>;
 // Ufm64Layout/Gaps64Layout) already exist above.
 
 // Byte1 (decorrelated 255-tag, shift indexing)
-pub type Byte1_Emb    = Layout16EmbCompact<Byte1_255>;
-pub type Byte1_EmbP2  = Layout16EmbP2<Byte1_255>;
-pub type Byte1_Emb32   = Layout32EmbCompact<Byte1_255>;
+pub type Byte1_Emb = Layout16EmbCompact<Byte1_255>;
+pub type Byte1_EmbP2 = Layout16EmbP2<Byte1_255>;
+pub type Byte1_Emb32 = Layout32EmbCompact<Byte1_255>;
 pub type Byte1_EmbP232 = Layout32EmbP2<Byte1_255>;
-pub type Byte1_Emb64   = Layout64EmbCompact<Byte1_255>;
+pub type Byte1_Emb64 = Layout64EmbCompact<Byte1_255>;
 pub type Byte1_EmbP264 = Layout64EmbP2<Byte1_255>;
 
 // Byte0_128 (128-value low-byte tag, shift indexing; faster hash_tag)
-pub type Byte0_128_Emb    = Layout16EmbCompact<Byte0_128>;
-pub type Byte0_128_EmbP2  = Layout16EmbP2<Byte0_128>;
-pub type Byte0_128_Emb32   = Layout32EmbCompact<Byte0_128>;
+pub type Byte0_128_Emb = Layout16EmbCompact<Byte0_128>;
+pub type Byte0_128_EmbP2 = Layout16EmbP2<Byte0_128>;
+pub type Byte0_128_Emb32 = Layout32EmbCompact<Byte0_128>;
 pub type Byte0_128_EmbP232 = Layout32EmbP2<Byte0_128>;
-pub type Byte0_128_Emb64   = Layout64EmbCompact<Byte0_128>;
+pub type Byte0_128_Emb64 = Layout64EmbCompact<Byte0_128>;
 pub type Byte0_128_EmbP264 = Layout64EmbP2<Byte0_128>;
 
 // Byte7_128Ch + AND indexing (tag AND channel from top bits — decorrelated from AND group index)
-pub type Byte7_128Ch_EmbAnd    = Layout16EmbCompactAnd<Byte7_128Ch>;
-pub type Byte7_128Ch_EmbP2And  = Layout16EmbP2And<Byte7_128Ch>;
-pub type Byte7_128Ch_EmbAnd32   = Layout32EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbAnd = Layout16EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbP2And = Layout16EmbP2And<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbAnd32 = Layout32EmbCompactAnd<Byte7_128Ch>;
 pub type Byte7_128Ch_EmbP2And32 = Layout32EmbP2And<Byte7_128Ch>;
-pub type Byte7_128Ch_EmbAnd64   = Layout64EmbCompactAnd<Byte7_128Ch>;
+pub type Byte7_128Ch_EmbAnd64 = Layout64EmbCompactAnd<Byte7_128Ch>;
 pub type Byte7_128Ch_EmbP2And64 = Layout64EmbP2And<Byte7_128Ch>;
 
 // Byte7_255Ch + AND indexing (255-value top-bit tag, shifted channels)
-pub type Byte7_255Ch_EmbAnd    = Layout16EmbCompactAnd<Byte7_255Ch>;
-pub type Byte7_255Ch_EmbP2And  = Layout16EmbP2And<Byte7_255Ch>;
-pub type Byte7_255Ch_EmbAnd32   = Layout32EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbAnd = Layout16EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbP2And = Layout16EmbP2And<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbAnd32 = Layout32EmbCompactAnd<Byte7_255Ch>;
 pub type Byte7_255Ch_EmbP2And32 = Layout32EmbP2And<Byte7_255Ch>;
-pub type Byte7_255Ch_EmbAnd64   = Layout64EmbCompactAnd<Byte7_255Ch>;
+pub type Byte7_255Ch_EmbAnd64 = Layout64EmbCompactAnd<Byte7_255Ch>;
 pub type Byte7_255Ch_EmbP2And64 = Layout64EmbP2And<Byte7_255Ch>;

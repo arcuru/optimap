@@ -1,14 +1,13 @@
 # Benchmark Results
 
-Three-way comparison (2026-04-02): UFM (15-slot), Splitsies (16-slot), hashbrown 0.15.
-All use foldhash. All at 70% load factor unless noted.
+Three-way comparison (2026-04-02): UFM (15-slot), Splitsies (16-slot), hashbrown 0.15. All use foldhash. All at 70% load factor unless noted.
 
 Ratios: <1.0 = faster than hashbrown, >1.0 = hashbrown is faster.
 
 ## Throughput (pre-warmed, 70% load)
 
 | Operation | Size | UFM | Splitsies | hashbrown | UFM vs hb | Split vs hb |
-|-----------|------|----:|----------:|----------:|:---------:|:-----------:|
+| --- | --- | --: | --: | --: | :-: | :-: |
 | **insert** | medium | 33.2 µs | 34.9 µs | 33.3 µs | **1.00x** | 1.05x |
 | **insert** | large | 319 µs | 311 µs | 333 µs | **0.96x** | **0.93x** |
 | **insert 128B** | medium | 67.2 µs | 71.1 µs | 81.9 µs | **0.82x** | **0.87x** |
@@ -26,7 +25,7 @@ Ratios: <1.0 = faster than hashbrown, >1.0 = hashbrown is faster.
 ## Construction
 
 | Operation | Size | UFM | Splitsies | hashbrown | UFM vs hb | Split vs hb |
-|-----------|------|----:|----------:|----------:|:---------:|:-----------:|
+| --- | --- | --: | --: | --: | :-: | :-: |
 | **with_capacity** | 1K | 2.72 µs | 2.74 µs | 3.36 µs | **0.81x** | **0.82x** |
 | **with_capacity** | 100K | 407 µs | **389 µs** | 428 µs | **0.95x** | **0.91x** |
 | **with_capacity** | 1M | 20.4 ms | 22.6 ms | 23.6 ms | **0.87x** | **0.96x** |
@@ -39,108 +38,100 @@ Ratios: <1.0 = faster than hashbrown, >1.0 = hashbrown is faster.
 
 ## Key Distributions (large table, 70% load)
 
-| Distribution | Op | UFM | Splitsies | hashbrown | Split vs hb |
-|-------------|-----|----:|----------:|----------:|:-----------:|
-| random | hit | 246 µs | 238 µs | 213 µs | 1.12x |
-| sequential | hit | 246 µs | 244 µs | 208 µs | 1.17x |
-| random | miss | 143 µs | **125 µs** | 127 µs | **0.98x** |
-| **sequential** | **miss** | 121 µs | **106 µs** | 143 µs | **0.74x** |
-| random | insert | 309 µs | 312 µs | 323 µs | **0.97x** |
-| sequential | insert | 306 µs | **304 µs** | 321 µs | **0.95x** |
+| Distribution   | Op       |    UFM |  Splitsies | hashbrown | Split vs hb |
+| -------------- | -------- | -----: | ---------: | --------: | :---------: |
+| random         | hit      | 246 µs |     238 µs |    213 µs |    1.12x    |
+| sequential     | hit      | 246 µs |     244 µs |    208 µs |    1.17x    |
+| random         | miss     | 143 µs | **125 µs** |    127 µs |  **0.98x**  |
+| **sequential** | **miss** | 121 µs | **106 µs** |    143 µs |  **0.74x**  |
+| random         | insert   | 309 µs |     312 µs |    323 µs |  **0.97x**  |
+| sequential     | insert   | 306 µs | **304 µs** |    321 µs |  **0.95x**  |
 
 ## Value Sizes (medium table, 70% load)
 
-| Value Size | Op | Splitsies | hashbrown | Split vs hb |
-|-----------|-----|----------:|----------:|:-----------:|
-| 64B | insert | **51.4 µs** | 60.9 µs | **0.84x** |
-| 64B | hit | 24.9 µs | 19.9 µs | 1.25x |
-| 128B | insert | **72.7 µs** | 78.3 µs | **0.93x** |
-| 128B | hit | 29.3 µs | 25.5 µs | 1.15x |
-| 256B | insert | **98.8 µs** | 113.9 µs | **0.87x** |
-| 256B | hit | 29.1 µs | 25.9 µs | 1.12x |
+| Value Size | Op     |   Splitsies | hashbrown | Split vs hb |
+| ---------- | ------ | ----------: | --------: | :---------: |
+| 64B        | insert | **51.4 µs** |   60.9 µs |  **0.84x**  |
+| 64B        | hit    |     24.9 µs |   19.9 µs |    1.25x    |
+| 128B       | insert | **72.7 µs** |   78.3 µs |  **0.93x**  |
+| 128B       | hit    |     29.3 µs |   25.5 µs |    1.15x    |
+| 256B       | insert | **98.8 µs** |  113.9 µs |  **0.87x**  |
+| 256B       | hit    |     29.1 µs |   25.9 µs |    1.12x    |
 
 Splitsies beats hashbrown on insert across all tested value sizes.
 
 ## Mixed Workloads
 
-| Workload | UFM | Splitsies | hashbrown | UFM vs hb | Split vs hb |
-|----------|----:|----------:|----------:|:---------:|:-----------:|
-| **churn 4K** | 25.7 ms | **25.6 ms** | 41.3 ms | **0.62x** | **0.62x** |
-| **churn 64K** | 28.6 ms | **28.5 ms** | 38.8 ms | **0.74x** | **0.73x** |
-| **churn 1M** | 54.0 ms | **50.0 ms** | 58.1 ms | **0.93x** | **0.86x** |
-| **read-heavy** | 2.69 ms | **2.57 ms** | 2.60 ms | 1.03x | **0.99x** |
-| write-heavy | 2.79 ms | 2.73 ms | 2.40 ms | 1.16x | 1.14x |
-| counting 5% | 42.6 ms | **39.2 ms** | 30.5 ms | 1.39x | 1.28x |
+| Workload       |     UFM |   Splitsies | hashbrown | UFM vs hb | Split vs hb |
+| -------------- | ------: | ----------: | --------: | :-------: | :---------: |
+| **churn 4K**   | 25.7 ms | **25.6 ms** |   41.3 ms | **0.62x** |  **0.62x**  |
+| **churn 64K**  | 28.6 ms | **28.5 ms** |   38.8 ms | **0.74x** |  **0.73x**  |
+| **churn 1M**   | 54.0 ms | **50.0 ms** |   58.1 ms | **0.93x** |  **0.86x**  |
+| **read-heavy** | 2.69 ms | **2.57 ms** |   2.60 ms |   1.03x   |  **0.99x**  |
+| write-heavy    | 2.79 ms |     2.73 ms |   2.40 ms |   1.16x   |    1.14x    |
+| counting 5%    | 42.6 ms | **39.2 ms** |   30.5 ms |   1.39x   |    1.28x    |
 
 ## High-Load Stress (85% load)
 
-| Benchmark | UFM | Splitsies | hashbrown | Split vs hb |
-|-----------|----:|----------:|----------:|:-----------:|
-| hit @ 85% | 400 µs | 385 µs | 331 µs | 1.16x |
-| **miss @ 85%** | 282 µs | **180 µs** | 553 µs | **0.33x** |
+| Benchmark      |    UFM |  Splitsies | hashbrown | Split vs hb |
+| -------------- | -----: | ---------: | --------: | :---------: |
+| hit @ 85%      | 400 µs |     385 µs |    331 µs |    1.16x    |
+| **miss @ 85%** | 282 µs | **180 µs** |    553 µs |  **0.33x**  |
 
 ## Miss by Load Factor
 
-| Load % | UFM | Splitsies | hashbrown | Split vs hb |
-|-------:|----:|----------:|----------:|:-----------:|
-| 45% | 158 µs | **143 µs** | 130 µs | 1.10x |
-| 55% | 162 µs | **145 µs** | 134 µs | 1.08x |
-| 65% | 166 µs | **151 µs** | 140 µs | 1.08x |
-| **75%** | 182 µs | **156 µs** | 168 µs | **0.93x** |
-| **85%** | 297 µs | **158 µs** | 570 µs | **0.28x** |
+|  Load % |    UFM |  Splitsies | hashbrown | Split vs hb |
+| ------: | -----: | ---------: | --------: | :---------: |
+|     45% | 158 µs | **143 µs** |    130 µs |    1.10x    |
+|     55% | 162 µs | **145 µs** |    134 µs |    1.08x    |
+|     65% | 166 µs | **151 µs** |    140 µs |    1.08x    |
+| **75%** | 182 µs | **156 µs** |    168 µs |  **0.93x**  |
+| **85%** | 297 µs | **158 µs** |    570 µs |  **0.28x**  |
 
-Splitsies miss performance is nearly flat (143-158µs from 45% to 85%).
-hashbrown degrades 4.4x over the same range (130-570µs).
-**Splitsies at 85% load is faster than hashbrown at 45% load for misses.**
+Splitsies miss performance is nearly flat (143-158µs from 45% to 85%). hashbrown degrades 4.4x over the same range (130-570µs). **Splitsies at 85% load is faster than hashbrown at 45% load for misses.**
 
 ## Remove + Reinsert (tombstone-free advantage)
 
-| Implementation | Time | vs hashbrown |
-|---------------|-----:|:------------:|
-| UFM | 1.76 ms | 1.23x |
-| **Splitsies** | **1.12 ms** | **0.79x** |
-| hashbrown | 1.43 ms | — |
+| Implementation |        Time | vs hashbrown |
+| -------------- | ----------: | :----------: |
+| UFM            |     1.76 ms |    1.23x     |
+| **Splitsies**  | **1.12 ms** |  **0.79x**   |
+| hashbrown      |     1.43 ms |      —       |
 
 ## Sweep Benchmarks (continuous N, all designs)
 
-Continuous N-sweep from 100 to 10M elements (362 log-spaced points, median of 5
-trials per point). Captures natural load factor cycling, rehash spikes, and cache
-boundary transitions. Run with `./scripts/sweep-bench.sh`.
+Continuous N-sweep from 100 to 10M elements (362 log-spaced points, median of 5 trials per point). Captures natural load factor cycling, rehash spikes, and cache boundary transitions. Run with `./scripts/sweep-bench.sh`.
 
 ### Lookup hit vs hashbrown (ratio, lower = better)
 
-| N range | UFM | Gaps | Splitsies | IPO | IPO64 |
-|---------|:---:|:----:|:---------:|:---:|:-----:|
-| <1k | 1.15 | 1.08 | 1.12 | **1.03** | 1.31 |
-| 1k-10k | 1.12 | 1.10 | 1.11 | **1.03** | 1.34 |
-| 10k-100k | 1.15 | 1.19 | 1.22 | **1.10** | 1.34 |
-| 100k-1M | 1.24 | 1.24 | 1.24 | **1.12** | 1.44 |
+| N range  | UFM  | Gaps | Splitsies |   IPO    | IPO64 |
+| -------- | :--: | :--: | :-------: | :------: | :---: |
+| <1k      | 1.15 | 1.08 |   1.12    | **1.03** | 1.31  |
+| 1k-10k   | 1.12 | 1.10 |   1.11    | **1.03** | 1.34  |
+| 10k-100k | 1.15 | 1.19 |   1.22    | **1.10** | 1.34  |
+| 100k-1M  | 1.24 | 1.24 |   1.24    | **1.12** | 1.44  |
 
-IPO is closest to hashbrown on hits across all scales. The gap is structural
-(per-probe instruction count) and has been extensively investigated — see
-[Closed Investigations](../optimization/closed.md).
+IPO is closest to hashbrown on hits across all scales. The gap is structural (per-probe instruction count) and has been extensively investigated — see [Closed Investigations](../optimization/closed.md).
 
 ### Lookup miss vs hashbrown (ratio, lower = better)
 
-| N range | UFM | Gaps | Splitsies | IPO | IPO64 |
-|---------|:---:|:----:|:---------:|:---:|:-----:|
-| <1k | 1.55 | 1.59 | 1.56 | 1.40 | 2.59 |
-| 1k-10k | 1.35 | 1.41 | 1.34 | 1.35 | 2.45 |
-| 50k-100k (high load) | **0.68** | **0.70** | **0.58** | 1.12 | 1.06 |
-| 500k-1M | 1.17 | 1.20 | 1.15 | 1.06 | 1.97 |
+| N range              |   UFM    |   Gaps   | Splitsies | IPO  | IPO64 |
+| -------------------- | :------: | :------: | :-------: | :--: | :---: |
+| <1k                  |   1.55   |   1.59   |   1.56    | 1.40 | 2.59  |
+| 1k-10k               |   1.35   |   1.41   |   1.34    | 1.35 | 2.45  |
+| 50k-100k (high load) | **0.68** | **0.70** | **0.58**  | 1.12 | 1.06  |
+| 500k-1M              |   1.17   |   1.20   |   1.15    | 1.06 | 1.97  |
 
-At low load (small N or right after rehash), hashbrown wins on misses — its
-tag extraction is tighter (pure shift+mask vs conditional cmov). At high load
-(50k-100k), overflow-bit designs dominate: Splitsies is **0.58x** (1.7x faster).
+At low load (small N or right after rehash), hashbrown wins on misses — its tag extraction is tighter (pure shift+mask vs conditional cmov). At high load (50k-100k), overflow-bit designs dominate: Splitsies is **0.58x** (1.7x faster).
 
 ### Insert vs hashbrown
 
-All optimap designs beat hashbrown on insert at medium-large N (0.46-0.85x).
-IPO is consistently fastest (0.46-0.79x at 50k+).
+All optimap designs beat hashbrown on insert at medium-large N (0.46-0.85x). IPO is consistently fastest (0.46-0.79x at 50k+).
 
 ## Summary: Splitsies vs hashbrown
 
 ### Splitsies wins
+
 - **Remove**: 0.64-0.84x (tombstone-free)
 - **Churn**: 0.62-0.86x (biggest advantage)
 - **from_iter**: 0.62-0.70x
@@ -150,11 +141,13 @@ IPO is consistently fastest (0.46-0.79x at 50k+).
 - **Read-heavy workload**: 0.99x (tied)
 
 ### hashbrown wins
+
 - **Lookup hit**: 1.11-1.23x (structural)
 - **Entry API**: 1.66x
 - **Counting/aggregation**: 1.28-1.35x
 
 ### Splitsies improvements over UFM
+
 - Iteration: 1.51x → **1.11x** (biggest win)
 - Lookup miss large: 1.09x → **1.04x**
 - Lookup hit: 1.20x → **1.15x**

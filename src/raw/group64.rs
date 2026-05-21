@@ -72,16 +72,31 @@ impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
-        unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); }
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
     }
 
-    #[inline(always)] pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 { unsafe { *ptr.add(idx) } }
-    #[inline(always)] pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) { unsafe { *ptr.add(idx) = value; } }
+    #[inline(always)]
+    pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { *ptr.add(idx) }
+    }
+    #[inline(always)]
+    pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe {
+            *ptr.add(idx) = value;
+        }
+    }
 }
 
 // ── x86_64 + AVX2 (no AVX-512) ────────────────────────────────────────────
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512bw"), not(miri)))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(target_feature = "avx512bw"),
+    not(miri)
+))]
 impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {
@@ -121,9 +136,22 @@ impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
         unsafe { (Self::match_byte(ptr, value), Self::match_empty(ptr)) }
     }
 
-    #[inline(always)] pub unsafe fn prefetch_read(ptr: *const u8) { unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); } }
-    #[inline(always)] pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 { unsafe { *ptr.add(idx) } }
-    #[inline(always)] pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) { unsafe { *ptr.add(idx) = value; } }
+    #[inline(always)]
+    pub unsafe fn prefetch_read(ptr: *const u8) {
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
+    }
+    #[inline(always)]
+    pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { *ptr.add(idx) }
+    }
+    #[inline(always)]
+    pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe {
+            *ptr.add(idx) = value;
+        }
+    }
 }
 
 // ── x86_64 SSE2 only (no AVX2 / AVX-512) ──────────────────────────────────
@@ -170,9 +198,22 @@ impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
         unsafe { (Self::match_byte(ptr, value), Self::match_empty(ptr)) }
     }
 
-    #[inline(always)] pub unsafe fn prefetch_read(ptr: *const u8) { unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); } }
-    #[inline(always)] pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 { unsafe { *ptr.add(idx) } }
-    #[inline(always)] pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) { unsafe { *ptr.add(idx) = value; } }
+    #[inline(always)]
+    pub unsafe fn prefetch_read(ptr: *const u8) {
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
+    }
+    #[inline(always)]
+    pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { *ptr.add(idx) }
+    }
+    #[inline(always)]
+    pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe {
+            *ptr.add(idx) = value;
+        }
+    }
 }
 
 // ── Scalar fallback ───────────────────────────────────────────────────────
@@ -183,19 +224,25 @@ impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask64 {
         let mut mask = 0u64;
         for i in 0..64 {
-            if unsafe { *ptr.add(i) } == value { mask |= 1u64 << i; }
+            if unsafe { *ptr.add(i) } == value {
+                mask |= 1u64 << i;
+            }
         }
         BitMask64(mask & SLOT_MASK)
     }
 
     #[inline(always)]
-    pub unsafe fn match_empty(ptr: *const u8) -> BitMask64 { unsafe { Self::match_byte(ptr, 0) } }
+    pub unsafe fn match_empty(ptr: *const u8) -> BitMask64 {
+        unsafe { Self::match_byte(ptr, 0) }
+    }
 
     #[inline(always)]
     pub unsafe fn match_non_empty(ptr: *const u8) -> BitMask64 {
         let mut mask = 0u64;
         for i in 0..64 {
-            if unsafe { *ptr.add(i) } != 0 { mask |= 1u64 << i; }
+            if unsafe { *ptr.add(i) } != 0 {
+                mask |= 1u64 << i;
+            }
         }
         BitMask64(mask & SLOT_MASK)
     }
@@ -205,9 +252,18 @@ impl<const SLOT_MASK: u64> Group64<SLOT_MASK> {
         unsafe { (Self::match_byte(ptr, value), Self::match_empty(ptr)) }
     }
 
-    #[inline(always)] pub unsafe fn prefetch_read(_ptr: *const u8) {}
-    #[inline(always)] pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 { unsafe { *ptr.add(idx) } }
-    #[inline(always)] pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) { unsafe { *ptr.add(idx) = value; } }
+    #[inline(always)]
+    pub unsafe fn prefetch_read(_ptr: *const u8) {}
+    #[inline(always)]
+    pub unsafe fn get_meta(ptr: *const u8, idx: usize) -> u8 {
+        unsafe { *ptr.add(idx) }
+    }
+    #[inline(always)]
+    pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
+        unsafe {
+            *ptr.add(idx) = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -217,7 +273,9 @@ mod tests {
     #[repr(C, align(64))]
     struct Aligned64([u8; 64]);
 
-    fn make() -> Aligned64 { Aligned64([0; 64]) }
+    fn make() -> Aligned64 {
+        Aligned64([0; 64])
+    }
 
     #[test]
     fn empty_buffer_all_match() {

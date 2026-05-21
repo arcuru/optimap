@@ -400,10 +400,7 @@ impl Policy {
     /// Bands are stored sorted by `min_capacity`; re-adding the same
     /// `min_capacity` overwrites that band's backend.
     pub fn band(mut self, min_capacity: usize, backend: MapType) -> Self {
-        match self
-            .bands
-            .binary_search_by_key(&min_capacity, |&(c, _)| c)
-        {
+        match self.bands.binary_search_by_key(&min_capacity, |&(c, _)| c) {
             Ok(i) => self.bands[i].1 = backend,
             Err(i) => self.bands.insert(i, (min_capacity, backend)),
         }
@@ -929,12 +926,8 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
                 }
             },
             Inner::Tomb(m) => match m.entry(key) {
-                crate::generic_map::Entry::Occupied(e) => {
-                    Entry::Occupied(OccupiedEntry::Tomb(e))
-                }
-                crate::generic_map::Entry::Vacant(e) => {
-                    Entry::Vacant(VacantEntry::Tomb(e))
-                }
+                crate::generic_map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Tomb(e)),
+                crate::generic_map::Entry::Vacant(e) => Entry::Vacant(VacantEntry::Tomb(e)),
             },
             Inner::Gaps(m) => match m.entry(key) {
                 crate::gaps::map::Entry::Occupied(e) => Entry::Occupied(OccupiedEntry::Gaps(e)),
@@ -1303,7 +1296,6 @@ where
 // in the variant set, dispatch into FlatBTree requires `K: Ord + Clone` and
 // `Q: Ord` — bounds the `HashedMap` trait can't express. Generic code that
 // wants a universal `<M: ...>` bound for OptiMap should use `Map` instead.
-
 
 impl<K: Hash + Eq + Ord + Clone, V> crate::Map<K, V> for OptiMap<K, V> {
     fn new() -> Self {
@@ -1755,8 +1747,7 @@ mod tests {
 
     #[test]
     fn from_sorted_iter_pins_flat_btree() {
-        let map: OptiMap<u32, u32> =
-            OptiMap::from_sorted_iter((0..100u32).map(|i| (i, i * 10)));
+        let map: OptiMap<u32, u32> = OptiMap::from_sorted_iter((0..100u32).map(|i| (i, i * 10)));
         assert_eq!(map.map_type(), MapType::FlatBTree);
         assert_eq!(map.len(), 100);
         assert_eq!(map.get(&0), Some(&0));

@@ -76,7 +76,9 @@ impl<const SLOT_MASK: u32> Group32<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
-        unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); }
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
     }
 
     #[inline(always)]
@@ -86,7 +88,9 @@ impl<const SLOT_MASK: u32> Group32<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -134,7 +138,9 @@ impl<const SLOT_MASK: u32> Group32<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
-        unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0); }
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
     }
 
     #[inline(always)]
@@ -144,7 +150,9 @@ impl<const SLOT_MASK: u32> Group32<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -194,7 +202,9 @@ impl<const SLOT_MASK: u32> Group32<SLOT_MASK> {
 
     #[inline(always)]
     pub unsafe fn set_meta(ptr: *mut u8, idx: usize, value: u8) {
-        unsafe { *ptr.add(idx) = value; }
+        unsafe {
+            *ptr.add(idx) = value;
+        }
     }
 }
 
@@ -205,7 +215,9 @@ mod tests {
     #[repr(C, align(32))]
     struct Aligned32([u8; 32]);
 
-    fn make() -> Aligned32 { Aligned32([0; 32]) }
+    fn make() -> Aligned32 {
+        Aligned32([0; 32])
+    }
 
     #[test]
     fn empty_group_all_match() {

@@ -1,12 +1,11 @@
 # OptiMap
 
-A Rust library providing multiple hash map and sorted map implementations
-with different performance trade-offs, benchmarked against hashbrown and std::BTreeMap.
+A Rust library providing multiple hash map and sorted map implementations with different performance trade-offs, benchmarked against hashbrown and std::BTreeMap.
 
 ## Designs at a Glance
 
 | Design | Key Idea | Best At |
-|--------|----------|---------|
+| --- | --- | --- |
 | **UnorderedFlatMap** | 15-slot groups, overflow byte | High-load miss, churn |
 | **Splitsies** | 16-slot, separate overflow array | Balanced (miss + insert), tombstone-free |
 | **InPlaceOverflow** | 16-slot Swiss-table style | Lookup hit, insert |

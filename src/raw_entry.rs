@@ -322,12 +322,7 @@ where
     /// Insert `(key, value)` with a caller-supplied hash. The hash must equal
     /// what the map's hasher would produce; otherwise the entry will not be
     /// findable by `get`.
-    pub fn insert_hashed_nocheck(
-        self,
-        hash: u64,
-        key: K,
-        value: V,
-    ) -> (&'a mut K, &'a mut V) {
+    pub fn insert_hashed_nocheck(self, hash: u64, key: K, value: V) -> (&'a mut K, &'a mut V) {
         self.map.table.ensure_capacity(&self.map.hash_builder);
         let (gi, si) = self.map.table.insert_no_check(hash, key, value);
         // Extract both raw pointers under shared borrows of `self.map.table`,

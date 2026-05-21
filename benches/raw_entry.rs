@@ -27,12 +27,12 @@
 
 use std::hash::BuildHasher;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use optimap::raw_entry::RawEntryMut;
 use optimap::Splitsies;
+use optimap::raw_entry::RawEntryMut;
 
 const MEDIUM_CAPACITY: usize = 13_440;
 const LARGE_CAPACITY: usize = 107_520;
@@ -107,10 +107,7 @@ fn bench_lookup_hit(c: &mut Criterion) {
                 b.iter(|| {
                     let mut sum: u64 = 0;
                     for (h, k) in hashes.iter().zip(keys) {
-                        let (_, v) = map
-                            .raw_entry()
-                            .from_key_hashed_nocheck(*h, k)
-                            .unwrap();
+                        let (_, v) = map.raw_entry().from_key_hashed_nocheck(*h, k).unwrap();
                         sum = sum.wrapping_add(*v);
                     }
                     sum

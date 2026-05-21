@@ -12,8 +12,7 @@ pub type DefaultHashBuilder = generic_map::DefaultHashBuilder;
 ///
 /// Like UFM but wastes 1 slot per group for faster bucket indexing (shift
 /// instead of multiply-by-15). Tombstone-free deletion. Best at iteration.
-pub type Gaps<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V, GapsLayout>>;
+pub type Gaps<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V, GapsLayout>>;
 
 // Re-export entry types
 pub type Entry<'a, K, V, S = DefaultHashBuilder> =

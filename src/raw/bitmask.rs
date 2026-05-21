@@ -17,11 +17,17 @@ pub struct BitMask(pub u16);
 
 impl BitMask {
     #[inline]
-    pub fn any_set(self) -> bool { self.0 != 0 }
+    pub fn any_set(self) -> bool {
+        self.0 != 0
+    }
 
     #[inline]
     pub fn lowest_set_bit(self) -> Option<usize> {
-        if self.0 == 0 { None } else { Some(self.0.trailing_zeros() as usize) }
+        if self.0 == 0 {
+            None
+        } else {
+            Some(self.0.trailing_zeros() as usize)
+        }
     }
 }
 
@@ -40,8 +46,14 @@ impl Iterator for BitMask {
 }
 
 impl BitMaskOps for BitMask {
-    #[inline] fn any_set(self) -> bool { self.any_set() }
-    #[inline] fn lowest_set_bit(self) -> Option<usize> { self.lowest_set_bit() }
+    #[inline]
+    fn any_set(self) -> bool {
+        self.any_set()
+    }
+    #[inline]
+    fn lowest_set_bit(self) -> Option<usize> {
+        self.lowest_set_bit()
+    }
 }
 
 /// 32-bit bitmask: 32-slot (AVX2) groups.
@@ -50,11 +62,17 @@ pub struct BitMask32(pub u32);
 
 impl BitMask32 {
     #[inline]
-    pub fn any_set(self) -> bool { self.0 != 0 }
+    pub fn any_set(self) -> bool {
+        self.0 != 0
+    }
 
     #[inline]
     pub fn lowest_set_bit(self) -> Option<usize> {
-        if self.0 == 0 { None } else { Some(self.0.trailing_zeros() as usize) }
+        if self.0 == 0 {
+            None
+        } else {
+            Some(self.0.trailing_zeros() as usize)
+        }
     }
 }
 
@@ -73,8 +91,14 @@ impl Iterator for BitMask32 {
 }
 
 impl BitMaskOps for BitMask32 {
-    #[inline] fn any_set(self) -> bool { self.any_set() }
-    #[inline] fn lowest_set_bit(self) -> Option<usize> { self.lowest_set_bit() }
+    #[inline]
+    fn any_set(self) -> bool {
+        self.any_set()
+    }
+    #[inline]
+    fn lowest_set_bit(self) -> Option<usize> {
+        self.lowest_set_bit()
+    }
 }
 
 /// 64-bit bitmask: 64-slot (AVX-512 / tiered fallback) groups.
@@ -83,11 +107,17 @@ pub struct BitMask64(pub u64);
 
 impl BitMask64 {
     #[inline]
-    pub fn any_set(self) -> bool { self.0 != 0 }
+    pub fn any_set(self) -> bool {
+        self.0 != 0
+    }
 
     #[inline]
     pub fn lowest_set_bit(self) -> Option<usize> {
-        if self.0 == 0 { None } else { Some(self.0.trailing_zeros() as usize) }
+        if self.0 == 0 {
+            None
+        } else {
+            Some(self.0.trailing_zeros() as usize)
+        }
     }
 }
 
@@ -106,8 +136,14 @@ impl Iterator for BitMask64 {
 }
 
 impl BitMaskOps for BitMask64 {
-    #[inline] fn any_set(self) -> bool { self.any_set() }
-    #[inline] fn lowest_set_bit(self) -> Option<usize> { self.lowest_set_bit() }
+    #[inline]
+    fn any_set(self) -> bool {
+        self.any_set()
+    }
+    #[inline]
+    fn lowest_set_bit(self) -> Option<usize> {
+        self.lowest_set_bit()
+    }
 }
 
 #[cfg(test)]

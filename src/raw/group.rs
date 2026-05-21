@@ -221,14 +221,22 @@ mod tests {
 
     impl std::ops::Deref for AlignedGroup {
         type Target = [u8; META_GROUP_BYTES];
-        fn deref(&self) -> &Self::Target { &self.0 }
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
     }
     impl std::ops::DerefMut for AlignedGroup {
-        fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
     }
     impl AlignedGroup {
-        fn as_ptr(&self) -> *const u8 { self.0.as_ptr() }
-        fn as_mut_ptr(&mut self) -> *mut u8 { self.0.as_mut_ptr() }
+        fn as_ptr(&self) -> *const u8 {
+            self.0.as_ptr()
+        }
+        fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr()
+        }
     }
 
     fn make_aligned() -> AlignedGroup {

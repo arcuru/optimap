@@ -77,7 +77,10 @@ fn from_key_hashed_nocheck_read() {
         let miss = map
             .raw_entry()
             .from_key_hashed_nocheck(h ^ 0xDEAD_BEEF, "hello");
-        assert!(miss.is_none(), "wrong hash must miss on a multi-group table");
+        assert!(
+            miss.is_none(),
+            "wrong hash must miss on a multi-group table"
+        );
     });
 }
 
@@ -173,9 +176,15 @@ fn mut_occupied_remove_entry() {
 #[test]
 fn or_insert_branches() {
     for_each_map!(map, {
-        let (_, v) = map.raw_entry_mut().from_key("a").or_insert("a".to_string(), 1);
+        let (_, v) = map
+            .raw_entry_mut()
+            .from_key("a")
+            .or_insert("a".to_string(), 1);
         assert_eq!(*v, 1);
-        let (_, v) = map.raw_entry_mut().from_key("a").or_insert("a".to_string(), 999);
+        let (_, v) = map
+            .raw_entry_mut()
+            .from_key("a")
+            .or_insert("a".to_string(), 999);
         assert_eq!(*v, 1, "or_insert must not overwrite occupied");
     });
 }
@@ -293,8 +302,16 @@ fn remove_entry_drops_exactly_once() {
         assert_eq!(v.0, 10);
         // v drops at end of scope → +1 drop.
     }
-    assert_eq!(DROPS.load(Ordering::SeqCst), 1, "removed value dropped once");
+    assert_eq!(
+        DROPS.load(Ordering::SeqCst),
+        1,
+        "removed value dropped once"
+    );
 
     drop(map); // remaining entry drops → +1 drop.
-    assert_eq!(DROPS.load(Ordering::SeqCst), 2, "remaining value dropped on map drop");
+    assert_eq!(
+        DROPS.load(Ordering::SeqCst),
+        2,
+        "remaining value dropped on map drop"
+    );
 }

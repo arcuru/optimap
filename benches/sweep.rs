@@ -218,22 +218,22 @@ fn design_active(name: &str, cluster: Cluster, width: Width, config: &Config) ->
 /// (254) has one more bit of tag entropy. Other clusters use a single rep.
 const CURATED_NAMES: &[&str] = &[
     // Tomb cluster (16-slot tombstone, 4 reps)
-    "Tomb",         // was Byte7_128_Tomb — 128-value tag (hashbrown-equivalent)
-    "TombWide",     // was IPO           — 254-value tag (wider, more entropy)
-    "Tomb64",       // was IPO64         — 64-slot AVX-512 tomb
-    "TombSoa",      // was SoaIpo        — SoA flavor of Tomb
+    "Tomb",     // was Byte7_128_Tomb — 128-value tag (hashbrown-equivalent)
+    "TombWide", // was IPO           — 254-value tag (wider, more entropy)
+    "Tomb64",   // was IPO64         — 64-slot AVX-512 tomb
+    "TombSoa",  // was SoaIpo        — SoA flavor of Tomb
     // OvInline family (15-slot embedded overflow byte)
     "OvInline",     // was UFM           — canonical embedded-overflow
     "OvInlineGaps", // was Gaps          — UFM variant w/ power-of-2 stride
     "OvInline32",   // was Ufm32         — 32-slot AVX2 variant
     // OvSplit (16-slot separate-overflow rep)
-    "OvSplit",      // was Splitsies     — separate-overflow channel array
+    "OvSplit", // was Splitsies     — separate-overflow channel array
     // Sorted cluster
-    "FlatBTree",    // arena-based B+ tree
-    "std::BTreeMap",// std baseline
+    "FlatBTree",     // arena-based B+ tree
+    "std::BTreeMap", // std baseline
     // External baseline + wrapper
     "hashbrown",
-    "OptiMap",      // Auto policy
+    "OptiMap", // Auto policy
 ];
 
 // ── N-point generation ──────────────────────────────────────────────────────

@@ -347,7 +347,9 @@ impl<T: Hash + Eq, M: HashedMap<T, ()>> IntoIterator for GenericSet<T, M> {
 
 // ── Bitwise operators (std::HashSet parity) ─────────────────────────────────
 
-impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitOr<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitOr<&GenericSet<T, M>>
+    for &GenericSet<T, M>
+{
     type Output = GenericSet<T, M>;
     /// Union: `a | b`.
     fn bitor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -355,7 +357,9 @@ impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitOr<&GenericSet<T, M
     }
 }
 
-impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitAnd<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitAnd<&GenericSet<T, M>>
+    for &GenericSet<T, M>
+{
     type Output = GenericSet<T, M>;
     /// Intersection: `a & b`.
     fn bitand(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -363,7 +367,9 @@ impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitAnd<&GenericSet<T, 
     }
 }
 
-impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitXor<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitXor<&GenericSet<T, M>>
+    for &GenericSet<T, M>
+{
     type Output = GenericSet<T, M>;
     /// Symmetric difference: `a ^ b`.
     fn bitxor(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {
@@ -371,7 +377,9 @@ impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::BitXor<&GenericSet<T, 
     }
 }
 
-impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::Sub<&GenericSet<T, M>> for &GenericSet<T, M> {
+impl<T: Hash + Eq + Clone, M: HashedMap<T, ()>> std::ops::Sub<&GenericSet<T, M>>
+    for &GenericSet<T, M>
+{
     type Output = GenericSet<T, M>;
     /// Difference: `a - b`.
     fn sub(self, rhs: &GenericSet<T, M>) -> GenericSet<T, M> {

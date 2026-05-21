@@ -1,5 +1,7 @@
 use optimap::matrix_types::{Byte0_254_TombMap, Byte2_254_TombMap, Byte7_254_Tomb64Map};
-use optimap::{Gaps, HashedMap, IPO64, InPlaceOverflow, OccupiedError, Splitsies, UnorderedFlatMap};
+use optimap::{
+    Gaps, HashedMap, IPO64, InPlaceOverflow, OccupiedError, Splitsies, UnorderedFlatMap,
+};
 use proptest::prelude::*;
 use std::collections::HashMap;
 

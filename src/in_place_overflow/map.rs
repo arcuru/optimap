@@ -2,8 +2,8 @@
 //!
 //! This is a type alias for `GenericMap` with the IPO raw table.
 
-use crate::generic_map::{self, GenericMap};
 use super::raw::RawTable;
+use crate::generic_map::{self, GenericMap};
 
 pub type DefaultHashBuilder = generic_map::DefaultHashBuilder;
 
@@ -11,12 +11,10 @@ pub type DefaultHashBuilder = generic_map::DefaultHashBuilder;
 ///
 /// Similar to hashbrown's Swiss table but with 8-bit hash values (254 values)
 /// instead of 7-bit (128). Best at lookup hit and insert.
-pub type InPlaceOverflow<K, V, S = DefaultHashBuilder> =
-    GenericMap<K, V, S, RawTable<K, V>>;
+pub type InPlaceOverflow<K, V, S = DefaultHashBuilder> = GenericMap<K, V, S, RawTable<K, V>>;
 
 // Re-export entry types
-pub type Entry<'a, K, V, S = DefaultHashBuilder> =
-    generic_map::Entry<'a, K, V, S, RawTable<K, V>>;
+pub type Entry<'a, K, V, S = DefaultHashBuilder> = generic_map::Entry<'a, K, V, S, RawTable<K, V>>;
 pub type OccupiedEntry<'a, K, V> = generic_map::OccupiedEntry<'a, K, V>;
 pub type VacantEntry<'a, K, V, S = DefaultHashBuilder> =
     generic_map::VacantEntry<'a, K, V, S, RawTable<K, V>>;

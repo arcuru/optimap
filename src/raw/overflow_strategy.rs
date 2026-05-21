@@ -32,7 +32,12 @@ pub trait OverflowStrategy: 'static + Copy {
     ///
     /// # Safety
     /// `metadata` must point to a valid allocation.
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8;
+    unsafe fn overflow_ptr(
+        metadata: *mut u8,
+        mask: usize,
+        gi: usize,
+        meta_stride: usize,
+    ) -> *mut u8;
 
     /// Check if overflow is set for the given channel.
     /// For 1-bit: `channel` is ignored; checks the group's single bit.
@@ -77,7 +82,12 @@ impl OverflowStrategy for ByteSeparate {
     }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+    unsafe fn overflow_ptr(
+        metadata: *mut u8,
+        mask: usize,
+        gi: usize,
+        meta_stride: usize,
+    ) -> *mut u8 {
         unsafe { metadata.add((mask + 1) * meta_stride + gi) }
     }
 
@@ -88,7 +98,9 @@ impl OverflowStrategy for ByteSeparate {
 
     #[inline(always)]
     unsafe fn set_overflow(ptr: *mut u8, _gi: usize, channel: u8) {
-        unsafe { *ptr |= channel; }
+        unsafe {
+            *ptr |= channel;
+        }
     }
 }
 
@@ -126,7 +138,12 @@ impl OverflowStrategy for BitSeparate {
     }
 
     #[inline(always)]
-    unsafe fn overflow_ptr(metadata: *mut u8, mask: usize, gi: usize, meta_stride: usize) -> *mut u8 {
+    unsafe fn overflow_ptr(
+        metadata: *mut u8,
+        mask: usize,
+        gi: usize,
+        meta_stride: usize,
+    ) -> *mut u8 {
         unsafe { metadata.add((mask + 1) * meta_stride + (gi >> 3)) }
     }
 
@@ -137,6 +154,8 @@ impl OverflowStrategy for BitSeparate {
 
     #[inline(always)]
     unsafe fn set_overflow(ptr: *mut u8, gi: usize, _channel: u8) {
-        unsafe { *ptr |= 1 << (gi & 7); }
+        unsafe {
+            *ptr |= 1 << (gi & 7);
+        }
     }
 }

@@ -337,7 +337,11 @@ fn soa_map_matches_std_hashmap() {
     }
 
     for (k, v) in &std_map {
-        assert_eq!(ours.get(k), Some(v), "final check: key {k} missing or wrong");
+        assert_eq!(
+            ours.get(k),
+            Some(v),
+            "final check: key {k} missing or wrong"
+        );
     }
 }
 
@@ -477,9 +481,9 @@ fn raw_entry_from_hash_custom_eq() {
             .map(|(k, _)| k.clone())
             .unwrap();
         let h = map.hasher().hash_one(&target_key);
-        let found = map.raw_entry().from_hash(h, |stored| {
-            stored.as_bytes().first() == Some(&first)
-        });
+        let found = map
+            .raw_entry()
+            .from_hash(h, |stored| stored.as_bytes().first() == Some(&first));
         assert!(
             found.is_some(),
             "from_hash with first-byte eq missed for first=0x{first:02x}"

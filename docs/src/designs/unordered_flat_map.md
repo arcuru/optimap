@@ -1,10 +1,8 @@
 # UnorderedFlatMap
 
-Based on the design described in
-[Inside boost::unordered_flat_map](https://bannalia.blogspot.com/2022/11/inside-boostunorderedflatmap.html).
+Based on the design described in [Inside boost::unordered_flat_map](https://bannalia.blogspot.com/2022/11/inside-boostunorderedflatmap.html).
 
-An open-addressing hash table storing elements contiguously in a flat bucket array,
-with a companion SIMD metadata array that accelerates lookup, insertion, and deletion.
+An open-addressing hash table storing elements contiguously in a flat bucket array, with a companion SIMD metadata array that accelerates lookup, insertion, and deletion.
 
 ## Memory Layout
 
@@ -22,27 +20,21 @@ Bucket array:  2^n  ×  15  slots  (key,value)
 
 ### Constants
 
-| Name | Value | Meaning |
-|------|-------|---------|
-| `GROUP_SIZE` | 15 | Buckets per group |
-| `META_GROUP_SIZE` | 16 | 15 hash bytes + 1 overflow byte |
-| `EMPTY` | 0x00 | Slot is vacant |
-| `SENTINEL` | 0x01 | Iteration terminator (placed after last group) |
-| `MIN_HASH` | 0x02 | Lowest valid reduced-hash value |
+| Name              | Value | Meaning                                        |
+| ----------------- | ----- | ---------------------------------------------- |
+| `GROUP_SIZE`      | 15    | Buckets per group                              |
+| `META_GROUP_SIZE` | 16    | 15 hash bytes + 1 overflow byte                |
+| `EMPTY`           | 0x00  | Slot is vacant                                 |
+| `SENTINEL`        | 0x01  | Iteration terminator (placed after last group) |
+| `MIN_HASH`        | 0x02  | Lowest valid reduced-hash value                |
 
 ### Metadata Byte Encoding
 
-Each occupied bucket stores a reduced hash in `[1, 255]`, derived from the LSB
-of the full hash via a saturating increment (`cmp 0xFF; adc 0` on x86_64).
-Only 0x00 is reserved (EMPTY sentinel). The overflow bit is computed from the
-raw hash (`1 << (h & 7)`), not from the reduced hash — the two are independent.
+Each occupied bucket stores a reduced hash in `[1, 255]`, derived from the LSB of the full hash via a saturating increment (`cmp 0xFF; adc 0` on x86_64). Only 0x00 is reserved (EMPTY sentinel). The overflow bit is computed from the raw hash (`1 << (h & 7)`), not from the reduced hash — the two are independent.
 
 ### Overflow Byte
 
-Each group has a single overflow byte. Bit `i` (0..7) is set when an element whose
-`hash % 8 == i` was displaced from this group to a later group during insertion.
-During lookup, if the overflow bit for the query's `hash % 8` is **not** set,
-probing stops immediately.
+Each group has a single overflow byte. Bit `i` (0..7) is set when an element whose `hash % 8 == i` was displaced from this group to a later group during insertion. During lookup, if the overflow bit for the query's `hash % 8` is **not** set, probing stops immediately.
 
 ## Algorithms
 
@@ -102,8 +94,7 @@ The fast path handles >85% of inserts at typical load factors with one SIMD load
 - `_mm_cmpeq_epi8` — compare all 16 bytes at once
 - `_mm_movemask_epi8` — extract comparison result as bitmask
 
-The fused insert path uses `match_byte_and_empty`: one aligned load, two compares,
-two movemasks — yielding both key-match and empty-slot bitmasks from one memory access.
+The fused insert path uses `match_byte_and_empty`: one aligned load, two compares, two movemasks — yielding both key-match and empty-slot bitmasks from one memory access.
 
 ### aarch64 (NEON)
 
@@ -129,9 +120,6 @@ padding:            (4)
 
 ## Key Trade-offs
 
-- **15-slot groups** waste one SIMD lane on the overflow byte, requiring a
-  `& 0x7FFF` mask after movemask
-- **Bucket addressing** uses `gi * 15 + si` (multiply by non-power-of-2)
-  instead of a shift — costs ~2-3 extra instructions per element
-- **Two separate allocations** (metadata + buckets) avoid the 1M insert
-  regression seen with single allocation, at the cost of an extra pointer
+- **15-slot groups** waste one SIMD lane on the overflow byte, requiring a `& 0x7FFF` mask after movemask
+- **Bucket addressing** uses `gi * 15 + si` (multiply by non-power-of-2) instead of a shift — costs ~2-3 extra instructions per element
+- **Two separate allocations** (metadata + buckets) avoid the 1M insert regression seen with single allocation, at the cost of an extra pointer

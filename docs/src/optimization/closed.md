@@ -1,8 +1,6 @@
 # Closed Investigations
 
-These performance gaps have been thoroughly investigated across multiple designs
-and proven to be structural. Further optimization attempts are unlikely to yield
-improvements without fundamental design changes.
+These performance gaps have been thoroughly investigated across multiple designs and proven to be structural. Further optimization attempts are unlikely to yield improvements without fundamental design changes.
 
 ---
 
@@ -10,22 +8,17 @@ improvements without fundamental design changes.
 
 **Status: CLOSED — structural overhead, not fixable within current designs**
 
-The lookup hit gap is constant across all load factors and table sizes. It comes
-from per-probe overhead that is inherent to the overflow-bit group design:
+The lookup hit gap is constant across all load factors and table sizes. It comes from per-probe overhead that is inherent to the overflow-bit group design:
 
-1. **15-slot groups** (UFM, Gaps): Waste one SIMD lane on the overflow byte,
-   requiring `& 0x7FFF` after movemask. hashbrown uses all 16 bytes for hash values.
-2. **Overflow-bit bookkeeping**: Computing `overflow_bit = 1 << (h % 8)` on every
-   probe step, even though it's unused on the hit path.
-3. **Bucket addressing**: `gi * 15 + si` (UFM) requires multiply-by-15 vs
-   hashbrown's flat index. Splitsies fixes this with `(gi << 4) | si`.
-4. **Wider metadata reads**: hashbrown's inner loop is extremely tight: one aligned
-   `_mm_load_si128`, one `_mm_cmpeq_epi8`, one `_mm_movemask_epi8`, mask to 14 bits.
+1. **15-slot groups** (UFM, Gaps): Waste one SIMD lane on the overflow byte, requiring `& 0x7FFF` after movemask. hashbrown uses all 16 bytes for hash values.
+2. **Overflow-bit bookkeeping**: Computing `overflow_bit = 1 << (h % 8)` on every probe step, even though it's unused on the hit path.
+3. **Bucket addressing**: `gi * 15 + si` (UFM) requires multiply-by-15 vs hashbrown's flat index. Splitsies fixes this with `(gi << 4) | si`.
+4. **Wider metadata reads**: hashbrown's inner loop is extremely tight: one aligned `_mm_load_si128`, one `_mm_cmpeq_epi8`, one `_mm_movemask_epi8`, mask to 14 bits.
 
 ### Attempts to close this gap
 
 | Attempt | Design | Result | Why it failed |
-|---------|--------|--------|---------------|
+| --- | --- | --- | --- |
 | **#7: Initial bucket prefetch** | UFM | -11% hit, +21% miss | Cache pollution on miss path. Wasted prefetch for elements not in the table. |
 | **#11: Conditional prefetch** (only on SIMD match) | UFM | No improvement | Branch overhead (~5-10 cycles to resolve) > cost of wasted prefetch (~1 cycle). Adding a conditional made the hit path slower, not faster. |
 | **#18: Inline home-group + cold continuation** | UFM | +10-14% hit regression | `#[inline(never)]` on overflow continuation forced register save/restore at the call boundary. Register pressure degraded the hot path even though the cold path is rarely taken. |
@@ -38,67 +31,48 @@ from per-probe overhead that is inherent to the overflow-bit group design:
 
 ### Sweep benchmark analysis (April 2025)
 
-A continuous N-sweep benchmark (100 to 10M, 362 points, 5 trials/point, median)
-confirmed the gap structure with high resolution:
+A continuous N-sweep benchmark (100 to 10M, 362 points, 5 trials/point, median) confirmed the gap structure with high resolution:
 
-| N range | IPO vs hashbrown (hit) | IPO vs hashbrown (miss) |
-|---------|:----------------------:|:-----------------------:|
-| <10k | 1.03-1.05x | 1.29-1.39x |
-| 10k-100k | 1.03-1.12x | 0.95-1.08x (load-dependent) |
-| 100k-1M | 1.11-1.13x | 0.97-1.05x |
-| >1M | 1.11x | ~1.05x |
+| N range  | IPO vs hashbrown (hit) |   IPO vs hashbrown (miss)   |
+| -------- | :--------------------: | :-------------------------: |
+| <10k     |       1.03-1.05x       |         1.29-1.39x          |
+| 10k-100k |       1.03-1.12x       | 0.95-1.08x (load-dependent) |
+| 100k-1M  |       1.11-1.13x       |         0.97-1.05x          |
+| >1M      |         1.11x          |           ~1.05x            |
 
-The miss gap at small N (1.3-1.4x) is due to hashbrown's tighter miss hot path:
-`Tag::full()` = pure shift+mask vs `reduced_hash()` = mask + conditional cmov.
-At higher load (50k+), overflow-bit designs recover and sometimes win.
+The miss gap at small N (1.3-1.4x) is due to hashbrown's tighter miss hot path: `Tag::full()` = pure shift+mask vs `reduced_hash()` = mask + conditional cmov. At higher load (50k+), overflow-bit designs recover and sometimes win.
 
 ### Tag extraction: why we can't match hashbrown's 2-instruction path
 
-hashbrown's `Tag::full(hash)` = `(hash >> 57) & 0x7F` — 2 instructions (shift + and).
-This works because hashbrown reserves the MSB: full tags are 0x00-0x7F (128 values),
-EMPTY=0xFF and DELETED=0x80 both have bit 7 set.
+hashbrown's `Tag::full(hash)` = `(hash >> 57) & 0x7F` — 2 instructions (shift + and). This works because hashbrown reserves the MSB: full tags are 0x00-0x7F (128 values), EMPTY=0xFF and DELETED=0x80 both have bit 7 set.
 
-Our IPO/IPO64 `reduced_hash(h)` reserves 0x00 (EMPTY) and 0x01 (TOMBSTONE), giving
-254 usable values (2-255). Avoiding those two values costs 5 instructions
-(`mov; or; cmp; movzbl; cmov`). Alternatives considered:
+Our IPO/IPO64 `reduced_hash(h)` reserves 0x00 (EMPTY) and 0x01 (TOMBSTONE), giving 254 usable values (2-255). Avoiding those two values costs 5 instructions (`mov; or; cmp; movzbl; cmov`). Alternatives considered:
 
 | Approach | Instructions | Distinct values | Problem |
-|----------|:-----------:|:---------------:|---------|
+| --- | :-: | :-: | --- |
 | `(h >> 57) & 0x7F` (hashbrown) | 2 | 128 | Halves our hash discrimination |
 | `(h & 0xFF) \| 2` | 2 | 128 | Sets bit 1, collapsing half the inputs — same 128 values as hashbrown |
 | `(h & 0xFF).saturating_add(2)` | 4 | 254 | Still needs a cmov (clamp to 255) |
 | `if low < 2 { low + 2 }` (current) | 5 | 254 | cmov, but preserves all 254 values |
 
-The 254 vs 128 value tradeoff matters: more distinct hash values = fewer false-positive
-SIMD matches = fewer wasted key comparisons. At 254 values the false-match probability
-per slot is 1/254 (~0.39%); at 128 it's 1/128 (~0.78%) — double the collision rate.
-This is why our insert is faster than hashbrown despite the slower tag extraction.
+The 254 vs 128 value tradeoff matters: more distinct hash values = fewer false-positive SIMD matches = fewer wasted key comparisons. At 254 values the false-match probability per slot is 1/254 (~0.39%); at 128 it's 1/128 (~0.78%) — double the collision rate. This is why our insert is faster than hashbrown despite the slower tag extraction.
 
-The overflow-bit designs (UFM, Gaps, Splitsies) only reserve 0x00 (EMPTY), giving 255
-values. Their `reduced_hash` uses a saturating increment via inline asm (`cmp 0xFF;
-adc 0`) — 2 instructions, no cmov. See [Hash Tag Optimization](#hash-tag-optimization)
-below for the full investigation.
+The overflow-bit designs (UFM, Gaps, Splitsies) only reserve 0x00 (EMPTY), giving 255 values. Their `reduced_hash` uses a saturating increment via inline asm (`cmp 0xFF; adc 0`) — 2 instructions, no cmov. See [Hash Tag Optimization](#hash-tag-optimization) below for the full investigation.
 
 ### Why further attempts are unlikely to help
 
-The hit gap is fundamentally about **per-probe instruction count**. hashbrown's probe
-loop is ~6 instructions (load, compare, movemask, mask, branch, trailing_zeros).
-Ours is ~9-11 instructions (same, plus overflow bit computation, wider mask, and
-non-power-of-2 bucket arithmetic).
+The hit gap is fundamentally about **per-probe instruction count**. hashbrown's probe loop is ~6 instructions (load, compare, movemask, mask, branch, trailing_zeros). Ours is ~9-11 instructions (same, plus overflow bit computation, wider mask, and non-power-of-2 bucket arithmetic).
 
 Every attempt to reduce this count has either:
+
 - **Moved work off the hot path** → it ended up on the miss path (serial dependency)
 - **Added speculative work** (prefetch) → cache pollution on misses
 - **Split the function** (inline + cold) → register pressure at the boundary
 - **Removed branches** (sentinel, find_bucket) → branches were already predicted, LLVM already optimizing
 
-The only way to close this gap is to eliminate the overflow byte entirely (which
-loses O(1) miss termination) or switch to 16-slot groups (which Splitsies does,
-getting the gap down to 1.11x — the remaining overhead is the separate overflow
-array access).
+The only way to close this gap is to eliminate the overflow byte entirely (which loses O(1) miss termination) or switch to 16-slot groups (which Splitsies does, getting the gap down to 1.11x — the remaining overhead is the separate overflow array access).
 
-**InPlaceOverflow (IPO) achieves ~1.03x** on hits at small N by dropping the overflow
-design entirely and using tombstones like hashbrown, but with 254 hash values vs 128.
+**InPlaceOverflow (IPO) achieves ~1.03x** on hits at small N by dropping the overflow design entirely and using tombstones like hashbrown, but with 254 hash values vs 128.
 
 ---
 
@@ -106,14 +80,12 @@ design entirely and using tombstones like hashbrown, but with 254 hash values vs
 
 **Status: CLOSED — no universal policy exists**
 
-We removed all manual prefetching (#14) because miss improvement (-27% at 1M)
-outweighed hit regression (+18% at 1M). This trades ~18% on hits at 1M scale
-for a large miss improvement.
+We removed all manual prefetching (#14) because miss improvement (-27% at 1M) outweighed hit regression (+18% at 1M). This trades ~18% on hits at 1M scale for a large miss improvement.
 
 ### What was explored
 
 | Approach | Result |
-|----------|--------|
+| --- | --- |
 | **Unconditional prefetch** (#7) | -11% hit, +21% miss |
 | **No prefetch** (#14) | +18% hit at 1M, -27% miss at 1M |
 | **Conditional prefetch** (#11) | Worse than unconditional (branch overhead) |
@@ -122,26 +94,18 @@ for a large miss improvement.
 
 ### Why adaptive prefetch was not pursued
 
-The idea of tracking hit/miss ratio at runtime and toggling prefetch behavior was
-considered (FUTURE.md item #5). It was not pursued because:
+The idea of tracking hit/miss ratio at runtime and toggling prefetch behavior was considered (FUTURE.md item #5). It was not pursued because:
 
-1. **Counter overhead**: Even a simple counter checked every N ops adds a branch and
-   memory write to the hot path
-2. **Hysteresis**: The optimal prefetch policy depends on the *upcoming* access pattern,
-   not the historical one. A workload that transitions from hit-heavy to miss-heavy
-   would suffer during the detection lag.
-3. **Existing solution**: Users who know their workload is hit-dominated can use
-   InPlaceOverflow (IPO), which has ~1.01x hit performance. The design choice *is*
-   the prefetch policy.
+1. **Counter overhead**: Even a simple counter checked every N ops adds a branch and memory write to the hot path
+2. **Hysteresis**: The optimal prefetch policy depends on the _upcoming_ access pattern, not the historical one. A workload that transitions from hit-heavy to miss-heavy would suffer during the detection lag.
+3. **Existing solution**: Users who know their workload is hit-dominated can use InPlaceOverflow (IPO), which has ~1.01x hit performance. The design choice _is_ the prefetch policy.
 
 ### Why user-selectable prefetch policy was not pursued
 
-A compile-time or runtime flag could let users opt into bucket prefetch. Not
-implemented because:
+A compile-time or runtime flag could let users opt into bucket prefetch. Not implemented because:
 
 1. **API complexity**: Adds a non-obvious knob that requires benchmarking to tune
-2. **The right answer is design selection**: IPO for hit-heavy, Splitsies for
-   balanced, UFM for miss/churn-heavy. The Map trait makes switching easy.
+2. **The right answer is design selection**: IPO for hit-heavy, Splitsies for balanced, UFM for miss/churn-heavy. The Map trait makes switching easy.
 
 ---
 
@@ -154,35 +118,28 @@ implemented because:
 Measured probe chain statistics:
 
 | Load % | Full groups | Home-group hit rate |
-|-------:|------------:|--------------------:|
-| 45% | 0.4% | 99.6% |
-| 65% | 7.1% | 92.9% |
-| 85% | 30.0% | 70.0% |
+| -----: | ----------: | ------------------: |
+|    45% |        0.4% |               99.6% |
+|    65% |        7.1% |               92.9% |
+|    85% |       30.0% |               70.0% |
 
-**For probing**: AVX2 could combine two SIMD comparisons into one 256-bit operation,
-but the quadratic probe sequence visits non-adjacent groups. Would need two separate
-16-byte loads combined via `_mm256_set_m128i`, saving one cmpeq+movemask but adding
-a combine. At 65% load, 93% of operations resolve in the home group — AVX2 can't
-help there.
+**For probing**: AVX2 could combine two SIMD comparisons into one 256-bit operation, but the quadratic probe sequence visits non-adjacent groups. Would need two separate 16-byte loads combined via `_mm256_set_m128i`, saving one cmpeq+movemask but adding a combine. At 65% load, 93% of operations resolve in the home group — AVX2 can't help there.
 
-**For iteration**: AVX2 would halve SIMD metadata loads (one 32-byte load → two groups).
-But iteration at small-medium sizes is bottlenecked by bucket access (pointer arithmetic
-+ memory loads), not metadata SIMD loads. At 1M+ it's already memory-bound (we tie
-hashbrown).
+**For iteration**: AVX2 would halve SIMD metadata loads (one 32-byte load → two groups). But iteration at small-medium sizes is bottlenecked by bucket access (pointer arithmetic
+
+- memory loads), not metadata SIMD loads. At 1M+ it's already memory-bound (we tie hashbrown).
 
 **Additional concerns**:
+
 - Runtime feature detection adds a branch on every call
 - AVX2 can cause frequency throttling on some Intel CPUs
 - Code complexity doubles (SSE2 + AVX2 paths)
 
 ### AVX-512 for IPO64
 
-AVX-512 *was* implemented for IPO64 (#2 in IPO64 log) because 64-slot groups
-naturally map to a single 512-bit load. This reduced SIMD ops from 14 to 3 per
-probe step, with dispatch at the find_by_hash entry point.
+AVX-512 _was_ implemented for IPO64 (#2 in IPO64 log) because 64-slot groups naturally map to a single 512-bit load. This reduced SIMD ops from 14 to 3 per probe step, with dispatch at the find_by_hash entry point.
 
-For 16-slot groups (UFM, Splitsies, IPO), AVX-512 offers no benefit: a single
-SSE2 128-bit load already covers the full 16-byte metadata group.
+For 16-slot groups (UFM, Splitsies, IPO), AVX-512 offers no benefit: a single SSE2 128-bit load already covers the full 16-byte metadata group.
 
 ---
 
@@ -190,34 +147,28 @@ SSE2 128-bit load already covers the full 16-byte metadata group.
 
 **Status: RESOLVED — inline asm saturating add is the default**
 
-The overflow-bit designs (UFM, Gaps, Splitsies) reserve only 0x00 as EMPTY,
-needing a function that maps 256 input bytes to 255 usable tag values [1, 255].
+The overflow-bit designs (UFM, Gaps, Splitsies) reserve only 0x00 as EMPTY, needing a function that maps 256 input bytes to 255 usable tag values [1, 255].
 
 ### The fundamental constraint
 
-With 2 standard ALU instructions (no cmov/flags), it is impossible to get more
-than 128 distinct values while excluding a sentinel. Any 2-instruction sequence
-is either a bijection (must produce the sentinel for some input) or lossy
-(collapses to ≤128 values via AND/OR/shift). Getting 255 values requires a
-conditional (cmov or sete), which costs extra instructions.
+With 2 standard ALU instructions (no cmov/flags), it is impossible to get more than 128 distinct values while excluding a sentinel. Any 2-instruction sequence is either a bijection (must produce the sentinel for some input) or lossy (collapses to ≤128 values via AND/OR/shift). Getting 255 values requires a conditional (cmov or sete), which costs extra instructions.
 
 ### Implementations benchmarked
 
 Three implementations were created behind crate features:
 
 | Feature | Expression | Instructions | Values | Assembly |
-|---------|-----------|:-----------:|:------:|----------|
+| --- | --- | :-: | :-: | --- |
 | `reduced-hash-asm` **(default)** | saturating add | 2 | 255 | `cmp 0xFF; adc 0` |
 | `reduced-hash-128` | force bit 0 | 1 | 128 | `or 1` |
-| *(none)* | conditional fix-up | 3 | 255 | `test; sete; or` |
+| _(none)_ | conditional fix-up | 3 | 255 | `test; sete; or` |
 
-The inline asm is necessary because LLVM generates a 4-instruction cmov sequence
-for `u8::saturating_add(1)` instead of the 2-instruction `cmp; adc` idiom.
+The inline asm is necessary because LLVM generates a 4-instruction cmov sequence for `u8::saturating_add(1)` instead of the 2-instruction `cmp; adc` idiom.
 
 ### Other approaches considered
 
 | Approach | Result |
-|----------|--------|
+| --- | --- |
 | `(h >> 57) & 0x7F` (hashbrown-style) | 2 instructions, 128 values. Requires EMPTY≠0x00. |
 | `u8::saturating_add(1)` (safe Rust) | LLVM emits `inc; movzbl; mov $0xFF; cmovne` — 4 instructions with cmov. Worse than all three options. |
 | `max(low, 1)` | `cmp; cmov` — 2 instructions but needs constant in register. LLVM emits 3. |
@@ -229,7 +180,7 @@ for `u8::saturating_add(1)` instead of the 2-instruction `cmp; adc` idiom.
 Throughput benchmarks, median µs. Three-way comparison across feature variants:
 
 | Operation | Default (3i/255v) | ASM (2i/255v) | 128-val (1i/128v) |
-|-----------|------------------:|-------------:|-----------------:|
+| --- | --: | --: | --: |
 | lookup_hit UFM/med | 32.2 | **23.9** (-26%) | **22.7** (-30%) |
 | lookup_miss UFM/med | 27.0 | **15.8** (-41%) | **15.8** (-42%) |
 | lookup_hit Gaps/med | 23.7 | 23.3 (-2%) | **22.0** (-7%) |
@@ -240,22 +191,16 @@ Throughput benchmarks, median µs. Three-way comparison across feature variants:
 
 ### UFM codegen effect
 
-The UFM improvements from inline asm (-26% hit, -41% miss) are far too large to
-be explained by saving one instruction. The inline asm acts as an optimization
-barrier that changes how LLVM schedules the surrounding probe loop — the `asm!`
-block prevents LLVM from reordering `reduced_hash` computation relative to the
-SIMD comparison, which accidentally produces better instruction scheduling for
-UFM's 15-slot group layout. Gaps and Splitsies (16-slot groups) show only the
-expected small differences (±2%).
+The UFM improvements from inline asm (-26% hit, -41% miss) are far too large to be explained by saving one instruction. The inline asm acts as an optimization barrier that changes how LLVM schedules the surrounding probe loop — the `asm!` block prevents LLVM from reordering `reduced_hash` computation relative to the SIMD comparison, which accidentally produces better instruction scheduling for UFM's 15-slot group layout. Gaps and Splitsies (16-slot groups) show only the expected small differences (±2%).
 
 ### Decision
 
 `reduced-hash-asm` is the default because:
+
 1. Best overall performance on UFM (large codegen win)
 2. 255 distinct values (no collision-rate penalty vs pure Rust default)
 3. Falls back to pure Rust on non-x86_64 and under Miri
-4. The 128-value variant is slightly faster on lookups but doubles the false-match
-   rate (1/128 vs 1/255), which hurts insert-heavy workloads
+4. The 128-value variant is slightly faster on lookups but doubles the false-match rate (1/128 vs 1/255), which hurts insert-heavy workloads
 
 ---
 
@@ -263,94 +208,44 @@ expected small differences (±2%).
 
 **Status: CLOSED — fundamental tradeoff of arena-based memory layout**
 
-`std::BTreeMap::split_off` beats `FlatBTree::split_off` by ~4× at p050 / 1M
-(symmetric pivot, 1M random-build entries: std 4.0–4.7ms, FlatBTree
-~5.0ms after the bidirectional surgery dispatcher was added; on
-random-build via repeated insert the gap widens to ~5×). The gap closes
-to a tie at extreme pivots (p001/p099 — peeling off the smallest 1% on
-either side) where the surgical-side-of-min walk is dominated by the
-spine descent.
+`std::BTreeMap::split_off` beats `FlatBTree::split_off` by ~4× at p050 / 1M (symmetric pivot, 1M random-build entries: std 4.0–4.7ms, FlatBTree ~5.0ms after the bidirectional surgery dispatcher was added; on random-build via repeated insert the gap widens to ~5×). The gap closes to a tie at extreme pivots (p001/p099 — peeling off the smallest 1% on either side) where the surgical-side-of-min walk is dominated by the spine descent.
 
 ### Why std wins at the symmetric pivot
 
-`std::BTreeMap` stores nodes in `Box<Node>` chains. To split, it walks
-down to the boundary leaf (O(log n)), then on the way back up
-**relinks** subtrees: at each spine level the parent has child-Boxes,
-and the right-side children are *moved* (pointer-swapped) into the new
-right tree's spine. **No node body is ever copied.** Total cost is
-O(log n + spine_repair).
+`std::BTreeMap` stores nodes in `Box<Node>` chains. To split, it walks down to the boundary leaf (O(log n)), then on the way back up **relinks** subtrees: at each spine level the parent has child-Boxes, and the right-side children are _moved_ (pointer-swapped) into the new right tree's spine. **No node body is ever copied.** Total cost is O(log n + spine_repair).
 
-`FlatBTree` stores nodes in a contiguous arena indexed by `NodeIdx`
-(u32). NodeIdx values are arena-scoped, so a node cannot be referenced
-across arenas. Splitting therefore *must* copy the smaller side's nodes
-into a fresh arena (`deep_copy_subtree`), patching child indices as it
-goes. Total cost is O(side_size_in_nodes × node_copy + per-node
-overhead).
+`FlatBTree` stores nodes in a contiguous arena indexed by `NodeIdx` (u32). NodeIdx values are arena-scoped, so a node cannot be referenced across arenas. Splitting therefore _must_ copy the smaller side's nodes into a fresh arena (`deep_copy_subtree`), patching child indices as it goes. Total cost is O(side_size_in_nodes × node_copy + per-node overhead).
 
 ### Why the side-of-min surgical isn't enough
 
-The bidirectional surgery dispatcher already uses
-`split_off_surgical_left`/`split_off_surgical_right` to copy whichever
-side is smaller. At the symmetric pivot (p050) **both sides are
-equally large** — there is no smaller side to favor. The minimum copy
-required is half the tree, ~50K nodes for a 1M random-build entry tree.
+The bidirectional surgery dispatcher already uses `split_off_surgical_left`/`split_off_surgical_right` to copy whichever side is smaller. At the symmetric pivot (p050) **both sides are equally large** — there is no smaller side to favor. The minimum copy required is half the tree, ~50K nodes for a 1M random-build entry tree.
 
 Empirically (1M-p050 random-build, 25-iter median):
 
-| Variant | Time | vs std |
-|---------|-----:|-------:|
-| std::BTreeMap::split_off | 4.7 ms | 1.00× |
-| split_off_surgical_left  | 21.5 ms | 4.6× slower |
-| split_off_surgical_right | 16.6 ms | 3.5× slower |
-| split_off (dispatch) | 5.2 ms | 1.10× slower |
+| Variant                  |    Time |       vs std |
+| ------------------------ | ------: | -----------: |
+| std::BTreeMap::split_off |  4.7 ms |        1.00× |
+| split_off_surgical_left  | 21.5 ms |  4.6× slower |
+| split_off_surgical_right | 16.6 ms |  3.5× slower |
+| split_off (dispatch)     |  5.2 ms | 1.10× slower |
 
-Why dispatch is much faster than either direct surgical call: the
-estimator routes p050 to whichever side it predicts smaller. Random
-bench variance (criterion's `iter_batched` setup costs leak into body
-timing differently across runs) explains the dispatch beating both
-direct variants. At p001/p099 the absolute numbers all converge to
-~5ms — what dispatch effectively measures is the spine-walk cost plus
-the smaller-side deep-copy.
+Why dispatch is much faster than either direct surgical call: the estimator routes p050 to whichever side it predicts smaller. Random bench variance (criterion's `iter_batched` setup costs leak into body timing differently across runs) explains the dispatch beating both direct variants. At p001/p099 the absolute numbers all converge to ~5ms — what dispatch effectively measures is the spine-walk cost plus the smaller-side deep-copy.
 
 ### Attempts to narrow the gap
 
 | Attempt | Result | Why it didn't help |
-|---------|--------|---------------------|
+| --- | --- | --- |
 | Skip per-node `free_node` calls during deep-copy (leak abandoned slots in self.arena) | 2–6% improvement at 1M-p050 | Per-node `free_node` is ~10ns (a single write to the freed slot's first 4 bytes). For 35K freed nodes that's ~350µs — small relative to the 21ms wall time. Cache thrash from random writes to the source arena costs more than the operation itself, but is the same order of magnitude. |
 | Bulk-load the kept side from the leaf chain instead of per-node deep-copy | Equivalent to existing `split_off_drain` (12–13ms at 1M-p050) | drain pays O(n) to walk both sides → not better than O(side_size) deep-copy at the symmetric pivot. |
 
 ### Mitigations that would close the gap (not pursued)
 
-1. **Refcounted shared arena** (Rc/Arc<ArenaInner>). Both halves of the
-   split share the original arena. Splitting becomes O(log n)
-   structural relinking, matching std. Cost: every read incurs an
-   atomic refcount check or a relaxed-load deref through the Arc.
-   Allocation needs CoW or a "write owner" flag. Major architectural
-   change, would degrade *all other* operations to fund a faster
-   split_off.
+1. **Refcounted shared arena** (Rc/Arc<ArenaInner>). Both halves of the split share the original arena. Splitting becomes O(log n) structural relinking, matching std. Cost: every read incurs an atomic refcount check or a relaxed-load deref through the Arc. Allocation needs CoW or a "write owner" flag. Major architectural change, would degrade _all other_ operations to fund a faster split_off.
 
-2. **Pointer-based node references** (raw `*mut Node` instead of
-   `NodeIdx`). Cross-arena references trivially work; splitting
-   becomes pointer relinking. Cost: 8B-per-pointer instead of 4B
-   indices doubles internal-node fan-out cost (fewer keys per node,
-   deeper trees). Same loss: faster split_off at the cost of all
-   other operations.
+2. **Pointer-based node references** (raw `*mut Node` instead of `NodeIdx`). Cross-arena references trivially work; splitting becomes pointer relinking. Cost: 8B-per-pointer instead of 4B indices doubles internal-node fan-out cost (fewer keys per node, deeper trees). Same loss: faster split_off at the cost of all other operations.
 
-3. **Contiguous-range arena transfer**. If the smaller side's nodes
-   happened to be allocated in a contiguous range of the source
-   arena, we could transfer that range wholesale (one memcpy + index
-   re-base). But for random-insert builds the smaller side's nodes
-   are scattered throughout the arena. Would only help bulk-loaded
-   trees, where a "contiguous BFS-allocated subtree" is a stronger
-   property — but bulk-loaded trees already split in ~1–5ms, well
-   below the random-build pain point.
+3. **Contiguous-range arena transfer**. If the smaller side's nodes happened to be allocated in a contiguous range of the source arena, we could transfer that range wholesale (one memcpy + index re-base). But for random-insert builds the smaller side's nodes are scattered throughout the arena. Would only help bulk-loaded trees, where a "contiguous BFS-allocated subtree" is a stronger property — but bulk-loaded trees already split in ~1–5ms, well below the random-build pain point.
 
 ### Decision
 
-The remaining gap is bounded: at p050 / 1M our 5ms is 1.1× std's 4.7ms
-and we *win* at extreme pivots (p001/p099 ~70µs vs std 76µs). The
-absolute numbers are small, and the routes that would close the
-symmetric-pivot gap (refcounted or pointer-based nodes) would tax
-every other operation. **Closed as a fundamental tradeoff of the
-arena layout.** The current side-of-min dispatcher is the right
-operating point.
+The remaining gap is bounded: at p050 / 1M our 5ms is 1.1× std's 4.7ms and we _win_ at extreme pivots (p001/p099 ~70µs vs std 76µs). The absolute numbers are small, and the routes that would close the symmetric-pivot gap (refcounted or pointer-based nodes) would tax every other operation. **Closed as a fundamental tradeoff of the arena layout.** The current side-of-min dispatcher is the right operating point.

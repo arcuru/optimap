@@ -819,9 +819,8 @@ impl<K, V, T: TombstoneTag> Iterator for IntoIter<K, V, T> {
             if self.group > self.table.mask {
                 return None;
             }
-            self.current_mask = unsafe {
-                Group::match_occupied(self.table.metadata.add(self.group << 6))
-            };
+            self.current_mask =
+                unsafe { Group::match_occupied(self.table.metadata.add(self.group << 6)) };
         }
     }
 
@@ -838,31 +837,51 @@ impl<K, V, T: TombstoneTag> std::iter::FusedIterator for IntoIter<K, V, T> {}
 use crate::raw::table_api::{EntryProbe, RawTableApi};
 
 impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
-    type SlotIter<'a> = SlotIter<'a, K, V, T> where K: 'a, V: 'a;
+    type SlotIter<'a>
+        = SlotIter<'a, K, V, T>
+    where
+        K: 'a,
+        V: 'a;
     type IntoIter = IntoIter<K, V, T>;
 
-    fn new() -> Self { RawTable::new() }
-    fn with_capacity(cap: usize) -> Self { RawTable::with_capacity(cap) }
-
-    #[inline(always)]
-    fn len(&self) -> usize { self.len }
-
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        if self.is_allocated() { self.num_groups() * GROUP_SIZE } else { 0 }
+    fn new() -> Self {
+        RawTable::new()
+    }
+    fn with_capacity(cap: usize) -> Self {
+        RawTable::with_capacity(cap)
     }
 
     #[inline(always)]
-    fn is_allocated(&self) -> bool { self.is_allocated() }
+    fn len(&self) -> usize {
+        self.len
+    }
 
     #[inline(always)]
-    fn num_groups(&self) -> usize { self.mask + 1 }
+    fn capacity(&self) -> usize {
+        if self.is_allocated() {
+            self.num_groups() * GROUP_SIZE
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn is_allocated(&self) -> bool {
+        self.is_allocated()
+    }
+
+    #[inline(always)]
+    fn num_groups(&self) -> usize {
+        self.mask + 1
+    }
 
     fn groups_for_capacity(capacity: usize) -> usize {
         Self::groups_for_capacity(capacity)
     }
 
-    fn clear(&mut self) { self.clear(); }
+    fn clear(&mut self) {
+        self.clear();
+    }
 
     #[inline(always)]
     unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K {
@@ -883,7 +902,8 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
     }
 
     fn insert_or_replace<S: BuildHasher>(&mut self, key: K, value: V, hb: &S) -> Option<V>
-    where K: Hash + Eq,
+    where
+        K: Hash + Eq,
     {
         if !self.is_allocated() {
             self.allocate(1);
@@ -934,7 +954,8 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
     }
 
     fn find_for_entry(&self, h: u64, key: &K) -> EntryProbe
-    where K: Eq,
+    where
+        K: Eq,
     {
         if self.growth_left == 0 {
             if let Some((gi, si)) = self.find_by_hash(h, |k| k == key) {
@@ -976,7 +997,10 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         self.insert_no_check(h, k, v)
     }
 
-    fn ensure_capacity<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+    fn ensure_capacity<S: BuildHasher>(&mut self, hb: &S)
+    where
+        K: Hash,
+    {
         if self.growth_left == 0 {
             self.grow_or_rehash(hb);
         }
@@ -994,7 +1018,10 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         }
     }
 
-    fn reserve<S: BuildHasher>(&mut self, additional: usize, hb: &S) where K: Hash {
+    fn reserve<S: BuildHasher>(&mut self, additional: usize, hb: &S)
+    where
+        K: Hash,
+    {
         let needed = self.len.checked_add(additional).expect("capacity overflow");
         if !self.is_allocated() {
             if additional > 0 {
@@ -1011,7 +1038,10 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         }
     }
 
-    fn shrink_to_fit<S: BuildHasher>(&mut self, hb: &S) where K: Hash {
+    fn shrink_to_fit<S: BuildHasher>(&mut self, hb: &S)
+    where
+        K: Hash,
+    {
         if self.len == 0 {
             let mut empty = Self::new();
             std::mem::swap(self, &mut empty);
@@ -1023,11 +1053,16 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         }
     }
 
-    fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hb: &S) where K: Hash {
+    fn rehash_with<S: BuildHasher>(&mut self, new_num_groups: usize, hb: &S)
+    where
+        K: Hash,
+    {
         self.rehash_with(new_num_groups, hb);
     }
 
-    fn iter_slots(&self) -> SlotIter<'_, K, V, T> { self.iter_slots() }
+    fn iter_slots(&self) -> SlotIter<'_, K, V, T> {
+        self.iter_slots()
+    }
 
     fn into_iter_impl(self) -> IntoIter<K, V, T> {
         let mask = if !self.is_allocated() {
@@ -1037,7 +1072,11 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         };
         let table = unsafe { ptr::read(&self) };
         std::mem::forget(self);
-        IntoIter { table, group: 0, current_mask: mask }
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
     }
 
     fn drain_impl(&mut self) -> IntoIter<K, V, T> {
@@ -1045,7 +1084,11 @@ impl<K, V, T: TombstoneTag> RawTableApi<K, V> for RawTable<K, V, T> {
         table.into_iter_impl()
     }
 
-    fn clone_table(&self) -> Self where K: Clone, V: Clone {
+    fn clone_table(&self) -> Self
+    where
+        K: Clone,
+        V: Clone,
+    {
         self.clone()
     }
 }

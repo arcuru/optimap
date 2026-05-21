@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types)]  // Matrix types follow the shared ByteN_VVV naming convention
+#![allow(non_camel_case_types)] // Matrix types follow the shared ByteN_VVV naming convention
 
 //! SoA (Structure-of-Arrays) hash map designs.
 //!

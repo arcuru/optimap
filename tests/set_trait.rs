@@ -135,33 +135,69 @@ macro_rules! set_trait_tests {
             use super::*;
 
             #[test]
-            fn basic_ops() { test_basic_ops::<$int_type>(); }
+            fn basic_ops() {
+                test_basic_ops::<$int_type>();
+            }
             #[test]
-            fn with_capacity() { test_with_capacity::<$int_type>(); }
+            fn with_capacity() {
+                test_with_capacity::<$int_type>();
+            }
             #[test]
-            fn reserve_shrink() { test_reserve_shrink::<$int_type>(); }
+            fn reserve_shrink() {
+                test_reserve_shrink::<$int_type>();
+            }
             #[test]
-            fn iter() { test_iter::<$int_type>(); }
+            fn iter() {
+                test_iter::<$int_type>();
+            }
             #[test]
-            fn retain() { test_retain::<$int_type>(); }
+            fn retain() {
+                test_retain::<$int_type>();
+            }
             #[test]
-            fn drain() { test_drain::<$int_type>(); }
+            fn drain() {
+                test_drain::<$int_type>();
+            }
             #[test]
-            fn large_scale() { test_large_scale::<$int_type>(); }
+            fn large_scale() {
+                test_large_scale::<$int_type>();
+            }
             #[test]
-            fn string_keys() { test_string_keys::<$str_type>(); }
+            fn string_keys() {
+                test_string_keys::<$str_type>();
+            }
         }
     };
 }
 
-set_trait_tests!(ufm_set, optimap::UnorderedFlatSet<i32>, optimap::UnorderedFlatSet<String>);
-set_trait_tests!(splitsies_set, optimap::SplitsiesSet<i32>, optimap::SplitsiesSet<String>);
+set_trait_tests!(
+    ufm_set,
+    optimap::UnorderedFlatSet<i32>,
+    optimap::UnorderedFlatSet<String>
+);
+set_trait_tests!(
+    splitsies_set,
+    optimap::SplitsiesSet<i32>,
+    optimap::SplitsiesSet<String>
+);
 set_trait_tests!(ipo_set, optimap::IpoSet<i32>, optimap::IpoSet<String>);
 set_trait_tests!(gaps_set, optimap::GapsSet<i32>, optimap::GapsSet<String>);
 set_trait_tests!(ipo64_set, optimap::Ipo64Set<i32>, optimap::Ipo64Set<String>);
-set_trait_tests!(flat_btree_set, optimap::FlatBTreeSet<i32>, optimap::FlatBTreeSet<String>);
-set_trait_tests!(std_hashset, std::collections::HashSet<i32>, std::collections::HashSet<String>);
-set_trait_tests!(hashbrown_hashset, hashbrown::HashSet<i32>, hashbrown::HashSet<String>);
+set_trait_tests!(
+    flat_btree_set,
+    optimap::FlatBTreeSet<i32>,
+    optimap::FlatBTreeSet<String>
+);
+set_trait_tests!(
+    std_hashset,
+    std::collections::HashSet<i32>,
+    std::collections::HashSet<String>
+);
+set_trait_tests!(
+    hashbrown_hashset,
+    hashbrown::HashSet<i32>,
+    hashbrown::HashSet<String>
+);
 
 // ── SortedSet tests ─────────────────────────────────────────────────────────
 

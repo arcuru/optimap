@@ -24,7 +24,16 @@ pub type DefaultHashBuilder = foldhash::fast::RandomState;
 /// `R: RawTableApi<K, V>` provides the probe strategy, SIMD operations,
 /// and growth policy. This wrapper adds the public API, entry API,
 /// iterators, and trait implementations.
-pub struct GenericMap<K, V, S = DefaultHashBuilder, R: RawTableApi<K, V> = crate::raw::overflow_table::RawTable<K, V, crate::raw::group_layout::UfmLayout>> {
+pub struct GenericMap<
+    K,
+    V,
+    S = DefaultHashBuilder,
+    R: RawTableApi<K, V> = crate::raw::overflow_table::RawTable<
+        K,
+        V,
+        crate::raw::group_layout::UfmLayout,
+    >,
+> {
     pub(crate) table: R,
     pub(crate) hash_builder: S,
     _marker: std::marker::PhantomData<(K, V)>,
@@ -176,10 +185,7 @@ where
         match self.table.find_for_entry(h, &key) {
             EntryProbe::Found(gi, si) => {
                 let value = unsafe { &mut *self.table.value_ptr(gi, si) };
-                Entry::Occupied(OccupiedEntry {
-                    key,
-                    value,
-                })
+                Entry::Occupied(OccupiedEntry { key, value })
             }
             EntryProbe::Vacant(slot) => Entry::Vacant(VacantEntry {
                 key,
@@ -259,10 +265,7 @@ where
         value: V,
     ) -> Result<(), crate::traits::OccupiedError<K, V>> {
         match self.entry(key) {
-            Entry::Occupied(e) => Err(crate::traits::OccupiedError {
-                key: e.key,
-                value,
-            }),
+            Entry::Occupied(e) => Err(crate::traits::OccupiedError { key: e.key, value }),
             Entry::Vacant(e) => {
                 e.insert(value);
                 Ok(())
@@ -400,10 +403,7 @@ impl<'a, K: Hash + Eq, V, S: BuildHasher, R: RawTableApi<K, V>> VacantEntry<'a, 
             unsafe { &mut *self.map.table.value_ptr(gi, si) }
         } else {
             self.map.table.ensure_capacity(&self.map.hash_builder);
-            let (gi, si) = self
-                .map
-                .table
-                .insert_no_check(self.hash, self.key, value);
+            let (gi, si) = self.map.table.insert_no_check(self.hash, self.key, value);
             unsafe { &mut *self.map.table.value_ptr(gi, si) }
         }
     }
@@ -449,7 +449,12 @@ impl<'a, K: 'a, V: 'a, R: RawTableApi<K, V> + 'a> Iterator for IterMut<'a, K, V,
 
     fn next(&mut self) -> Option<Self::Item> {
         let (gi, si) = self.inner.next()?;
-        unsafe { Some((&*self.table.key_ptr(gi, si), &mut *self.table.value_ptr(gi, si))) }
+        unsafe {
+            Some((
+                &*self.table.key_ptr(gi, si),
+                &mut *self.table.value_ptr(gi, si),
+            ))
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -723,8 +728,7 @@ mod tests {
 
     fn test_from_iter<R: RawTableApi<i32, &'static str>>()
     where
-        GenericMap<i32, &'static str, DefaultHashBuilder, R>:
-            FromIterator<(i32, &'static str)>,
+        GenericMap<i32, &'static str, DefaultHashBuilder, R>: FromIterator<(i32, &'static str)>,
     {
         let map: GenericMap<i32, &str, DefaultHashBuilder, R> =
             vec![(1, "a"), (2, "b"), (3, "c")].into_iter().collect();
@@ -732,27 +736,90 @@ mod tests {
         assert_eq!(map.get(&2), Some(&"b"));
     }
 
-    #[test] fn ufm_basic() { test_basic::<RawTable<u64, &str, UfmLayout>>(); }
-    #[test] fn ufm_entry() { test_entry::<RawTable<u64, u64, UfmLayout>>(); }
-    #[test] fn ufm_large() { test_large::<RawTable<u64, u64, UfmLayout>>(); }
-    #[test] fn ufm_clone_eq() { test_clone_eq::<RawTable<u64, u64, UfmLayout>>(); }
-    #[test] fn ufm_into_iter() { test_into_iter::<RawTable<i32, i32, UfmLayout>>(); }
-    #[test] fn ufm_retain() { test_retain::<RawTable<u64, u64, UfmLayout>>(); }
-    #[test] fn ufm_from_iter() { test_from_iter::<RawTable<i32, &str, UfmLayout>>(); }
+    #[test]
+    fn ufm_basic() {
+        test_basic::<RawTable<u64, &str, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_entry() {
+        test_entry::<RawTable<u64, u64, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_large() {
+        test_large::<RawTable<u64, u64, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_clone_eq() {
+        test_clone_eq::<RawTable<u64, u64, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_into_iter() {
+        test_into_iter::<RawTable<i32, i32, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_retain() {
+        test_retain::<RawTable<u64, u64, UfmLayout>>();
+    }
+    #[test]
+    fn ufm_from_iter() {
+        test_from_iter::<RawTable<i32, &str, UfmLayout>>();
+    }
 
-    #[test] fn splitsies_basic() { test_basic::<RawTable<u64, &str, SplitsiesLayout>>(); }
-    #[test] fn splitsies_entry() { test_entry::<RawTable<u64, u64, SplitsiesLayout>>(); }
-    #[test] fn splitsies_large() { test_large::<RawTable<u64, u64, SplitsiesLayout>>(); }
-    #[test] fn splitsies_clone_eq() { test_clone_eq::<RawTable<u64, u64, SplitsiesLayout>>(); }
-    #[test] fn splitsies_into_iter() { test_into_iter::<RawTable<i32, i32, SplitsiesLayout>>(); }
-    #[test] fn splitsies_retain() { test_retain::<RawTable<u64, u64, SplitsiesLayout>>(); }
-    #[test] fn splitsies_from_iter() { test_from_iter::<RawTable<i32, &str, SplitsiesLayout>>(); }
+    #[test]
+    fn splitsies_basic() {
+        test_basic::<RawTable<u64, &str, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_entry() {
+        test_entry::<RawTable<u64, u64, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_large() {
+        test_large::<RawTable<u64, u64, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_clone_eq() {
+        test_clone_eq::<RawTable<u64, u64, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_into_iter() {
+        test_into_iter::<RawTable<i32, i32, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_retain() {
+        test_retain::<RawTable<u64, u64, SplitsiesLayout>>();
+    }
+    #[test]
+    fn splitsies_from_iter() {
+        test_from_iter::<RawTable<i32, &str, SplitsiesLayout>>();
+    }
 
-    #[test] fn gaps_basic() { test_basic::<RawTable<u64, &str, GapsLayout>>(); }
-    #[test] fn gaps_entry() { test_entry::<RawTable<u64, u64, GapsLayout>>(); }
-    #[test] fn gaps_large() { test_large::<RawTable<u64, u64, GapsLayout>>(); }
-    #[test] fn gaps_clone_eq() { test_clone_eq::<RawTable<u64, u64, GapsLayout>>(); }
-    #[test] fn gaps_into_iter() { test_into_iter::<RawTable<i32, i32, GapsLayout>>(); }
-    #[test] fn gaps_retain() { test_retain::<RawTable<u64, u64, GapsLayout>>(); }
-    #[test] fn gaps_from_iter() { test_from_iter::<RawTable<i32, &str, GapsLayout>>(); }
+    #[test]
+    fn gaps_basic() {
+        test_basic::<RawTable<u64, &str, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_entry() {
+        test_entry::<RawTable<u64, u64, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_large() {
+        test_large::<RawTable<u64, u64, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_clone_eq() {
+        test_clone_eq::<RawTable<u64, u64, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_into_iter() {
+        test_into_iter::<RawTable<i32, i32, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_retain() {
+        test_retain::<RawTable<u64, u64, GapsLayout>>();
+    }
+    #[test]
+    fn gaps_from_iter() {
+        test_from_iter::<RawTable<i32, &str, GapsLayout>>();
+    }
 }

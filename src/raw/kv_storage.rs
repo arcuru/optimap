@@ -74,10 +74,15 @@ pub trait KvStorage<K, V>: 'static + Copy {
     /// Clone a slot from src to dst.
     #[inline(always)]
     unsafe fn clone_slot(
-        src_ctrl: *mut u8, src_extra: Self::Extra,
-        dst_ctrl: *mut u8, dst_extra: Self::Extra,
+        src_ctrl: *mut u8,
+        src_extra: Self::Extra,
+        dst_ctrl: *mut u8,
+        dst_extra: Self::Extra,
         idx: usize,
-    ) where K: Clone, V: Clone {
+    ) where
+        K: Clone,
+        V: Clone,
+    {
         unsafe {
             let sk = &*Self::key_ptr(src_ctrl, idx);
             let sv = &*Self::value_ptr(src_ctrl, src_extra, idx);
@@ -112,8 +117,12 @@ impl<K, V> KvStorage<K, V> for AoS {
         (raw + 15) & !15
     }
 
-    fn values_region_size(_num_slots: usize) -> usize { 0 }
-    fn values_align() -> usize { 1 }
+    fn values_region_size(_num_slots: usize) -> usize {
+        0
+    }
+    fn values_align() -> usize {
+        1
+    }
 
     fn alloc_align() -> usize {
         16usize.max(std::mem::align_of::<(K, V)>())
@@ -136,7 +145,9 @@ impl<K, V> KvStorage<K, V> for AoS {
 
     #[inline(always)]
     unsafe fn write(ctrl: *mut u8, _extra: (), idx: usize, key: K, value: V) {
-        unsafe { ctrl.cast::<(K, V)>().sub(idx + 1).write((key, value)); }
+        unsafe {
+            ctrl.cast::<(K, V)>().sub(idx + 1).write((key, value));
+        }
     }
 
     #[inline(always)]
@@ -146,15 +157,22 @@ impl<K, V> KvStorage<K, V> for AoS {
 
     #[inline(always)]
     unsafe fn drop_slot(ctrl: *mut u8, _extra: (), idx: usize) {
-        unsafe { ptr::drop_in_place(ctrl.cast::<(K, V)>().sub(idx + 1)); }
+        unsafe {
+            ptr::drop_in_place(ctrl.cast::<(K, V)>().sub(idx + 1));
+        }
     }
 
     #[inline(always)]
     unsafe fn clone_slot(
-        src_ctrl: *mut u8, _src_extra: (),
-        dst_ctrl: *mut u8, _dst_extra: (),
+        src_ctrl: *mut u8,
+        _src_extra: (),
+        dst_ctrl: *mut u8,
+        _dst_extra: (),
         idx: usize,
-    ) where K: Clone, V: Clone {
+    ) where
+        K: Clone,
+        V: Clone,
+    {
         unsafe {
             let src = &*src_ctrl.cast::<(K, V)>().sub(idx + 1);
             dst_ctrl.cast::<(K, V)>().sub(idx + 1).write(src.clone());
@@ -175,7 +193,9 @@ pub struct SoA;
 impl<K, V> KvStorage<K, V> for SoA {
     type Extra = *mut u8;
 
-    fn extra_null() -> *mut u8 { ptr::null_mut() }
+    fn extra_null() -> *mut u8 {
+        ptr::null_mut()
+    }
 
     fn backward_size(num_slots: usize) -> usize {
         let raw = num_slots * std::mem::size_of::<K>();

@@ -126,7 +126,12 @@ fn calibrate_repeats(ops: usize, mut f: impl FnMut(usize)) -> usize {
 /// Insert sweep: grow from empty, measure each batch (incremental, can't
 /// repeat the same batch — instead run the full sweep `trials` times and
 /// take the median per point).
-fn sweep_insert<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_insert<M: SortedMap<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
     let num_points = points.len();
     let mut all_ns: Vec<Vec<f64>> = vec![Vec::with_capacity(trials); num_points];
 
@@ -156,7 +161,12 @@ fn sweep_insert<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[
 
 /// Lookup hit: grow incrementally, measure lookups at each size with
 /// calibrated op count and trials.
-fn sweep_lookup_hit<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_lookup_hit<M: SortedMap<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
     let mut map = M::new();
     let mut prev_n = 0;
 
@@ -241,7 +251,12 @@ fn sweep_lookup_miss<M: SortedMap<u64, u64>>(
 
 /// Remove: build to size N, then remove a batch. Rebuilds per trial since
 /// remove is destructive.
-fn sweep_remove<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_remove<M: SortedMap<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
     for &n in points {
         let ops = n.min(50_000);
         let mut samples = Vec::with_capacity(trials);
@@ -265,7 +280,12 @@ fn sweep_remove<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[
 }
 
 /// Iterate: grow incrementally, measure full scan at each size.
-fn sweep_iterate<M: SortedMap<u64, u64>>(design: &str, points: &[usize], keys: &[u64], trials: usize) {
+fn sweep_iterate<M: SortedMap<u64, u64>>(
+    design: &str,
+    points: &[usize],
+    keys: &[u64],
+    trials: usize,
+) {
     let mut map = M::new();
     let mut prev_n = 0;
 
@@ -330,7 +350,11 @@ fn main() {
         config.max_n,
         points.len(),
         config.trials,
-        if config.filter_design.is_some() { "1" } else { "2" }
+        if config.filter_design.is_some() {
+            "1"
+        } else {
+            "2"
+        }
     );
 
     println!("operation,design,n,ns_per_op");

@@ -2,12 +2,8 @@
 
 ## Design Principles
 
-1. **No allocation conflation**: Throughput benchmarks use pre-allocated, page-faulted
-   tables. `clear()` + re-insert between iterations. Construction benchmarks
-   intentionally include allocation overhead.
-2. **Controlled load factors**: Fixed table geometry, filled to target percentage.
-   Default: 70%. Fixed-N benchmarks land at arbitrary load factors and are unreliable
-   for miss comparisons.
+1. **No allocation conflation**: Throughput benchmarks use pre-allocated, page-faulted tables. `clear()` + re-insert between iterations. Construction benchmarks intentionally include allocation overhead.
+2. **Controlled load factors**: Fixed table geometry, filled to target percentage. Default: 70%. Fixed-N benchmarks land at arbitrary load factors and are unreliable for miss comparisons.
 3. **Multiple key distributions**: Random, sequential, byte-swapped. Not just random u64.
 4. **Multiple value sizes**: 8B, 64B, 128B, 256B.
 5. **hashbrown-only comparison**: std::HashMap and indexmap are not relevant competitors.
@@ -16,10 +12,10 @@
 
 Two standard sizes, chosen for cache hierarchy alignment:
 
-| Size | Slots | Groups | Metadata | Buckets (u64/u64) |
-|------|------:|-------:|---------:|------------------:|
-| Medium | 15,360 | 1,024 | 16KB (fits L1) | 240KB (fits L2) |
-| Large | 122,880 | 8,192 | 128KB (fits L2) | 1.9MB (exceeds L2) |
+| Size   |   Slots | Groups |        Metadata |  Buckets (u64/u64) |
+| ------ | ------: | -----: | --------------: | -----------------: |
+| Medium |  15,360 |  1,024 |  16KB (fits L1) |    240KB (fits L2) |
+| Large  | 122,880 |  8,192 | 128KB (fits L2) | 1.9MB (exceeds L2) |
 
 At 70% load: medium = ~10,752 entries, large = ~86,016 entries.
 
@@ -42,24 +38,17 @@ benches/
 
 ### sweep.rs (ankerl-style)
 
-Standalone binary (not criterion). Sweeps all 7 designs across 362 log-spaced
-N-points from 100 to 10M. Each point runs 5 trials with calibrated minimum
-measurement time; reports median ns/op. Outputs CSV to stdout.
+Standalone binary (not criterion). Sweeps all 7 designs across 362 log-spaced N-points from 100 to 10M. Each point runs 5 trials with calibrated minimum measurement time; reports median ns/op. Outputs CSV to stdout.
 
 Operations: insert, lookup_hit, lookup_miss, remove, iterate.
 
-Pipeline: `./scripts/sweep-bench.sh` runs the benchmark, saves timestamped CSV
-to `bench-results/`, and generates per-operation PNG graphs via gnuplot.
+Pipeline: `./scripts/sweep-bench.sh` runs the benchmark, saves timestamped CSV to `bench-results/`, and generates per-operation PNG graphs via gnuplot.
 
-This captures what criterion benchmarks miss: rehash sawtooth, cache boundary
-transitions, and natural load factor cycling across the full N range.
+This captures what criterion benchmarks miss: rehash sawtooth, cache boundary transitions, and natural load factor cycling across the full N range.
 
 ### Hash tag variant sweep
 
-`./scripts/sweep-hash-tag.sh` runs the sweep benchmark three times — once per
-`hash_tag` feature variant (`reduced-hash-asm`, `reduced-hash-128`, no features) —
-and merges results into a single CSV with suffixed design names (e.g. `UFM/asm`,
-`UFM/128`, `UFM/pure`). Generates per-operation per-design comparison PNGs.
+`./scripts/sweep-hash-tag.sh` runs the sweep benchmark three times — once per `hash_tag` feature variant (`reduced-hash-asm`, `reduced-hash-128`, no features) — and merges results into a single CSV with suffixed design names (e.g. `UFM/asm`, `UFM/128`, `UFM/pure`). Generates per-operation per-design comparison PNGs.
 
 ```bash
 ./scripts/sweep-hash-tag.sh                     # full comparison
@@ -68,6 +57,7 @@ and merges results into a single CSV with suffixed design names (e.g. `UFM/asm`,
 ```
 
 For criterion benchmarks, compare variants directly:
+
 ```bash
 cargo bench --bench throughput                              # asm (default)
 cargo bench --bench throughput --no-default-features --features reduced-hash-128
@@ -78,26 +68,26 @@ cargo bench --bench throughput --no-default-features        # pure Rust
 
 Pre-warmed tables. Measures pure operation cost.
 
-| Benchmark | What it measures |
-|-----------|-----------------|
-| insert | Insert into pre-warmed table |
-| lookup_hit | Successful lookup |
-| lookup_miss | Failed lookup |
-| remove | Remove all keys from full table |
-| insert_existing | Overwrite existing keys |
-| iteration | Full table scan |
+| Benchmark       | What it measures                       |
+| --------------- | -------------------------------------- |
+| insert          | Insert into pre-warmed table           |
+| lookup_hit      | Successful lookup                      |
+| lookup_miss     | Failed lookup                          |
+| remove          | Remove all keys from full table        |
+| insert_existing | Overwrite existing keys                |
+| iteration       | Full table scan                        |
 | entry_or_insert | `entry().or_insert()` on occupied keys |
 
 ### construction.rs
 
 Includes allocation overhead. Measures costs that happen once per table lifetime.
 
-| Benchmark | What it measures |
-|-----------|-----------------|
-| grow_from_empty | Insert N into `::new()` |
+| Benchmark            | What it measures                 |
+| -------------------- | -------------------------------- |
+| grow_from_empty      | Insert N into `::new()`          |
 | insert_with_capacity | Insert N into `with_capacity(N)` |
-| clone | Clone a full table |
-| from_iter | `collect()` from iterator |
+| clone                | Clone a full table               |
+| from_iter            | `collect()` from iterator        |
 
 ### distributions.rs
 
@@ -105,52 +95,35 @@ All pre-allocated at 70% load. Tests key distribution and value size sensitivity
 
 ### workloads.rs
 
-Realistic mixed scenarios: equilibrium churn, read-heavy (95/5), write-heavy (50/30/20),
-counting/aggregation, post-delete lookup, miss ratio sweep.
+Realistic mixed scenarios: equilibrium churn, read-heavy (95/5), write-heavy (50/30/20), counting/aggregation, post-delete lookup, miss ratio sweep.
 
 ### tag_collision.rs
 
-Regression guard for the IPO/IPO64 tag/group-index collision fix
-(commit 8992137 + IPO64 default flip in 7815e8e). Two A/B comparisons:
+Regression guard for the IPO/IPO64 tag/group-index collision fix (commit 8992137 + IPO64 default flip in 7815e8e). Two A/B comparisons:
 
-- **IPO** (16-slot, AND-indexed): default `Byte7_254` vs the pre-fix
-  `Byte2_254` (collides above 2¹⁶ groups, ~735K entries) and the
-  always-collides `Byte0_254` (full byte-0/AND-mask overlap at any size).
-  Sized at 100K (below threshold), 1M (at threshold), 4M (clearly above).
-- **IPO64** (64-slot, shift-indexed): default `Byte0_254` vs the
-  collision-prone `Byte7_254` (top byte = group index → immediate collision).
+- **IPO** (16-slot, AND-indexed): default `Byte7_254` vs the pre-fix `Byte2_254` (collides above 2¹⁶ groups, ~735K entries) and the always-collides `Byte0_254` (full byte-0/AND-mask overlap at any size). Sized at 100K (below threshold), 1M (at threshold), 4M (clearly above).
+- **IPO64** (64-slot, shift-indexed): default `Byte0_254` vs the collision-prone `Byte7_254` (top byte = group index → immediate collision).
 
-Expected signal at 4M for IPO: `Byte2_254` ≈ 2x slower on miss; `Byte0_254`
-≈ 20x slower. Validates that the tag bytes stay disjoint from the group-index bits.
+Expected signal at 4M for IPO: `Byte2_254` ≈ 2x slower on miss; `Byte0_254` ≈ 20x slower. Validates that the tag bytes stay disjoint from the group-index bits.
 
 ### dispatch.rs
 
-Regression guard for the OptiMap inlining work (commits a66f50b, ae1e4d5).
-Pairs each raw backend (`UnorderedFlatMap`, `Splitsies`, `InPlaceOverflow`,
-`Gaps`, `IPO64`) with a corresponding `OptiMap` pinned to that backend, so
-the *only* delta is the enum-match in `OptiMap::get` / `insert` / `remove`.
+Regression guard for the OptiMap inlining work (commits a66f50b, ae1e4d5). Pairs each raw backend (`UnorderedFlatMap`, `Splitsies`, `InPlaceOverflow`, `Gaps`, `IPO64`) with a corresponding `OptiMap` pinned to that backend, so the _only_ delta is the enum-match in `OptiMap::get` / `insert` / `remove`.
 
-Expected: hot ops (hit, miss, insert, remove) within noise of the raw
-backend. The bench also includes `iter` for visibility on the known
-`Box<dyn Iterator>` overhead.
+Expected: hot ops (hit, miss, insert, remove) within noise of the raw backend. The bench also includes `iter` for visibility on the known `Box<dyn Iterator>` overhead.
 
 ## Allocation Overhead at 1M
 
-At 1M elements, `with_capacity` allocates ~32MB via `mmap`. The kernel lazily
-zero-fills ~7,680 pages on first write, at ~1.5µs per fault = **~11ms of page
-fault overhead per iteration**.
+At 1M elements, `with_capacity` allocates ~32MB via `mmap`. The kernel lazily zero-fills ~7,680 pages on first write, at ~1.5µs per fault = **~11ms of page fault overhead per iteration**.
 
-This affects both us and hashbrown equally. The `insert_prealloc` benchmark
-isolates true insert throughput:
+This affects both us and hashbrown equally. The `insert_prealloc` benchmark isolates true insert throughput:
 
-| Config | ours | hashbrown | ratio |
-|--------|-----:|----------:|:-----:|
-| insert_u64 1M (alloc per iter) | 20.8 ms | 25.3 ms | 0.82x |
-| insert_prealloc 1M (no alloc) | **9.5 ms** | 12.0 ms | **0.79x** |
+| Config                         |       ours | hashbrown |   ratio   |
+| ------------------------------ | ---------: | --------: | :-------: |
+| insert_u64 1M (alloc per iter) |    20.8 ms |   25.3 ms |   0.82x   |
+| insert_prealloc 1M (no alloc)  | **9.5 ms** |   12.0 ms | **0.79x** |
 
-This also explains why "single allocation regression" tests showed +40-108% at 1M:
-the benchmark was measuring allocation strategy differences (glibc arena caching for
-smaller allocs vs mmap/munmap for one large alloc), not insert performance.
+This also explains why "single allocation regression" tests showed +40-108% at 1M: the benchmark was measuring allocation strategy differences (glibc arena caching for smaller allocs vs mmap/munmap for one large alloc), not insert performance.
 
 ## RNG
 
@@ -158,14 +131,12 @@ All benchmarks use SFC64 RNG with checksummed outputs (Ankerl methodology).
 
 ## Load Factor Sensitivity
 
-Our table uses 15-slot groups. With power-of-two group counts, the actual load
-factor at any given size depends on where we sit between rehashes:
+Our table uses 15-slot groups. With power-of-two group counts, the actual load factor at any given size depends on where we sit between rehashes:
 
 - Right after a rehash (capacity doubles): ~44% load
 - Right before next rehash: ~87.5% load
 
-The load_factor.rs benchmark isolates this variable by pre-allocating a fixed
-capacity and filling to controlled percentages. Key finding:
+The load_factor.rs benchmark isolates this variable by pre-allocating a fixed capacity and filling to controlled percentages. Key finding:
 
 - **Hit performance is flat** across load factors for both implementations
 - **Miss crossover** at ~70-75% load (100K scale) and ~45% load (1M scale)

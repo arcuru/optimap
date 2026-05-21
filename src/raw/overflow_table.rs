@@ -104,7 +104,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
     #[inline(always)]
     unsafe fn set_overflow_bit(&self, gi: usize, bit: u8) {
-        unsafe { L::Overflow::set_overflow(self.overflow_ptr(gi), gi, bit); }
+        unsafe {
+            L::Overflow::set_overflow(self.overflow_ptr(gi), gi, bit);
+        }
     }
 
     #[inline(always)]
@@ -164,11 +166,16 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
             self.ctrl = alloc_ptr.add(backward);
             self.extra = S::init_extra(self.ctrl, values_offset);
             // Zero metadata + overflow (both forward from ctrl)
-            ptr::write_bytes(self.ctrl, 0, num_groups * L::META_STRIDE + L::Overflow::overflow_bytes_to_zero(num_groups));
+            ptr::write_bytes(
+                self.ctrl,
+                0,
+                num_groups * L::META_STRIDE + L::Overflow::overflow_bytes_to_zero(num_groups),
+            );
         }
 
         self.mask = num_groups - 1;
-        self.max_load = max_load_for_capacity(total_buckets, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
+        self.max_load =
+            max_load_for_capacity(total_buckets, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
         self.shift = 64u32.wrapping_sub(num_groups.trailing_zeros());
     }
 
@@ -183,7 +190,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
             return;
         }
         let layout = Self::combined_layout(self.mask + 1);
-        unsafe { alloc::dealloc(self.alloc_ptr(), layout); }
+        unsafe {
+            alloc::dealloc(self.alloc_ptr(), layout);
+        }
         self.ctrl = EMPTY_SENTINEL.0.as_ptr() as *mut u8;
         self.extra = S::extra_null();
         self.max_load = 0;
@@ -214,7 +223,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
         let mut probe = 0usize;
 
         if L::SEPARATE_OVERFLOW {
-            unsafe { L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8); }
+            unsafe {
+                L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);
+            }
         }
 
         loop {
@@ -277,7 +288,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
             }
 
             let ofw_bit = L::Tag::overflow_channel(h);
-            unsafe { self.set_overflow_bit(gi, ofw_bit); }
+            unsafe {
+                self.set_overflow_bit(gi, ofw_bit);
+            }
 
             probe += 1;
             gi = (gi.wrapping_add(probe)) & self.mask;
@@ -295,7 +308,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
             let mut mask = full_mask;
             while mask != 0 {
                 if mask & 1 != 0 {
-                    unsafe { self.set_overflow_bit(set_gi, ofw_bit); }
+                    unsafe {
+                        self.set_overflow_bit(set_gi, ofw_bit);
+                    }
                 }
                 mask >>= 1;
                 set_probe += 1;
@@ -385,7 +400,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
             if !unsafe { self.has_overflow_bit(gi, ofw_bit) } {
                 return match first_empty {
-                    Some((ins_gi, ins_si)) => FindOrLocateResult::InsertSlot(ins_gi, ins_si, full_mask),
+                    Some((ins_gi, ins_si)) => {
+                        FindOrLocateResult::InsertSlot(ins_gi, ins_si, full_mask)
+                    }
                     None => FindOrLocateResult::NotFound,
                 };
             }
@@ -470,13 +487,7 @@ enum FindOrLocateResult {
 impl<K: Hash + Eq, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     #[cold]
     #[inline(never)]
-    fn insert_overflow<H: BuildHasher>(
-        &mut self,
-        h: u64,
-        key: K,
-        value: V,
-        hb: &H,
-    ) -> Option<V> {
+    fn insert_overflow<H: BuildHasher>(&mut self, h: u64, key: K, value: V, hb: &H) -> Option<V> {
         if let Some((gi, si)) = self.find_by_hash_eq(h, &key) {
             let v = unsafe { &mut *self.value_ptr_impl(gi, si) };
             return Some(std::mem::replace(v, value));
@@ -509,7 +520,11 @@ impl<K: Hash + Eq, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
     #[cold]
     #[inline(never)]
     fn grow_and_rehash<H: BuildHasher>(&mut self, hb: &H) {
-        let new_groups = if self.max_load == 0 { 1 } else { (self.mask + 1) * 2 };
+        let new_groups = if self.max_load == 0 {
+            1
+        } else {
+            (self.mask + 1) * 2
+        };
         self.rehash_with_impl(new_groups, hb);
     }
 }
@@ -517,7 +532,11 @@ impl<K: Hash + Eq, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 // ── RawTableApi implementation ─────────────────────────────────────────────
 
 impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K, V, L, S> {
-    type SlotIter<'a> = SlotIter<'a, K, V, L, S> where K: 'a, V: 'a;
+    type SlotIter<'a>
+        = SlotIter<'a, K, V, L, S>
+    where
+        K: 'a,
+        V: 'a;
     type IntoIter = IntoIter<K, V, L, S>;
 
     fn new() -> Self {
@@ -533,7 +552,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
     }
 
     fn with_capacity(capacity: usize) -> Self {
-        if capacity == 0 { return Self::new(); }
+        if capacity == 0 {
+            return Self::new();
+        }
         let mut table = Self::new();
         let num_groups = Self::groups_for_capacity(capacity);
         table.allocate(num_groups);
@@ -541,27 +562,40 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
     }
 
     #[inline(always)]
-    fn len(&self) -> usize { self.len }
-
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        if self.max_load > 0 { (self.mask + 1) * L::GROUP_SIZE } else { 0 }
+    fn len(&self) -> usize {
+        self.len
     }
 
     #[inline(always)]
-    fn is_allocated(&self) -> bool { self.max_load > 0 }
+    fn capacity(&self) -> usize {
+        if self.max_load > 0 {
+            (self.mask + 1) * L::GROUP_SIZE
+        } else {
+            0
+        }
+    }
 
     #[inline(always)]
-    fn num_groups(&self) -> usize { self.mask + 1 }
+    fn is_allocated(&self) -> bool {
+        self.max_load > 0
+    }
+
+    #[inline(always)]
+    fn num_groups(&self) -> usize {
+        self.mask + 1
+    }
 
     fn groups_for_capacity(capacity: usize) -> usize {
-        let min_slots = (capacity * L::LOAD_FACTOR_DEN + L::LOAD_FACTOR_NUM - 1) / L::LOAD_FACTOR_NUM;
+        let min_slots =
+            (capacity * L::LOAD_FACTOR_DEN + L::LOAD_FACTOR_NUM - 1) / L::LOAD_FACTOR_NUM;
         let min_groups = (min_slots + L::GROUP_SIZE - 1) / L::GROUP_SIZE;
         min_groups.next_power_of_two()
     }
 
     fn clear(&mut self) {
-        if self.max_load == 0 { return; }
+        if self.max_load == 0 {
+            return;
+        }
         unsafe {
             if S::needs_drop() {
                 for gi in 0..self.mask + 1 {
@@ -571,10 +605,19 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
                     }
                 }
             }
-            ptr::write_bytes(self.ctrl, 0, (self.mask + 1) * L::META_STRIDE + L::Overflow::overflow_bytes_to_zero(self.mask + 1));
+            ptr::write_bytes(
+                self.ctrl,
+                0,
+                (self.mask + 1) * L::META_STRIDE
+                    + L::Overflow::overflow_bytes_to_zero(self.mask + 1),
+            );
         }
         self.len = 0;
-        self.max_load = max_load_for_capacity((self.mask + 1) * L::GROUP_SIZE, L::LOAD_FACTOR_NUM, L::LOAD_FACTOR_DEN);
+        self.max_load = max_load_for_capacity(
+            (self.mask + 1) * L::GROUP_SIZE,
+            L::LOAD_FACTOR_NUM,
+            L::LOAD_FACTOR_DEN,
+        );
     }
 
     #[inline(always)]
@@ -666,7 +709,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
 
         match self.find_or_locate_impl(h, |k| k == key) {
             FindOrLocateResult::Found(gi, si) => EntryProbe::Found(gi, si),
-            FindOrLocateResult::InsertSlot(gi, si, mask) => EntryProbe::Vacant(Some((gi, si, mask))),
+            FindOrLocateResult::InsertSlot(gi, si, mask) => {
+                EntryProbe::Vacant(Some((gi, si, mask)))
+            }
             FindOrLocateResult::NotFound => EntryProbe::Vacant(None),
         }
     }
@@ -681,9 +726,16 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         self.insert_no_check_impl(h, k, v)
     }
 
-    fn ensure_capacity<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
+    fn ensure_capacity<H: BuildHasher>(&mut self, hb: &H)
+    where
+        K: Hash,
+    {
         if self.len >= self.max_load {
-            let new_groups = if self.max_load == 0 { 1 } else { (self.mask + 1) * 2 };
+            let new_groups = if self.max_load == 0 {
+                1
+            } else {
+                (self.mask + 1) * 2
+            };
             self.rehash_with_impl(new_groups, hb);
         }
     }
@@ -719,7 +771,10 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         }
     }
 
-    fn reserve<H: BuildHasher>(&mut self, additional: usize, hb: &H) where K: Hash {
+    fn reserve<H: BuildHasher>(&mut self, additional: usize, hb: &H)
+    where
+        K: Hash,
+    {
         let needed = self.len.checked_add(additional).expect("capacity overflow");
         if self.max_load == 0 {
             if additional > 0 {
@@ -735,7 +790,10 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         }
     }
 
-    fn shrink_to_fit<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
+    fn shrink_to_fit<H: BuildHasher>(&mut self, hb: &H)
+    where
+        K: Hash,
+    {
         if self.len == 0 {
             let mut empty = Self::new();
             std::mem::swap(self, &mut empty);
@@ -759,7 +817,11 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         let mask = self.first_non_empty_mask();
         let table = unsafe { ptr::read(&self) };
         std::mem::forget(self);
-        IntoIter { table, group: 0, current_mask: mask }
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
     }
 
     fn drain_impl(&mut self) -> IntoIter<K, V, L, S> {
@@ -767,11 +829,18 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
         table.into_iter_impl()
     }
 
-    fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hb: &H) where K: Hash {
+    fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hb: &H)
+    where
+        K: Hash,
+    {
         self.rehash_with_impl(new_num_groups, hb);
     }
 
-    fn clone_table(&self) -> Self where K: Clone, V: Clone {
+    fn clone_table(&self) -> Self
+    where
+        K: Clone,
+        V: Clone,
+    {
         if self.max_load == 0 {
             return Self::new();
         }
@@ -802,7 +871,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K,
 
 impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Drop for RawTable<K, V, L, S> {
     fn drop(&mut self) {
-        if self.max_load == 0 { return; }
+        if self.max_load == 0 {
+            return;
+        }
         if S::needs_drop() {
             unsafe {
                 for gi in 0..self.mask + 1 {
@@ -813,7 +884,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Drop for RawTable<K, V, L, S> {
                 }
             }
         }
-        unsafe { self.deallocate(); }
+        unsafe {
+            self.deallocate();
+        }
     }
 }
 
@@ -878,7 +951,9 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> Iterator for IntoIter<K, V, L, S>
             if self.group > self.table.mask {
                 return None;
             }
-            self.current_mask = unsafe { L::Grp::match_non_empty(self.table.ctrl.add(self.group * L::META_STRIDE)) };
+            self.current_mask = unsafe {
+                L::Grp::match_non_empty(self.table.ctrl.add(self.group * L::META_STRIDE))
+            };
         }
     }
 
@@ -960,229 +1035,764 @@ mod tests {
     }
 
     // Existing layouts
-    #[test] fn ufm_basic() { test_basic::<UfmLayout>(); }
-    #[test] fn splitsies_basic() { test_basic::<SplitsiesLayout>(); }
-    #[test] fn gaps_basic() { test_basic::<GapsLayout>(); }
-    #[test] fn ufm_grow() { test_grow::<UfmLayout>(); }
-    #[test] fn splitsies_grow() { test_grow::<SplitsiesLayout>(); }
-    #[test] fn gaps_grow() { test_grow::<GapsLayout>(); }
-    #[test] fn ufm_clone() { test_clone::<UfmLayout>(); }
-    #[test] fn splitsies_clone() { test_clone::<SplitsiesLayout>(); }
-    #[test] fn gaps_clone() { test_clone::<GapsLayout>(); }
-    #[test] fn ufm_into_iter() { test_into_iter::<UfmLayout>(); }
-    #[test] fn splitsies_into_iter() { test_into_iter::<SplitsiesLayout>(); }
-    #[test] fn gaps_into_iter() { test_into_iter::<GapsLayout>(); }
+    #[test]
+    fn ufm_basic() {
+        test_basic::<UfmLayout>();
+    }
+    #[test]
+    fn splitsies_basic() {
+        test_basic::<SplitsiesLayout>();
+    }
+    #[test]
+    fn gaps_basic() {
+        test_basic::<GapsLayout>();
+    }
+    #[test]
+    fn ufm_grow() {
+        test_grow::<UfmLayout>();
+    }
+    #[test]
+    fn splitsies_grow() {
+        test_grow::<SplitsiesLayout>();
+    }
+    #[test]
+    fn gaps_grow() {
+        test_grow::<GapsLayout>();
+    }
+    #[test]
+    fn ufm_clone() {
+        test_clone::<UfmLayout>();
+    }
+    #[test]
+    fn splitsies_clone() {
+        test_clone::<SplitsiesLayout>();
+    }
+    #[test]
+    fn gaps_clone() {
+        test_clone::<GapsLayout>();
+    }
+    #[test]
+    fn ufm_into_iter() {
+        test_into_iter::<UfmLayout>();
+    }
+    #[test]
+    fn splitsies_into_iter() {
+        test_into_iter::<SplitsiesLayout>();
+    }
+    #[test]
+    fn gaps_into_iter() {
+        test_into_iter::<GapsLayout>();
+    }
 
     // Matrix entries
     use crate::raw::group_layout::{
-        Byte1_8bit, Byte1_Emb, Byte1_EmbP2,
-        Byte0_128_8bit, Byte0_128_1bit, Byte0_128_Emb, Byte0_128_EmbP2,
-        Byte0_1bit,
-        Byte7_128_1bitAnd, Byte7_128_8bitAnd, Byte7_128Ch_EmbAnd, Byte7_128Ch_EmbP2And,
-        Byte7_255_1bitAnd, Byte7_255_8bitAnd, Byte7_255Ch_EmbAnd, Byte7_255Ch_EmbP2And,
+        Byte0_1bit, Byte0_128_1bit, Byte0_128_8bit, Byte0_128_Emb, Byte0_128_EmbP2, Byte1_8bit,
+        Byte1_Emb, Byte1_EmbP2, Byte7_128_1bitAnd, Byte7_128_8bitAnd, Byte7_128Ch_EmbAnd,
+        Byte7_128Ch_EmbP2And, Byte7_255_1bitAnd, Byte7_255_8bitAnd, Byte7_255Ch_EmbAnd,
+        Byte7_255Ch_EmbP2And,
     };
 
     // Matrix entries — all 4 test functions
-    #[test] fn hi8_8bit_basic() { test_basic::<Byte1_8bit>(); }
-    #[test] fn hi8_8bit_grow() { test_grow::<Byte1_8bit>(); }
-    #[test] fn hi8_8bit_clone() { test_clone::<Byte1_8bit>(); }
-    #[test] fn hi8_8bit_into_iter() { test_into_iter::<Byte1_8bit>(); }
-    #[test] fn lo128_8bit_basic() { test_basic::<Byte0_128_8bit>(); }
-    #[test] fn lo128_8bit_grow() { test_grow::<Byte0_128_8bit>(); }
-    #[test] fn lo128_8bit_clone() { test_clone::<Byte0_128_8bit>(); }
-    #[test] fn lo128_8bit_into_iter() { test_into_iter::<Byte0_128_8bit>(); }
-    #[test] fn lo128_1bit_basic() { test_basic::<Byte0_128_1bit>(); }
-    #[test] fn lo128_1bit_grow() { test_grow::<Byte0_128_1bit>(); }
-    #[test] fn lo128_1bit_clone() { test_clone::<Byte0_128_1bit>(); }
-    #[test] fn lo128_1bit_into_iter() { test_into_iter::<Byte0_128_1bit>(); }
-    #[test] fn lo8_1bit_basic() { test_basic::<Byte0_1bit>(); }
-    #[test] fn lo8_1bit_grow() { test_grow::<Byte0_1bit>(); }
-    #[test] fn lo8_1bit_clone() { test_clone::<Byte0_1bit>(); }
-    #[test] fn lo8_1bit_into_iter() { test_into_iter::<Byte0_1bit>(); }
+    #[test]
+    fn hi8_8bit_basic() {
+        test_basic::<Byte1_8bit>();
+    }
+    #[test]
+    fn hi8_8bit_grow() {
+        test_grow::<Byte1_8bit>();
+    }
+    #[test]
+    fn hi8_8bit_clone() {
+        test_clone::<Byte1_8bit>();
+    }
+    #[test]
+    fn hi8_8bit_into_iter() {
+        test_into_iter::<Byte1_8bit>();
+    }
+    #[test]
+    fn lo128_8bit_basic() {
+        test_basic::<Byte0_128_8bit>();
+    }
+    #[test]
+    fn lo128_8bit_grow() {
+        test_grow::<Byte0_128_8bit>();
+    }
+    #[test]
+    fn lo128_8bit_clone() {
+        test_clone::<Byte0_128_8bit>();
+    }
+    #[test]
+    fn lo128_8bit_into_iter() {
+        test_into_iter::<Byte0_128_8bit>();
+    }
+    #[test]
+    fn lo128_1bit_basic() {
+        test_basic::<Byte0_128_1bit>();
+    }
+    #[test]
+    fn lo128_1bit_grow() {
+        test_grow::<Byte0_128_1bit>();
+    }
+    #[test]
+    fn lo128_1bit_clone() {
+        test_clone::<Byte0_128_1bit>();
+    }
+    #[test]
+    fn lo128_1bit_into_iter() {
+        test_into_iter::<Byte0_128_1bit>();
+    }
+    #[test]
+    fn lo8_1bit_basic() {
+        test_basic::<Byte0_1bit>();
+    }
+    #[test]
+    fn lo8_1bit_grow() {
+        test_grow::<Byte0_1bit>();
+    }
+    #[test]
+    fn lo8_1bit_clone() {
+        test_clone::<Byte0_1bit>();
+    }
+    #[test]
+    fn lo8_1bit_into_iter() {
+        test_into_iter::<Byte0_1bit>();
+    }
 
     // AND-indexed variants
-    #[test] fn top128_1bit_and_basic() { test_basic::<Byte7_128_1bitAnd>(); }
-    #[test] fn top128_1bit_and_grow() { test_grow::<Byte7_128_1bitAnd>(); }
-    #[test] fn top128_1bit_and_clone() { test_clone::<Byte7_128_1bitAnd>(); }
-    #[test] fn top128_1bit_and_into_iter() { test_into_iter::<Byte7_128_1bitAnd>(); }
-    #[test] fn top255_1bit_and_basic() { test_basic::<Byte7_255_1bitAnd>(); }
-    #[test] fn top255_1bit_and_grow() { test_grow::<Byte7_255_1bitAnd>(); }
-    #[test] fn top255_1bit_and_clone() { test_clone::<Byte7_255_1bitAnd>(); }
-    #[test] fn top255_1bit_and_into_iter() { test_into_iter::<Byte7_255_1bitAnd>(); }
+    #[test]
+    fn top128_1bit_and_basic() {
+        test_basic::<Byte7_128_1bitAnd>();
+    }
+    #[test]
+    fn top128_1bit_and_grow() {
+        test_grow::<Byte7_128_1bitAnd>();
+    }
+    #[test]
+    fn top128_1bit_and_clone() {
+        test_clone::<Byte7_128_1bitAnd>();
+    }
+    #[test]
+    fn top128_1bit_and_into_iter() {
+        test_into_iter::<Byte7_128_1bitAnd>();
+    }
+    #[test]
+    fn top255_1bit_and_basic() {
+        test_basic::<Byte7_255_1bitAnd>();
+    }
+    #[test]
+    fn top255_1bit_and_grow() {
+        test_grow::<Byte7_255_1bitAnd>();
+    }
+    #[test]
+    fn top255_1bit_and_clone() {
+        test_clone::<Byte7_255_1bitAnd>();
+    }
+    #[test]
+    fn top255_1bit_and_into_iter() {
+        test_into_iter::<Byte7_255_1bitAnd>();
+    }
 
     // AND-indexed 8-bit overflow (shifted channels)
-    #[test] fn top128_8bit_and_basic() { test_basic::<Byte7_128_8bitAnd>(); }
-    #[test] fn top128_8bit_and_grow() { test_grow::<Byte7_128_8bitAnd>(); }
-    #[test] fn top128_8bit_and_clone() { test_clone::<Byte7_128_8bitAnd>(); }
-    #[test] fn top128_8bit_and_into_iter() { test_into_iter::<Byte7_128_8bitAnd>(); }
-    #[test] fn top255_8bit_and_basic() { test_basic::<Byte7_255_8bitAnd>(); }
-    #[test] fn top255_8bit_and_grow() { test_grow::<Byte7_255_8bitAnd>(); }
-    #[test] fn top255_8bit_and_clone() { test_clone::<Byte7_255_8bitAnd>(); }
-    #[test] fn top255_8bit_and_into_iter() { test_into_iter::<Byte7_255_8bitAnd>(); }
+    #[test]
+    fn top128_8bit_and_basic() {
+        test_basic::<Byte7_128_8bitAnd>();
+    }
+    #[test]
+    fn top128_8bit_and_grow() {
+        test_grow::<Byte7_128_8bitAnd>();
+    }
+    #[test]
+    fn top128_8bit_and_clone() {
+        test_clone::<Byte7_128_8bitAnd>();
+    }
+    #[test]
+    fn top128_8bit_and_into_iter() {
+        test_into_iter::<Byte7_128_8bitAnd>();
+    }
+    #[test]
+    fn top255_8bit_and_basic() {
+        test_basic::<Byte7_255_8bitAnd>();
+    }
+    #[test]
+    fn top255_8bit_and_grow() {
+        test_grow::<Byte7_255_8bitAnd>();
+    }
+    #[test]
+    fn top255_8bit_and_clone() {
+        test_clone::<Byte7_255_8bitAnd>();
+    }
+    #[test]
+    fn top255_8bit_and_into_iter() {
+        test_into_iter::<Byte7_255_8bitAnd>();
+    }
 
     // Embedded 16-slot matrix (other tags)
-    #[test] fn hi8_emb_basic() { test_basic::<Byte1_Emb>(); }
-    #[test] fn hi8_emb_grow() { test_grow::<Byte1_Emb>(); }
-    #[test] fn hi8_embp2_basic() { test_basic::<Byte1_EmbP2>(); }
-    #[test] fn hi8_embp2_grow() { test_grow::<Byte1_EmbP2>(); }
-    #[test] fn lo128_emb_basic() { test_basic::<Byte0_128_Emb>(); }
-    #[test] fn lo128_emb_grow() { test_grow::<Byte0_128_Emb>(); }
-    #[test] fn lo128_embp2_basic() { test_basic::<Byte0_128_EmbP2>(); }
-    #[test] fn lo128_embp2_grow() { test_grow::<Byte0_128_EmbP2>(); }
-    #[test] fn top128_emband_basic() { test_basic::<Byte7_128Ch_EmbAnd>(); }
-    #[test] fn top128_emband_grow() { test_grow::<Byte7_128Ch_EmbAnd>(); }
-    #[test] fn top128_embp2and_basic() { test_basic::<Byte7_128Ch_EmbP2And>(); }
-    #[test] fn top128_embp2and_grow() { test_grow::<Byte7_128Ch_EmbP2And>(); }
-    #[test] fn top255_emband_basic() { test_basic::<Byte7_255Ch_EmbAnd>(); }
-    #[test] fn top255_emband_grow() { test_grow::<Byte7_255Ch_EmbAnd>(); }
-    #[test] fn top255_embp2and_basic() { test_basic::<Byte7_255Ch_EmbP2And>(); }
-    #[test] fn top255_embp2and_grow() { test_grow::<Byte7_255Ch_EmbP2And>(); }
+    #[test]
+    fn hi8_emb_basic() {
+        test_basic::<Byte1_Emb>();
+    }
+    #[test]
+    fn hi8_emb_grow() {
+        test_grow::<Byte1_Emb>();
+    }
+    #[test]
+    fn hi8_embp2_basic() {
+        test_basic::<Byte1_EmbP2>();
+    }
+    #[test]
+    fn hi8_embp2_grow() {
+        test_grow::<Byte1_EmbP2>();
+    }
+    #[test]
+    fn lo128_emb_basic() {
+        test_basic::<Byte0_128_Emb>();
+    }
+    #[test]
+    fn lo128_emb_grow() {
+        test_grow::<Byte0_128_Emb>();
+    }
+    #[test]
+    fn lo128_embp2_basic() {
+        test_basic::<Byte0_128_EmbP2>();
+    }
+    #[test]
+    fn lo128_embp2_grow() {
+        test_grow::<Byte0_128_EmbP2>();
+    }
+    #[test]
+    fn top128_emband_basic() {
+        test_basic::<Byte7_128Ch_EmbAnd>();
+    }
+    #[test]
+    fn top128_emband_grow() {
+        test_grow::<Byte7_128Ch_EmbAnd>();
+    }
+    #[test]
+    fn top128_embp2and_basic() {
+        test_basic::<Byte7_128Ch_EmbP2And>();
+    }
+    #[test]
+    fn top128_embp2and_grow() {
+        test_grow::<Byte7_128Ch_EmbP2And>();
+    }
+    #[test]
+    fn top255_emband_basic() {
+        test_basic::<Byte7_255Ch_EmbAnd>();
+    }
+    #[test]
+    fn top255_emband_grow() {
+        test_grow::<Byte7_255Ch_EmbAnd>();
+    }
+    #[test]
+    fn top255_embp2and_basic() {
+        test_basic::<Byte7_255Ch_EmbP2And>();
+    }
+    #[test]
+    fn top255_embp2and_grow() {
+        test_grow::<Byte7_255Ch_EmbP2And>();
+    }
 
     // 32-slot (AVX2) layouts
     use crate::raw::group_layout::{
-        Gaps32Layout, Byte1_8bit32, Byte1_Emb32, Byte1_EmbP232,
-        Byte0_128_1bit32, Byte0_128_8bit32, Byte0_128_Emb32, Byte0_128_EmbP232,
-        Splitsies32Layout, Splitsies32_1bit,
-        Byte7_128_1bitAnd32, Byte7_128_8bitAnd32, Byte7_128Ch_EmbAnd32, Byte7_128Ch_EmbP2And32,
-        Byte7_255_1bitAnd32, Byte7_255_8bitAnd32, Byte7_255Ch_EmbAnd32, Byte7_255Ch_EmbP2And32,
-        Ufm32Layout,
+        Byte0_128_1bit32, Byte0_128_8bit32, Byte0_128_Emb32, Byte0_128_EmbP232, Byte1_8bit32,
+        Byte1_Emb32, Byte1_EmbP232, Byte7_128_1bitAnd32, Byte7_128_8bitAnd32, Byte7_128Ch_EmbAnd32,
+        Byte7_128Ch_EmbP2And32, Byte7_255_1bitAnd32, Byte7_255_8bitAnd32, Byte7_255Ch_EmbAnd32,
+        Byte7_255Ch_EmbP2And32, Gaps32Layout, Splitsies32_1bit, Splitsies32Layout, Ufm32Layout,
     };
 
-    #[test] fn splitsies32_basic() { test_basic::<Splitsies32Layout>(); }
-    #[test] fn splitsies32_grow() { test_grow::<Splitsies32Layout>(); }
-    #[test] fn splitsies32_clone() { test_clone::<Splitsies32Layout>(); }
-    #[test] fn splitsies32_into_iter() { test_into_iter::<Splitsies32Layout>(); }
-    #[test] fn splitsies32_1bit_basic() { test_basic::<Splitsies32_1bit>(); }
-    #[test] fn splitsies32_1bit_grow() { test_grow::<Splitsies32_1bit>(); }
-    #[test] fn splitsies32_1bit_clone() { test_clone::<Splitsies32_1bit>(); }
-    #[test] fn splitsies32_1bit_into_iter() { test_into_iter::<Splitsies32_1bit>(); }
-    #[test] fn hi8_8bit32_basic() { test_basic::<Byte1_8bit32>(); }
-    #[test] fn hi8_8bit32_grow() { test_grow::<Byte1_8bit32>(); }
-    #[test] fn hi8_8bit32_clone() { test_clone::<Byte1_8bit32>(); }
-    #[test] fn hi8_8bit32_into_iter() { test_into_iter::<Byte1_8bit32>(); }
-    #[test] fn lo128_8bit32_basic() { test_basic::<Byte0_128_8bit32>(); }
-    #[test] fn lo128_8bit32_grow() { test_grow::<Byte0_128_8bit32>(); }
-    #[test] fn lo128_8bit32_clone() { test_clone::<Byte0_128_8bit32>(); }
-    #[test] fn lo128_8bit32_into_iter() { test_into_iter::<Byte0_128_8bit32>(); }
-    #[test] fn lo128_1bit32_basic() { test_basic::<Byte0_128_1bit32>(); }
-    #[test] fn lo128_1bit32_grow() { test_grow::<Byte0_128_1bit32>(); }
-    #[test] fn lo128_1bit32_clone() { test_clone::<Byte0_128_1bit32>(); }
-    #[test] fn lo128_1bit32_into_iter() { test_into_iter::<Byte0_128_1bit32>(); }
-    #[test] fn ufm32_basic() { test_basic::<Ufm32Layout>(); }
-    #[test] fn ufm32_grow() { test_grow::<Ufm32Layout>(); }
-    #[test] fn ufm32_clone() { test_clone::<Ufm32Layout>(); }
-    #[test] fn ufm32_into_iter() { test_into_iter::<Ufm32Layout>(); }
-    #[test] fn gaps32_basic() { test_basic::<Gaps32Layout>(); }
-    #[test] fn gaps32_grow() { test_grow::<Gaps32Layout>(); }
-    #[test] fn gaps32_clone() { test_clone::<Gaps32Layout>(); }
-    #[test] fn gaps32_into_iter() { test_into_iter::<Gaps32Layout>(); }
+    #[test]
+    fn splitsies32_basic() {
+        test_basic::<Splitsies32Layout>();
+    }
+    #[test]
+    fn splitsies32_grow() {
+        test_grow::<Splitsies32Layout>();
+    }
+    #[test]
+    fn splitsies32_clone() {
+        test_clone::<Splitsies32Layout>();
+    }
+    #[test]
+    fn splitsies32_into_iter() {
+        test_into_iter::<Splitsies32Layout>();
+    }
+    #[test]
+    fn splitsies32_1bit_basic() {
+        test_basic::<Splitsies32_1bit>();
+    }
+    #[test]
+    fn splitsies32_1bit_grow() {
+        test_grow::<Splitsies32_1bit>();
+    }
+    #[test]
+    fn splitsies32_1bit_clone() {
+        test_clone::<Splitsies32_1bit>();
+    }
+    #[test]
+    fn splitsies32_1bit_into_iter() {
+        test_into_iter::<Splitsies32_1bit>();
+    }
+    #[test]
+    fn hi8_8bit32_basic() {
+        test_basic::<Byte1_8bit32>();
+    }
+    #[test]
+    fn hi8_8bit32_grow() {
+        test_grow::<Byte1_8bit32>();
+    }
+    #[test]
+    fn hi8_8bit32_clone() {
+        test_clone::<Byte1_8bit32>();
+    }
+    #[test]
+    fn hi8_8bit32_into_iter() {
+        test_into_iter::<Byte1_8bit32>();
+    }
+    #[test]
+    fn lo128_8bit32_basic() {
+        test_basic::<Byte0_128_8bit32>();
+    }
+    #[test]
+    fn lo128_8bit32_grow() {
+        test_grow::<Byte0_128_8bit32>();
+    }
+    #[test]
+    fn lo128_8bit32_clone() {
+        test_clone::<Byte0_128_8bit32>();
+    }
+    #[test]
+    fn lo128_8bit32_into_iter() {
+        test_into_iter::<Byte0_128_8bit32>();
+    }
+    #[test]
+    fn lo128_1bit32_basic() {
+        test_basic::<Byte0_128_1bit32>();
+    }
+    #[test]
+    fn lo128_1bit32_grow() {
+        test_grow::<Byte0_128_1bit32>();
+    }
+    #[test]
+    fn lo128_1bit32_clone() {
+        test_clone::<Byte0_128_1bit32>();
+    }
+    #[test]
+    fn lo128_1bit32_into_iter() {
+        test_into_iter::<Byte0_128_1bit32>();
+    }
+    #[test]
+    fn ufm32_basic() {
+        test_basic::<Ufm32Layout>();
+    }
+    #[test]
+    fn ufm32_grow() {
+        test_grow::<Ufm32Layout>();
+    }
+    #[test]
+    fn ufm32_clone() {
+        test_clone::<Ufm32Layout>();
+    }
+    #[test]
+    fn ufm32_into_iter() {
+        test_into_iter::<Ufm32Layout>();
+    }
+    #[test]
+    fn gaps32_basic() {
+        test_basic::<Gaps32Layout>();
+    }
+    #[test]
+    fn gaps32_grow() {
+        test_grow::<Gaps32Layout>();
+    }
+    #[test]
+    fn gaps32_clone() {
+        test_clone::<Gaps32Layout>();
+    }
+    #[test]
+    fn gaps32_into_iter() {
+        test_into_iter::<Gaps32Layout>();
+    }
 
     // Embedded 32-slot matrix (other tags)
-    #[test] fn hi8_emb32_basic() { test_basic::<Byte1_Emb32>(); }
-    #[test] fn hi8_emb32_grow() { test_grow::<Byte1_Emb32>(); }
-    #[test] fn hi8_embp232_basic() { test_basic::<Byte1_EmbP232>(); }
-    #[test] fn hi8_embp232_grow() { test_grow::<Byte1_EmbP232>(); }
-    #[test] fn lo128_emb32_basic() { test_basic::<Byte0_128_Emb32>(); }
-    #[test] fn lo128_emb32_grow() { test_grow::<Byte0_128_Emb32>(); }
-    #[test] fn lo128_embp232_basic() { test_basic::<Byte0_128_EmbP232>(); }
-    #[test] fn lo128_embp232_grow() { test_grow::<Byte0_128_EmbP232>(); }
-    #[test] fn top128_embandp232_basic() { test_basic::<Byte7_128Ch_EmbP2And32>(); }
-    #[test] fn top128_embandp232_grow() { test_grow::<Byte7_128Ch_EmbP2And32>(); }
-    #[test] fn top128_emband32_basic() { test_basic::<Byte7_128Ch_EmbAnd32>(); }
-    #[test] fn top128_emband32_grow() { test_grow::<Byte7_128Ch_EmbAnd32>(); }
-    #[test] fn top255_emband32_basic() { test_basic::<Byte7_255Ch_EmbAnd32>(); }
-    #[test] fn top255_emband32_grow() { test_grow::<Byte7_255Ch_EmbAnd32>(); }
-    #[test] fn top255_embandp232_basic() { test_basic::<Byte7_255Ch_EmbP2And32>(); }
-    #[test] fn top255_embandp232_grow() { test_grow::<Byte7_255Ch_EmbP2And32>(); }
-    #[test] fn top128_1bit_and32_basic() { test_basic::<Byte7_128_1bitAnd32>(); }
-    #[test] fn top128_1bit_and32_grow() { test_grow::<Byte7_128_1bitAnd32>(); }
-    #[test] fn top128_1bit_and32_clone() { test_clone::<Byte7_128_1bitAnd32>(); }
-    #[test] fn top128_1bit_and32_into_iter() { test_into_iter::<Byte7_128_1bitAnd32>(); }
-    #[test] fn top255_1bit_and32_basic() { test_basic::<Byte7_255_1bitAnd32>(); }
-    #[test] fn top255_1bit_and32_grow() { test_grow::<Byte7_255_1bitAnd32>(); }
-    #[test] fn top255_1bit_and32_clone() { test_clone::<Byte7_255_1bitAnd32>(); }
-    #[test] fn top255_1bit_and32_into_iter() { test_into_iter::<Byte7_255_1bitAnd32>(); }
-    #[test] fn top128_8bit_and32_basic() { test_basic::<Byte7_128_8bitAnd32>(); }
-    #[test] fn top128_8bit_and32_grow() { test_grow::<Byte7_128_8bitAnd32>(); }
-    #[test] fn top128_8bit_and32_clone() { test_clone::<Byte7_128_8bitAnd32>(); }
-    #[test] fn top128_8bit_and32_into_iter() { test_into_iter::<Byte7_128_8bitAnd32>(); }
-    #[test] fn top255_8bit_and32_basic() { test_basic::<Byte7_255_8bitAnd32>(); }
-    #[test] fn top255_8bit_and32_grow() { test_grow::<Byte7_255_8bitAnd32>(); }
-    #[test] fn top255_8bit_and32_clone() { test_clone::<Byte7_255_8bitAnd32>(); }
-    #[test] fn top255_8bit_and32_into_iter() { test_into_iter::<Byte7_255_8bitAnd32>(); }
+    #[test]
+    fn hi8_emb32_basic() {
+        test_basic::<Byte1_Emb32>();
+    }
+    #[test]
+    fn hi8_emb32_grow() {
+        test_grow::<Byte1_Emb32>();
+    }
+    #[test]
+    fn hi8_embp232_basic() {
+        test_basic::<Byte1_EmbP232>();
+    }
+    #[test]
+    fn hi8_embp232_grow() {
+        test_grow::<Byte1_EmbP232>();
+    }
+    #[test]
+    fn lo128_emb32_basic() {
+        test_basic::<Byte0_128_Emb32>();
+    }
+    #[test]
+    fn lo128_emb32_grow() {
+        test_grow::<Byte0_128_Emb32>();
+    }
+    #[test]
+    fn lo128_embp232_basic() {
+        test_basic::<Byte0_128_EmbP232>();
+    }
+    #[test]
+    fn lo128_embp232_grow() {
+        test_grow::<Byte0_128_EmbP232>();
+    }
+    #[test]
+    fn top128_embandp232_basic() {
+        test_basic::<Byte7_128Ch_EmbP2And32>();
+    }
+    #[test]
+    fn top128_embandp232_grow() {
+        test_grow::<Byte7_128Ch_EmbP2And32>();
+    }
+    #[test]
+    fn top128_emband32_basic() {
+        test_basic::<Byte7_128Ch_EmbAnd32>();
+    }
+    #[test]
+    fn top128_emband32_grow() {
+        test_grow::<Byte7_128Ch_EmbAnd32>();
+    }
+    #[test]
+    fn top255_emband32_basic() {
+        test_basic::<Byte7_255Ch_EmbAnd32>();
+    }
+    #[test]
+    fn top255_emband32_grow() {
+        test_grow::<Byte7_255Ch_EmbAnd32>();
+    }
+    #[test]
+    fn top255_embandp232_basic() {
+        test_basic::<Byte7_255Ch_EmbP2And32>();
+    }
+    #[test]
+    fn top255_embandp232_grow() {
+        test_grow::<Byte7_255Ch_EmbP2And32>();
+    }
+    #[test]
+    fn top128_1bit_and32_basic() {
+        test_basic::<Byte7_128_1bitAnd32>();
+    }
+    #[test]
+    fn top128_1bit_and32_grow() {
+        test_grow::<Byte7_128_1bitAnd32>();
+    }
+    #[test]
+    fn top128_1bit_and32_clone() {
+        test_clone::<Byte7_128_1bitAnd32>();
+    }
+    #[test]
+    fn top128_1bit_and32_into_iter() {
+        test_into_iter::<Byte7_128_1bitAnd32>();
+    }
+    #[test]
+    fn top255_1bit_and32_basic() {
+        test_basic::<Byte7_255_1bitAnd32>();
+    }
+    #[test]
+    fn top255_1bit_and32_grow() {
+        test_grow::<Byte7_255_1bitAnd32>();
+    }
+    #[test]
+    fn top255_1bit_and32_clone() {
+        test_clone::<Byte7_255_1bitAnd32>();
+    }
+    #[test]
+    fn top255_1bit_and32_into_iter() {
+        test_into_iter::<Byte7_255_1bitAnd32>();
+    }
+    #[test]
+    fn top128_8bit_and32_basic() {
+        test_basic::<Byte7_128_8bitAnd32>();
+    }
+    #[test]
+    fn top128_8bit_and32_grow() {
+        test_grow::<Byte7_128_8bitAnd32>();
+    }
+    #[test]
+    fn top128_8bit_and32_clone() {
+        test_clone::<Byte7_128_8bitAnd32>();
+    }
+    #[test]
+    fn top128_8bit_and32_into_iter() {
+        test_into_iter::<Byte7_128_8bitAnd32>();
+    }
+    #[test]
+    fn top255_8bit_and32_basic() {
+        test_basic::<Byte7_255_8bitAnd32>();
+    }
+    #[test]
+    fn top255_8bit_and32_grow() {
+        test_grow::<Byte7_255_8bitAnd32>();
+    }
+    #[test]
+    fn top255_8bit_and32_clone() {
+        test_clone::<Byte7_255_8bitAnd32>();
+    }
+    #[test]
+    fn top255_8bit_and32_into_iter() {
+        test_into_iter::<Byte7_255_8bitAnd32>();
+    }
 
     // 64-slot (AVX-512 / tiered) layouts
     use crate::raw::group_layout::{
-        Gaps64Layout, Byte1_8bit64, Byte1_Emb64, Byte1_EmbP264,
-        Byte0_128_1bit64, Byte0_128_8bit64, Byte0_128_Emb64, Byte0_128_EmbP264,
-        Splitsies64Layout, Splitsies64_1bit,
-        Byte7_128_1bitAnd64, Byte7_128_8bitAnd64, Byte7_128Ch_EmbAnd64, Byte7_128Ch_EmbP2And64,
-        Byte7_255_1bitAnd64, Byte7_255_8bitAnd64, Byte7_255Ch_EmbAnd64, Byte7_255Ch_EmbP2And64,
-        Ufm64Layout,
+        Byte0_128_1bit64, Byte0_128_8bit64, Byte0_128_Emb64, Byte0_128_EmbP264, Byte1_8bit64,
+        Byte1_Emb64, Byte1_EmbP264, Byte7_128_1bitAnd64, Byte7_128_8bitAnd64, Byte7_128Ch_EmbAnd64,
+        Byte7_128Ch_EmbP2And64, Byte7_255_1bitAnd64, Byte7_255_8bitAnd64, Byte7_255Ch_EmbAnd64,
+        Byte7_255Ch_EmbP2And64, Gaps64Layout, Splitsies64_1bit, Splitsies64Layout, Ufm64Layout,
     };
 
-    #[test] fn splitsies64_basic() { test_basic::<Splitsies64Layout>(); }
-    #[test] fn splitsies64_grow() { test_grow::<Splitsies64Layout>(); }
-    #[test] fn splitsies64_clone() { test_clone::<Splitsies64Layout>(); }
-    #[test] fn splitsies64_into_iter() { test_into_iter::<Splitsies64Layout>(); }
-    #[test] fn splitsies64_1bit_basic() { test_basic::<Splitsies64_1bit>(); }
-    #[test] fn splitsies64_1bit_grow() { test_grow::<Splitsies64_1bit>(); }
-    #[test] fn splitsies64_1bit_clone() { test_clone::<Splitsies64_1bit>(); }
-    #[test] fn splitsies64_1bit_into_iter() { test_into_iter::<Splitsies64_1bit>(); }
-    #[test] fn hi8_8bit64_basic() { test_basic::<Byte1_8bit64>(); }
-    #[test] fn hi8_8bit64_grow() { test_grow::<Byte1_8bit64>(); }
-    #[test] fn hi8_8bit64_clone() { test_clone::<Byte1_8bit64>(); }
-    #[test] fn hi8_8bit64_into_iter() { test_into_iter::<Byte1_8bit64>(); }
-    #[test] fn lo128_8bit64_basic() { test_basic::<Byte0_128_8bit64>(); }
-    #[test] fn lo128_8bit64_grow() { test_grow::<Byte0_128_8bit64>(); }
-    #[test] fn lo128_8bit64_clone() { test_clone::<Byte0_128_8bit64>(); }
-    #[test] fn lo128_8bit64_into_iter() { test_into_iter::<Byte0_128_8bit64>(); }
-    #[test] fn lo128_1bit64_basic() { test_basic::<Byte0_128_1bit64>(); }
-    #[test] fn lo128_1bit64_grow() { test_grow::<Byte0_128_1bit64>(); }
-    #[test] fn lo128_1bit64_clone() { test_clone::<Byte0_128_1bit64>(); }
-    #[test] fn lo128_1bit64_into_iter() { test_into_iter::<Byte0_128_1bit64>(); }
-    #[test] fn ufm64_basic() { test_basic::<Ufm64Layout>(); }
-    #[test] fn ufm64_grow() { test_grow::<Ufm64Layout>(); }
-    #[test] fn ufm64_clone() { test_clone::<Ufm64Layout>(); }
-    #[test] fn ufm64_into_iter() { test_into_iter::<Ufm64Layout>(); }
-    #[test] fn gaps64_basic() { test_basic::<Gaps64Layout>(); }
-    #[test] fn gaps64_grow() { test_grow::<Gaps64Layout>(); }
-    #[test] fn gaps64_clone() { test_clone::<Gaps64Layout>(); }
-    #[test] fn gaps64_into_iter() { test_into_iter::<Gaps64Layout>(); }
+    #[test]
+    fn splitsies64_basic() {
+        test_basic::<Splitsies64Layout>();
+    }
+    #[test]
+    fn splitsies64_grow() {
+        test_grow::<Splitsies64Layout>();
+    }
+    #[test]
+    fn splitsies64_clone() {
+        test_clone::<Splitsies64Layout>();
+    }
+    #[test]
+    fn splitsies64_into_iter() {
+        test_into_iter::<Splitsies64Layout>();
+    }
+    #[test]
+    fn splitsies64_1bit_basic() {
+        test_basic::<Splitsies64_1bit>();
+    }
+    #[test]
+    fn splitsies64_1bit_grow() {
+        test_grow::<Splitsies64_1bit>();
+    }
+    #[test]
+    fn splitsies64_1bit_clone() {
+        test_clone::<Splitsies64_1bit>();
+    }
+    #[test]
+    fn splitsies64_1bit_into_iter() {
+        test_into_iter::<Splitsies64_1bit>();
+    }
+    #[test]
+    fn hi8_8bit64_basic() {
+        test_basic::<Byte1_8bit64>();
+    }
+    #[test]
+    fn hi8_8bit64_grow() {
+        test_grow::<Byte1_8bit64>();
+    }
+    #[test]
+    fn hi8_8bit64_clone() {
+        test_clone::<Byte1_8bit64>();
+    }
+    #[test]
+    fn hi8_8bit64_into_iter() {
+        test_into_iter::<Byte1_8bit64>();
+    }
+    #[test]
+    fn lo128_8bit64_basic() {
+        test_basic::<Byte0_128_8bit64>();
+    }
+    #[test]
+    fn lo128_8bit64_grow() {
+        test_grow::<Byte0_128_8bit64>();
+    }
+    #[test]
+    fn lo128_8bit64_clone() {
+        test_clone::<Byte0_128_8bit64>();
+    }
+    #[test]
+    fn lo128_8bit64_into_iter() {
+        test_into_iter::<Byte0_128_8bit64>();
+    }
+    #[test]
+    fn lo128_1bit64_basic() {
+        test_basic::<Byte0_128_1bit64>();
+    }
+    #[test]
+    fn lo128_1bit64_grow() {
+        test_grow::<Byte0_128_1bit64>();
+    }
+    #[test]
+    fn lo128_1bit64_clone() {
+        test_clone::<Byte0_128_1bit64>();
+    }
+    #[test]
+    fn lo128_1bit64_into_iter() {
+        test_into_iter::<Byte0_128_1bit64>();
+    }
+    #[test]
+    fn ufm64_basic() {
+        test_basic::<Ufm64Layout>();
+    }
+    #[test]
+    fn ufm64_grow() {
+        test_grow::<Ufm64Layout>();
+    }
+    #[test]
+    fn ufm64_clone() {
+        test_clone::<Ufm64Layout>();
+    }
+    #[test]
+    fn ufm64_into_iter() {
+        test_into_iter::<Ufm64Layout>();
+    }
+    #[test]
+    fn gaps64_basic() {
+        test_basic::<Gaps64Layout>();
+    }
+    #[test]
+    fn gaps64_grow() {
+        test_grow::<Gaps64Layout>();
+    }
+    #[test]
+    fn gaps64_clone() {
+        test_clone::<Gaps64Layout>();
+    }
+    #[test]
+    fn gaps64_into_iter() {
+        test_into_iter::<Gaps64Layout>();
+    }
 
     // Embedded 64-slot matrix (other tags)
-    #[test] fn hi8_emb64_basic() { test_basic::<Byte1_Emb64>(); }
-    #[test] fn hi8_emb64_grow() { test_grow::<Byte1_Emb64>(); }
-    #[test] fn hi8_embp264_basic() { test_basic::<Byte1_EmbP264>(); }
-    #[test] fn hi8_embp264_grow() { test_grow::<Byte1_EmbP264>(); }
-    #[test] fn lo128_emb64_basic() { test_basic::<Byte0_128_Emb64>(); }
-    #[test] fn lo128_emb64_grow() { test_grow::<Byte0_128_Emb64>(); }
-    #[test] fn lo128_embp264_basic() { test_basic::<Byte0_128_EmbP264>(); }
-    #[test] fn lo128_embp264_grow() { test_grow::<Byte0_128_EmbP264>(); }
-    #[test] fn top128_emband64_basic() { test_basic::<Byte7_128Ch_EmbAnd64>(); }
-    #[test] fn top128_emband64_grow() { test_grow::<Byte7_128Ch_EmbAnd64>(); }
-    #[test] fn top128_embp2and64_basic() { test_basic::<Byte7_128Ch_EmbP2And64>(); }
-    #[test] fn top128_embp2and64_grow() { test_grow::<Byte7_128Ch_EmbP2And64>(); }
-    #[test] fn top255_emband64_basic() { test_basic::<Byte7_255Ch_EmbAnd64>(); }
-    #[test] fn top255_emband64_grow() { test_grow::<Byte7_255Ch_EmbAnd64>(); }
-    #[test] fn top255_embp2and64_basic() { test_basic::<Byte7_255Ch_EmbP2And64>(); }
-    #[test] fn top255_embp2and64_grow() { test_grow::<Byte7_255Ch_EmbP2And64>(); }
-    #[test] fn top128_1bit_and64_basic() { test_basic::<Byte7_128_1bitAnd64>(); }
-    #[test] fn top128_1bit_and64_grow() { test_grow::<Byte7_128_1bitAnd64>(); }
-    #[test] fn top128_1bit_and64_clone() { test_clone::<Byte7_128_1bitAnd64>(); }
-    #[test] fn top128_1bit_and64_into_iter() { test_into_iter::<Byte7_128_1bitAnd64>(); }
-    #[test] fn top255_1bit_and64_basic() { test_basic::<Byte7_255_1bitAnd64>(); }
-    #[test] fn top255_1bit_and64_grow() { test_grow::<Byte7_255_1bitAnd64>(); }
-    #[test] fn top255_1bit_and64_clone() { test_clone::<Byte7_255_1bitAnd64>(); }
-    #[test] fn top255_1bit_and64_into_iter() { test_into_iter::<Byte7_255_1bitAnd64>(); }
-    #[test] fn top128_8bit_and64_basic() { test_basic::<Byte7_128_8bitAnd64>(); }
-    #[test] fn top128_8bit_and64_grow() { test_grow::<Byte7_128_8bitAnd64>(); }
-    #[test] fn top128_8bit_and64_clone() { test_clone::<Byte7_128_8bitAnd64>(); }
-    #[test] fn top128_8bit_and64_into_iter() { test_into_iter::<Byte7_128_8bitAnd64>(); }
-    #[test] fn top255_8bit_and64_basic() { test_basic::<Byte7_255_8bitAnd64>(); }
-    #[test] fn top255_8bit_and64_grow() { test_grow::<Byte7_255_8bitAnd64>(); }
-    #[test] fn top255_8bit_and64_clone() { test_clone::<Byte7_255_8bitAnd64>(); }
-    #[test] fn top255_8bit_and64_into_iter() { test_into_iter::<Byte7_255_8bitAnd64>(); }
+    #[test]
+    fn hi8_emb64_basic() {
+        test_basic::<Byte1_Emb64>();
+    }
+    #[test]
+    fn hi8_emb64_grow() {
+        test_grow::<Byte1_Emb64>();
+    }
+    #[test]
+    fn hi8_embp264_basic() {
+        test_basic::<Byte1_EmbP264>();
+    }
+    #[test]
+    fn hi8_embp264_grow() {
+        test_grow::<Byte1_EmbP264>();
+    }
+    #[test]
+    fn lo128_emb64_basic() {
+        test_basic::<Byte0_128_Emb64>();
+    }
+    #[test]
+    fn lo128_emb64_grow() {
+        test_grow::<Byte0_128_Emb64>();
+    }
+    #[test]
+    fn lo128_embp264_basic() {
+        test_basic::<Byte0_128_EmbP264>();
+    }
+    #[test]
+    fn lo128_embp264_grow() {
+        test_grow::<Byte0_128_EmbP264>();
+    }
+    #[test]
+    fn top128_emband64_basic() {
+        test_basic::<Byte7_128Ch_EmbAnd64>();
+    }
+    #[test]
+    fn top128_emband64_grow() {
+        test_grow::<Byte7_128Ch_EmbAnd64>();
+    }
+    #[test]
+    fn top128_embp2and64_basic() {
+        test_basic::<Byte7_128Ch_EmbP2And64>();
+    }
+    #[test]
+    fn top128_embp2and64_grow() {
+        test_grow::<Byte7_128Ch_EmbP2And64>();
+    }
+    #[test]
+    fn top255_emband64_basic() {
+        test_basic::<Byte7_255Ch_EmbAnd64>();
+    }
+    #[test]
+    fn top255_emband64_grow() {
+        test_grow::<Byte7_255Ch_EmbAnd64>();
+    }
+    #[test]
+    fn top255_embp2and64_basic() {
+        test_basic::<Byte7_255Ch_EmbP2And64>();
+    }
+    #[test]
+    fn top255_embp2and64_grow() {
+        test_grow::<Byte7_255Ch_EmbP2And64>();
+    }
+    #[test]
+    fn top128_1bit_and64_basic() {
+        test_basic::<Byte7_128_1bitAnd64>();
+    }
+    #[test]
+    fn top128_1bit_and64_grow() {
+        test_grow::<Byte7_128_1bitAnd64>();
+    }
+    #[test]
+    fn top128_1bit_and64_clone() {
+        test_clone::<Byte7_128_1bitAnd64>();
+    }
+    #[test]
+    fn top128_1bit_and64_into_iter() {
+        test_into_iter::<Byte7_128_1bitAnd64>();
+    }
+    #[test]
+    fn top255_1bit_and64_basic() {
+        test_basic::<Byte7_255_1bitAnd64>();
+    }
+    #[test]
+    fn top255_1bit_and64_grow() {
+        test_grow::<Byte7_255_1bitAnd64>();
+    }
+    #[test]
+    fn top255_1bit_and64_clone() {
+        test_clone::<Byte7_255_1bitAnd64>();
+    }
+    #[test]
+    fn top255_1bit_and64_into_iter() {
+        test_into_iter::<Byte7_255_1bitAnd64>();
+    }
+    #[test]
+    fn top128_8bit_and64_basic() {
+        test_basic::<Byte7_128_8bitAnd64>();
+    }
+    #[test]
+    fn top128_8bit_and64_grow() {
+        test_grow::<Byte7_128_8bitAnd64>();
+    }
+    #[test]
+    fn top128_8bit_and64_clone() {
+        test_clone::<Byte7_128_8bitAnd64>();
+    }
+    #[test]
+    fn top128_8bit_and64_into_iter() {
+        test_into_iter::<Byte7_128_8bitAnd64>();
+    }
+    #[test]
+    fn top255_8bit_and64_basic() {
+        test_basic::<Byte7_255_8bitAnd64>();
+    }
+    #[test]
+    fn top255_8bit_and64_grow() {
+        test_grow::<Byte7_255_8bitAnd64>();
+    }
+    #[test]
+    fn top255_8bit_and64_clone() {
+        test_clone::<Byte7_255_8bitAnd64>();
+    }
+    #[test]
+    fn top255_8bit_and64_into_iter() {
+        test_into_iter::<Byte7_255_8bitAnd64>();
+    }
 
     // ── Custom load factor tests ──────────────────────────────────────────
 
@@ -1218,14 +1828,38 @@ mod tests {
         const LOAD_FACTOR_DEN: usize = 16;
     }
 
-    #[test] fn half_load_basic() { test_basic::<HalfLoadLayout>(); }
-    #[test] fn half_load_grow() { test_grow::<HalfLoadLayout>(); }
-    #[test] fn half_load_clone() { test_clone::<HalfLoadLayout>(); }
-    #[test] fn half_load_into_iter() { test_into_iter::<HalfLoadLayout>(); }
-    #[test] fn high_load_basic() { test_basic::<HighLoadLayout>(); }
-    #[test] fn high_load_grow() { test_grow::<HighLoadLayout>(); }
-    #[test] fn high_load_clone() { test_clone::<HighLoadLayout>(); }
-    #[test] fn high_load_into_iter() { test_into_iter::<HighLoadLayout>(); }
+    #[test]
+    fn half_load_basic() {
+        test_basic::<HalfLoadLayout>();
+    }
+    #[test]
+    fn half_load_grow() {
+        test_grow::<HalfLoadLayout>();
+    }
+    #[test]
+    fn half_load_clone() {
+        test_clone::<HalfLoadLayout>();
+    }
+    #[test]
+    fn half_load_into_iter() {
+        test_into_iter::<HalfLoadLayout>();
+    }
+    #[test]
+    fn high_load_basic() {
+        test_basic::<HighLoadLayout>();
+    }
+    #[test]
+    fn high_load_grow() {
+        test_grow::<HighLoadLayout>();
+    }
+    #[test]
+    fn high_load_clone() {
+        test_clone::<HighLoadLayout>();
+    }
+    #[test]
+    fn high_load_into_iter() {
+        test_into_iter::<HighLoadLayout>();
+    }
 
     /// Verify that a 50% load factor grows earlier (more groups for same element count).
     #[test]
@@ -1235,11 +1869,15 @@ mod tests {
         let high_groups = RawTable::<u64, u64, HighLoadLayout>::groups_for_capacity(100);
 
         // Lower load factor → more groups needed for same capacity
-        assert!(half_groups > default_groups,
-            "50% load factor should need more groups than 87.5%: {half_groups} vs {default_groups}");
+        assert!(
+            half_groups > default_groups,
+            "50% load factor should need more groups than 87.5%: {half_groups} vs {default_groups}"
+        );
         // Higher load factor → fewer groups (or equal)
-        assert!(high_groups <= default_groups,
-            "93.75% load factor should need fewer/equal groups than 87.5%: {high_groups} vs {default_groups}");
+        assert!(
+            high_groups <= default_groups,
+            "93.75% load factor should need fewer/equal groups than 87.5%: {high_groups} vs {default_groups}"
+        );
     }
 
     /// Verify max_load is computed correctly for different load factors.
@@ -1251,15 +1889,21 @@ mod tests {
         let half_max = half.max_load;
         let half_cap = half.capacity();
         // 50% of capacity
-        assert_eq!(half_max, half_cap / 2,
-            "half load: max_load={half_max}, capacity={half_cap}");
+        assert_eq!(
+            half_max,
+            half_cap / 2,
+            "half load: max_load={half_max}, capacity={half_cap}"
+        );
 
         let mut high: RawTable<u64, u64, HighLoadLayout> = RawTable::with_capacity(16);
         let high_max = high.max_load;
         let high_cap = high.capacity();
         // 15/16 of capacity
-        assert_eq!(high_max, high_cap * 15 / 16,
-            "high load: max_load={high_max}, capacity={high_cap}");
+        assert_eq!(
+            high_max,
+            high_cap * 15 / 16,
+            "high load: max_load={high_max}, capacity={high_cap}"
+        );
 
         // Verify the half-load table grows earlier by filling both
         let mut half_grew = false;

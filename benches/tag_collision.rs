@@ -116,7 +116,13 @@ fn bench_ipo_lookup_hit(c: &mut Criterion) {
     for sz in ipo_sizes() {
         let keys = make_random_keys(sz.num_entries, 42);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        ipo_variants!(bench_lookup_hit_for, &mut group, sz.name, &keys, sz.capacity);
+        ipo_variants!(
+            bench_lookup_hit_for,
+            &mut group,
+            sz.name,
+            &keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -127,7 +133,14 @@ fn bench_ipo_lookup_miss(c: &mut Criterion) {
         let keys = make_random_keys(sz.num_entries, 42);
         let miss_keys = make_miss_keys(sz.num_entries);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        ipo_variants!(bench_lookup_miss_for, &mut group, sz.name, &keys, &miss_keys, sz.capacity);
+        ipo_variants!(
+            bench_lookup_miss_for,
+            &mut group,
+            sz.name,
+            &keys,
+            &miss_keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -167,7 +180,13 @@ fn bench_ipo64_lookup_hit(c: &mut Criterion) {
     for sz in ipo64_sizes() {
         let keys = make_random_keys(sz.num_entries, 42);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        ipo64_variants!(bench_lookup_hit_for, &mut group, sz.name, &keys, sz.capacity);
+        ipo64_variants!(
+            bench_lookup_hit_for,
+            &mut group,
+            sz.name,
+            &keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -178,7 +197,14 @@ fn bench_ipo64_lookup_miss(c: &mut Criterion) {
         let keys = make_random_keys(sz.num_entries, 42);
         let miss_keys = make_miss_keys(sz.num_entries);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        ipo64_variants!(bench_lookup_miss_for, &mut group, sz.name, &keys, &miss_keys, sz.capacity);
+        ipo64_variants!(
+            bench_lookup_miss_for,
+            &mut group,
+            sz.name,
+            &keys,
+            &miss_keys,
+            sz.capacity
+        );
     }
     group.finish();
 }

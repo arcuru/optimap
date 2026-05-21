@@ -1,16 +1,14 @@
 # Future Work
 
-Ordered roughly by expected impact. Items in the "Closed" section have been
-thoroughly investigated and proven unproductive — see
-[Closed Investigations](optimization/closed.md) for details.
+Ordered roughly by expected impact. Items in the "Closed" section have been thoroughly investigated and proven unproductive — see [Closed Investigations](optimization/closed.md) for details.
 
 ## Recently Completed
 
 ### May 2026
 
 | Item | Scope |
-|------|-------|
-| Tombstone-backend rehash specialization (small-N gap, partial) | First concrete cause found for the "hashbrown wins at small N" gap. `RawTable::rehash_with` (the `in_place_overflow` engine shared by Tomb/IPO/Tomb64) reused the general `insert_no_check` for every reinserted entry. On a freshly-allocated destination there are no tombstones, so `insert_no_check`'s per-group `match_byte(TOMBSTONE)` scan, its `first_tombstone` tracking, and its per-entry `len`/`growth_left` updates are all dead work. New `insert_after_resize(h, k, v)` does **one** SIMD op per probed group (`match_empty` only) and writes the slot; `rehash_with` bulk-applies `len`/`growth_left` once after the loop. `rehash_with` and `grow_or_rehash` marked `#[cold] #[inline(never)]` to keep resize code out of the hot insert path's I-footprint. Measured (criterion, full samples, clean pre/post baseline same machine state): `construction/grow_from_empty/Byte7_128_Tomb` **1K 21.1→18.6 µs (−12%)**, **10K 181→161 µs (−11%)**, both p<0.05; hashbrown unchanged (118 µs at 10K, noise); the Tomb-vs-hashbrown grow gap at 10K narrows 52%→36%. Steady-state insert into a warm cleared table unchanged (`throughput/insert` Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb already slightly ahead). 515/515 lib tests pass. **Remaining gap is NOT closed and its cause is NOT initial-table size** (Tomb and hashbrown run near-identical resize cadence by N≈14; the original "smaller initial table" guess is wrong — that only diverges for N<14). A separate ~22% gap exists in *cold allocate-then-fill with zero resizes* (`construction/with_capacity/10000`: Tomb 49 µs vs hashbrown 40 µs) — see Open for the still-unidentified residual. |
+| --- | --- |
+| Tombstone-backend rehash specialization (small-N gap, partial) | First concrete cause found for the "hashbrown wins at small N" gap. `RawTable::rehash_with` (the `in_place_overflow` engine shared by Tomb/IPO/Tomb64) reused the general `insert_no_check` for every reinserted entry. On a freshly-allocated destination there are no tombstones, so `insert_no_check`'s per-group `match_byte(TOMBSTONE)` scan, its `first_tombstone` tracking, and its per-entry `len`/`growth_left` updates are all dead work. New `insert_after_resize(h, k, v)` does **one** SIMD op per probed group (`match_empty` only) and writes the slot; `rehash_with` bulk-applies `len`/`growth_left` once after the loop. `rehash_with` and `grow_or_rehash` marked `#[cold] #[inline(never)]` to keep resize code out of the hot insert path's I-footprint. Measured (criterion, full samples, clean pre/post baseline same machine state): `construction/grow_from_empty/Byte7_128_Tomb` **1K 21.1→18.6 µs (−12%)**, **10K 181→161 µs (−11%)**, both p<0.05; hashbrown unchanged (118 µs at 10K, noise); the Tomb-vs-hashbrown grow gap at 10K narrows 52%→36%. Steady-state insert into a warm cleared table unchanged (`throughput/insert` Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb already slightly ahead). 515/515 lib tests pass. **Remaining gap is NOT closed and its cause is NOT initial-table size** (Tomb and hashbrown run near-identical resize cadence by N≈14; the original "smaller initial table" guess is wrong — that only diverges for N<14). A separate ~22% gap exists in _cold allocate-then-fill with zero resizes_ (`construction/with_capacity/10000`: Tomb 49 µs vs hashbrown 40 µs) — see Open for the still-unidentified residual. |
 | OptiMap: `MapType::Tomb` + Shape-B transition-on-grow + user `Policy` | Three coupled changes addressing the sweep-2026-05-13 finding that the old `Hint::Auto` was "Splitsies-pinned forever" (organic-growth maps never re-evaluated the policy after the cap-0 initial pick). **(1) `Policy` struct.** New `pub struct Policy { bands: Vec<(usize, MapType)> }` with `band(min_cap, backend)` builder. `Policy::auto()`, `Policy::pinned`, `Policy::for_hint` factories. Replaces the old hardcoded `select_backend(hint, cap)` function. `Backend::Auto(Hint)` becomes `Backend::Auto(Policy)`. New `OptiMap::with_policy()` / `with_policy_and_capacity()` constructors. **(2) Transition-on-grow in `insert`.** `OptiMap::insert` now matches on `&self.backend`: pinned takes the bare `dispatch_mut!` path (compiler eliminates the match); auto goes through `insert_auto` which reads capacity before/after, and on grow with new-key inserts (`result.is_none()`) checks whether `Policy::backend_for(new_cap)` selects a different variant — if so, runs the existing `transition_to` (drain + reinsert into the new backend). Transition path is `#[cold] #[inline(never)]`; the per-insert cost for Auto is two capacity reads + a compare, zero for Pinned. **(3) `MapType::Tomb` variant.** Added `Tomb` (= `Byte7_128_TombMap` from `matrix_types`) as a 7th OptiMap backend alongside Ufm/Splitsies/Ipo/Gaps/Ipo64/FlatBTree. Plumbed through Inner, MapType, Iter/IterMut/IntoIter, Entry/OccupiedEntry/VacantEntry, `dispatch!`/`dispatch_mut!`/`entry_match!` macros, `build_inner`, `map_type`, `transition_to`, Debug/Clone/PartialEq impls, `OptiMap::tomb()` constructor. Local `tomb_types` alias module keeps the `GenericMap<…, RawTable<K, V, Byte7_128>>` type paths readable. **(4) New default policy.** `Policy::auto()` is now single-band `MapType::Tomb` (was 3-band Splitsies/Ipo/Splitsies). Per sweep-2026-05-13 across N = 100→10M and ops insert/hit/miss/remove/iterate, Tomb is the only design with no catastrophic regression — every other candidate has a specific N-window where it's ≥ 2× slower than Tomb on at least one op (OvSplit's 1M hit cliff at 10× slower than Tomb; OvInline's 5M hit cliff at 3× slower; TombWide's hit at 1M+ at 3-5× slower than Tomb on hit). Tomb wins lookup_hit + remove at all sizes ≥ ~10K; loses lookup_miss to overflow-bit family at small N by 50-80% relative (1-2 ns absolute) — judged not worth a band-switch for the unmarked-workload default. **Tests.** 637/637 pass. New: `auto_default_is_tomb_everywhere` (verifies single-band invariant), `auto_transition_on_organic_growth` + `custom_policy_drives_transitions` (Shape-B insert-time transition), `custom_policy_transition_on_reserve` (reserve-time transition), `policy_backend_for_lookup` + `policy_band_override` (Policy primitives). Retired: the 3-band-default-specific tests (`auto_transition_on_reserve`, `auto_transition_into_dram_band`, `auto_band_thresholds`) — replaced by the single-band assertion + custom-policy versions. `Hint::ReadHeavy`/`WriteHeavy` mappings still pin Ipo at cache-resident and switch to Splitsies past the tomb-DRAM cliff (legacy `for_hint` shape, deliberately not retuned in this change). |
 | Entry API: lazy split propagation + single-map-ref VacantEntry | Two struct-shape cleanups that drop the `Entry` API stack footprint by ~5×. **(1) Lazy split prop on the Entry path.** `flat_btree::map::VacantEntry` used to carry a 264 B stack `PathBuf` (the root→leaf descent path) so that `propagate_split` could walk back up on a split cascade. Split into two variants: the eager `RawBTree::insert(k, v)` keeps record-on-descent (its PathBuf lives on the function stack frame, never crosses an API boundary), and the Entry path now uses `propagate_split_lazy` — chases parent pointers one level at a time, scanning each parent's children for the back-pointer, terminating as soon as a parent has room. Drops `flat_btree::map::VacantEntry` 296 → 32 B and `flat_btree::map::Entry` 296 → 32 B. **(2) Single map ref in hash backend VacantEntry.** `generic_map::VacantEntry` was storing `&'a mut R` + `&'a S` (table + hash_builder) — two refs to disjoint fields of the same `GenericMap`. Merged into a single `&'a mut GenericMap<K, V, S, R>` (mirrors what `RawVacantEntryMut` already does in `raw_entry.rs`). Drops `ufm::map::VacantEntry` 64 → 56 B and the 6-arm `optimap::VacantEntry` enum 72 → 64 B. **Combined size summary**: `optimap::Entry` 304 → 64 B (-79 %). **Perf**: criterion vs main, every FlatBTree delta within the std::BTreeMap noise floor on the same run (±5 %) — perf is statistically unchanged. The pre-existing record-on-descent was paying ~6 path pushes per insert that propagate_split mostly didn't consume; the lazy walk skips both the pushes and the wasted ancestor entries. **Side effect**: `clippy::large_enum_variant` warnings that were `#[allow]`-silenced on `optimap::Entry`/`VacantEntry` are no longer triggered — `#[allow]` attributes removed. 635 tests pass; 9 entry-specific miri tests pass including `entry_with_splits`. |
 | Allocator stress test (`tests/alloc_stress.rs`) | Closes the only open "Testing / Quality" hash-map item. New `tests/alloc_stress.rs` installs a `#[global_allocator]` wrapper around `System` that (a) asserts every requested alignment is a power of two and that returned pointers honour it, (b) re-checks alignment on `dealloc` (would catch any bucket-layout math going off by a power-of-two on the way back to the allocator), (c) tracks live alloc count / live bytes via atomics. A single `#[test]` drives four scenarios — full insert / partial-remove / reserve / shrink lifecycle, oversized capacity hint with no inserts, oversized capacity hint with partial fill, 8-cycle insert/remove churn — across all five hash backends (UFM / Splitsies / IPO / IPO64 / Gaps). Each scenario asserts the live-alloc snapshot returns to baseline after drop. A fifth check confirms at least one allocation observes ≥ 8-byte alignment. Single `#[test]` rather than five — keeps the harness from running other test threads in parallel and perturbing the global counter. Gated `#[cfg(not(miri))]` since miri has its own UB / leak tracker. |
@@ -24,19 +22,19 @@ thoroughly investigated and proven unproductive — see
 | `FlatBTree` insert: bulk `copy_nonoverlapping` in `leaf_split_and_insert` | The split path was issuing one 8-byte `copy_nonoverlapping(_, _, 1)` per element per array (keys + values) inside three element-by-element loops. Replaced with bulk `copy_nonoverlapping(_, _, n)` calls — one per array per range. LLVM emits a single SIMD memcpy per range instead of a tight 8-byte-mov loop. Splits move 7-8 elements at LEAF_CAP=15, dominating insert cost at small N where amortization is poor. **Insert wins**: 1K **−10%** (13.0 → 11.7 µs, now 45% faster than BTreeMap); 10K **−4.5%** (380 → 363 µs); 100K ~tied (5.13 → 5.08 ms). The same trick was tried on `leaf_insert_at`'s overlapping-range shift via `ptr::copy` (memmove) and regressed +2% — LLVM was already emitting good code for the small overlapping case; the explicit memmove call had more overhead than the inline loop. Kept the original element-loop there. |
 | `FlatBTree` `PathBuf::new()`: MaybeUninit slots, no 256B stack zero-init | `PathBuf::new()` was zeroing all 16 `(NodeIdx, usize)` slots on every entry / insert / surgical-split call site — 256 B of zero-init that no caller observes. Switched the items array to `MaybeUninit`; `new()` is now a single 4-byte `len = 0` write. Marginal effect — ~1% improvement on lookup_hit/1K in 5-run median (7.94 vs 8.00 µs); noise-level on insert. |
 | `FlatBTree::retain` / `drain` correctness fix (proptest-pinned) | Pre-existing bug: `retain` removed elements in-place but left empty leaves chained, with internal-node references still pointing to them. Subsequent `pop_first` / `first_key_value` / `pop_last` / `last_key_value` looked only at `first_leaf` / `last_leaf`'s slot 0 and returned `None` even when later leaves still held data; a follow-up `entry().or_insert()` would land in a non-first leaf, so `iter()` saw the new entry but `pop_first` did not. Two fixes: (1) `retain` and `drain`'s `Drop` now call `tree.clear()` when `len == 0` (matches std::BTreeMap drain contract); (2) `first_key_value`, `last_key_value`, `pop_first`, `pop_last` walk past empty leaves via new `first_nonempty_leaf` / `last_nonempty_leaf` helpers. Two proptest seeds (added to `tests/proptest_btree.proptest-regressions`) now pass; no regressions. The deeper structural cleanup of empty-but-referenced internal-node children after partial retain is deferred — workloads hitting it are exotic, and `shrink_to_fit` already provides a clean rebuild on demand. |
-| `FlatBTree` insert: stack `PathBuf` replaces per-insert `Vec` allocation | Every `insert(k, v)` previously allocated a `Vec<(NodeIdx, usize)>` to record the descent path for split propagation, even when no split fired (the common case at <100% load). Replaced with a fixed-size stack-allocated `PathBuf` ([(NodeIdx, usize); 16] + len) that lives entirely on the stack — zero heap allocations on insert. Refactored `search_for_insert`, `path_to_node`, `propagate_split`, `entry_search`, and `insert_at_vacant` to take `&mut PathBuf`. `EntrySearch::Vacant` shrinks from `(NodeIdx, usize, Vec)` to `(NodeIdx, usize)` (caller owns the buffer). `VacantEntry` now embeds `PathBuf` directly (264 B, dwarfed by amortized savings). MAX_PATH_HEIGHT=16 covers any practical (K, V) pair where K+V ≤ 64 B up to `u32::MAX` entries. **Insert wins at u64/u64**: 1K **41% faster** (22.3 → 13.0 µs, now **39% faster than BTreeMap**); 10K **24% faster** (501 → 380 µs, **30% faster than BTreeMap**); 100K **19% faster** (6.51 → 5.29 ms, **28% faster than BTreeMap**). Sorted-insert sees minor wins (-1 to -4%) from the same change in the `path_to_node` fast paths. No regressions in lookup_hit, lookup_miss, remove, iteration, or range. The two surgical-split call sites (`split_off_surgical_*`) were also migrated and use `PathBuf::as_slice().iter().rev()` to walk the spine bottom-up. |
+| `FlatBTree` insert: stack `PathBuf` replaces per-insert `Vec` allocation | Every `insert(k, v)` previously allocated a `Vec<(NodeIdx, usize)>` to record the descent path for split propagation, even when no split fired (the common case at <100% load). Replaced with a fixed-size stack-allocated `PathBuf` ([(NodeIdx, usize); 16] + len) that lives entirely on the stack — zero heap allocations on insert. Refactored `search_for_insert`, `path_to_node`, `propagate_split`, `entry_search`, and `insert_at_vacant` to take `&mut PathBuf`. `EntrySearch::Vacant` shrinks from `(NodeIdx, usize, Vec)` to `(NodeIdx, usize)` (caller owns the buffer). `VacantEntry` now embeds `PathBuf` directly (264 B, dwarfed by amortized savings). MAX*PATH_HEIGHT=16 covers any practical (K, V) pair where K+V ≤ 64 B up to `u32::MAX` entries. **Insert wins at u64/u64**: 1K **41% faster** (22.3 → 13.0 µs, now **39% faster than BTreeMap**); 10K **24% faster** (501 → 380 µs, **30% faster than BTreeMap**); 100K **19% faster** (6.51 → 5.29 ms, **28% faster than BTreeMap**). Sorted-insert sees minor wins (-1 to -4%) from the same change in the `path_to_node` fast paths. No regressions in lookup_hit, lookup_miss, remove, iteration, or range. The two surgical-split call sites (`split_off_surgical*\*`) were also migrated and use `PathBuf::as_slice().iter().rev()` to walk the spine bottom-up. |
 | `FlatBTree::split_off` cutoff retuned 0.6 → 0.70 | The cost asymmetry between `surgical_left` and `surgical_right` (2-3× constant-factor on random-insert builds — `surgical_left` does per-spine-level array compaction shifts, an extra `mem::swap`, and "temp chain prepend" passes that `surgical_right` skips) means we should prefer `surgical_right` even when it copies somewhat more entries. Combined with the existing +0.10 estimator bias, the optimal biased-r cutoff sits at ~0.75; 0.70 leaves margin for noise. **At p045 / 1M random-build the dispatcher now picks `surgical_right` (5.7ms) instead of `surgical_left` (12.1ms) — 2.1× speedup**. p030 / 1M still routes correctly to `surgical_left` (estimator says ≈ 0.80). p050 and asymmetric pivots unchanged. New `DEFAULT_RIGHT_FRAC_LEFT_CUTOFF` const + `split_off_with_cutoff(at, cutoff)` benchmark hook exposed `#[doc(hidden)]`. Sequential-insert builds (the criterion bench) show the change is benign — at p050 the variants tie regardless of routing. |
 | `FlatBTree::append` tree-surgery graft (disjoint adjacent) | Added `append_graft` (alongside `append_drain`, `append_concat`, `append_extend`) and routed the public `append` dispatcher through a O(1) disjointness check on `self.last_key` vs `other.first_key`. When ranges are disjoint adjacent (the common "split then re-merge" case), the graft path byte-copies other's nodes into self.arena, splices the leaf chain at self.last_leaf, and bridges the two roots — equal heights add a single new root, otherwise descend self's right spine to attach `other.root` as the new last child of an internal node at level `other.height + 1` (cap-cascade splits handled via the existing `propagate_split`). When `self.height < other.height`, falls back internally to drain. Bench wins on disjoint random keys (each in [0, 2^33) and [2^33, 2^34) so disjointness is guaranteed): **100K symmetric: 3.50ms vs drain 6.89ms (2.0×), vs std 8.16ms (2.3×)**; **1M symmetric: 79ms vs drain 142ms (1.8×), vs std 139ms (1.8×)**; **1M asymmetric (other=100): dispatch 17.5ms vs drain 69ms (3.9×), vs std 33ms (1.9×)**. The `append_extend` variant (drain other only, then per-key tail-insert) is competitive at small `m` but loses to graft at symmetric large-N. `append_concat` (chain drained sequences, skip merge step) saves ~10-30% over drain by avoiding the order-comparison merge but still rebuilds self's leaves. 13 new tests + cross-validation across all four variants. Bench helper bug fixed: prior `make_random_keys(...).wrapping_add(1<<33)` did NOT bound the key range — random u64 input wraps freely, so the "disjoint adjacent" benches were actually overlapping. Now bounded to half-u64 ranges. |
 | `FlatBTree::split_off` bidirectional surgery (copy smaller side) | Added `split_off_surgical_left` mirror of `split_off_surgical_right`. The kept side stays in `self.arena` (mutated in-place); the smaller side is deep-copied to a fresh arena, then `mem::swap` flips them so `self` retains `< at` and the returned tree holds `>= at`. The dispatcher now picks direction by which side the estimator says is smaller (cutoff 0.6 to absorb the +0.10 estimator bias) and **drain is no longer routed to** — with both directions available, the side-of-min surgical always beats drain. Bench wins vs the prior drain-fallback dispatcher: **1K-p001 4.9×** (3.1µs → 622ns), **100K-p001 7.2×** (315µs → 44µs), **100K-p010 5.5×** (319µs → 58µs), **1M-p001/p010 2.3-2.4×** (13ms → 5.6ms). Mid/high pivots unchanged (already routed to surgical). 13 new copy-left tests + 3-way cross-validation against drain & surgical_right pass; copy-left small-N suite passes miri. `split_off_drain` retained as `#[doc(hidden)] pub` for benchmark comparison. |
 | `FlatBTree::split_off` tree-surgery + spine-aware dispatch | Added `split_off_surgical_right` (O(log n + right_subtree_nodes)) alongside the v1 drain+bulk_load path. Public `split_off` dispatches based on a cheap O(log n) right-fraction estimate from the spine. **Wins**: at 100K, 1.8-2.2× faster across p050-p099 (266µs vs 485µs at half-split); at 1M-p090, 7.5ms vs drain's 15.6ms (2.1×, beats std). **Limit**: dispatch fell back to drain at very-low pivots on huge trees (1M-p001) where deep-copying ~99% of the tree was slower than O(n) drain — closed by the bidirectional follow-up above. All 12 surgical-path tests pass under miri (zero UB). |
 | OptiMap policy: data-driven backend bands | Switch to Splitsies above the tombstone-DRAM cliff (~1M entries). IPO/IPO64 suffer 5-13× lookup_miss regression at ≥1M due to tombstone accumulation. New thresholds: `< 1024` Splitsies, `1024..1M` IPO, `≥1M` Splitsies. ReadHeavy / WriteHeavy hints fall back to Splitsies above the cliff. Boundary tests added. |
 | `OptiSet` / `OptiSortedSet` operator parity | Added `BitOr`/`BitAnd`/`BitXor`/`Sub` operators on `&Set` (matching std::HashSet / std::BTreeSet). |
-| `GenericSet::intersection` swap fix | Prior impl iterated `self` in *both* branches — when `self` was larger we still iterated the larger set. Fixed to iterate the smaller. |
+| `GenericSet::intersection` swap fix | Prior impl iterated `self` in _both_ branches — when `self` was larger we still iterated the larger set. Fixed to iterate the smaller. |
 | `FlatBTree::range_mut()` | Mutable variant of `range()`. New `RawBTree::resolve_range_bounds` shared between `range` and `range_mut`. Iterator stores tree as `*mut` for non-aliasing 'a-tied yields. Closes the `range_mut()` roadmap item. |
 | `FlatBTree::from_sorted_iter()` | Bulk-load for already-sorted input. Skips the sort+dedup pass `FromIterator` does. |
-| `bulk_load` separator-key bug fix | For trees with height ≥ 2, the separator key promoted into an internal parent at position j was read from the right child's `internal_key_ptr(0)` (the child's *own* first internal separator), not the leftmost leaf-key in the right subtree. Effect: `get` returned `None` for some keys on any `FromIterator` input ≳ 300 entries (u64/u64). The 100-entry `from_iterator` test produced only a single-level tree and couldn't catch it. Fix tracks parallel `min_keys: Vec<K>` across build levels. New 100K-entry `FromIterator` + `from_sorted_iter` multi-level tests pin down the regression. |
-| `FlatBTree::shrink_to_fit` (was no-op) | Drains the tree in sorted order into a `Vec`, bulk-loads a fresh tree, swaps. Releases unused arena slots *and* compacts leaves from ~50% utilization (split-on-insert legacy) up to `LEAF_CAP`. |
-| Roadmap accuracy: rebalance entry was stale | "Remove rebalancing (steal/merge) — Currently lazy" was incorrect. `RawBTree::remove` already calls `rebalance_leaf` on underflow (`raw.rs:1217`), which steals from right/left siblings or merges; the cascade up through `rebalance_internal` / `merge_internals` keeps internal nodes within `INTERNAL_CAP/2..INTERNAL_CAP`. Entry moved out of "Open" — only arena compaction *across* heavy churn remains, and `shrink_to_fit` already covers that on demand. |
+| `bulk_load` separator-key bug fix | For trees with height ≥ 2, the separator key promoted into an internal parent at position j was read from the right child's `internal_key_ptr(0)` (the child's _own_ first internal separator), not the leftmost leaf-key in the right subtree. Effect: `get` returned `None` for some keys on any `FromIterator` input ≳ 300 entries (u64/u64). The 100-entry `from_iterator` test produced only a single-level tree and couldn't catch it. Fix tracks parallel `min_keys: Vec<K>` across build levels. New 100K-entry `FromIterator` + `from_sorted_iter` multi-level tests pin down the regression. |
+| `FlatBTree::shrink_to_fit` (was no-op) | Drains the tree in sorted order into a `Vec`, bulk-loads a fresh tree, swaps. Releases unused arena slots _and_ compacts leaves from ~50% utilization (split-on-insert legacy) up to `LEAF_CAP`. |
+| Roadmap accuracy: rebalance entry was stale | "Remove rebalancing (steal/merge) — Currently lazy" was incorrect. `RawBTree::remove` already calls `rebalance_leaf` on underflow (`raw.rs:1217`), which steals from right/left siblings or merges; the cascade up through `rebalance_internal` / `merge_internals` keeps internal nodes within `INTERNAL_CAP/2..INTERNAL_CAP`. Entry moved out of "Open" — only arena compaction _across_ heavy churn remains, and `shrink_to_fit` already covers that on demand. |
 | `Hash` impl + `IntoIterator for &mut FlatBTree` | std::BTreeMap parity; matches std hash semantics (len + sorted (k,v) pairs). Enables `for (k, v) in &mut tree`. |
 | `FlatBTree::split_off(at)` + `append(&mut other)` | std::BTreeMap parity. v1 is drain → bulk_load (O(n)). At 100K, beats std `split_off` (800µs vs 1.38ms); at 1M loses to std's structural split (38ms vs 17ms). `append` ties std at 100K and 1M (both ~5% faster). Tree-surgery split_off filed as a follow-up. |
 | `SortedMap` / `SortedSet` trait `split_off` + `append` | Lifted into trait so generic code can call them; default impls delegate to std on `BTreeMap`/`BTreeSet`; `OptiSortedMap`, `OptiSortedSet`, `GenericSet` mirror inherent + trait impls. |
@@ -45,7 +43,7 @@ thoroughly investigated and proven unproductive — see
 ### API Completeness (April 2025)
 
 | Item | Scope |
-|------|-------|
+| --- | --- |
 | `try_insert()` | All 6 designs, OptiMap, OptiSortedMap, `Map` trait (default impl). Returns `Result<(), OccupiedError<K, V>>`. |
 | `into_keys()` / `into_values()` | All 6 designs, OptiMap, OptiSortedMap, FlatBTree, `Map` trait |
 | `get_key_value()` / `remove_entry()` | All maps, `Map` trait |
@@ -77,28 +75,23 @@ thoroughly investigated and proven unproductive — see
 | Mid-pointer for 15-slot designs | Already implemented — UFM and Gaps share `overflow_table::RawTable<K,V,L>` which uses mid-pointer layout. Embedded overflow at byte 15 means exactly 2 memory regions, same as tombstone designs. |
 | Borrow indirection in insert/entry | Investigated: already eliminated. Insert hot path uses `bucket.0 == key` directly. Cold fallback closures produce identical codegen via `#[inline(always)]` monomorphization. Added `find_by_hash_eq` wrapper for clarity, no perf impact. |
 | Key-value separation (SoA layout) | `SoaRawTable<K,V,L>` + `SoaGenericMap` with separate key/value arrays. 7 matrix variants. Mid-pointer for keys, values after metadata+overflow. At 10K entries: competitive with Splitsies (32µs vs 31µs hit, 142µs vs 133µs insert for 256B values). Key-only probing may show more benefit at larger table sizes. |
-| 32-slot (AVX2) and 64-slot (AVX-512) overflow-bit groups | `Group32<u32>` (1× 256-bit cmpeq+movemask) and `Group64<u64>` (1× 512-bit cmpeq_mask) added with compile-time `cfg(target_feature)` tier selection (AVX-512 → AVX2 → SSE2 → scalar Miri). New named layouts: `Splitsies32/64`, `Splitsies{32,64}_1bit`, `Byte1_1bit{32,64}` (formerly `Hi8_1bit{32,64}`), `Byte7_{128,255}_{1bit,8bit}And{32,64}` (formerly `Top{128,255}_*And{32,64}`). Required `META_STRIDE`/`META_ALIGN` parameterization on `GroupLayout` and `meta_stride` parameter on `OverflowStrategy::overflow_ptr`. Initial benches at 9.4K entries / 70% load: 32-slot variants match 16-slot on hit/insert and slightly improve miss (`Byte7_128_1bitAnd32`: 698 Mel/s miss vs 629 baseline, +11%); 64-slot underperforms 16-slot on hit/remove. No clear win at this size — wider groups may shine at higher load factors or for high-collision workloads, where home-group hit rate dominates. UFM/Gaps stay at 15-slot (embedded-overflow byte-15 trick is intrinsic to 16-byte metadata). |
+| 32-slot (AVX2) and 64-slot (AVX-512) overflow-bit groups | `Group32<u32>` (1× 256-bit cmpeq+movemask) and `Group64<u64>` (1× 512-bit cmpeq*mask) added with compile-time `cfg(target_feature)` tier selection (AVX-512 → AVX2 → SSE2 → scalar Miri). New named layouts: `Splitsies32/64`, `Splitsies{32,64}_1bit`, `Byte1_1bit{32,64}` (formerly `Hi8_1bit{32,64}`), `Byte7*{128,255}_{1bit,8bit}And{32,64}`(formerly`Top{128,255}_\*And{32,64}`). Required `META_STRIDE`/`META_ALIGN`parameterization on`GroupLayout`and`meta_stride`parameter on`OverflowStrategy::overflow_ptr`. Initial benches at 9.4K entries / 70% load: 32-slot variants match 16-slot on hit/insert and slightly improve miss (`Byte7_128_1bitAnd32`: 698 Mel/s miss vs 629 baseline, +11%); 64-slot underperforms 16-slot on hit/remove. No clear win at this size — wider groups may shine at higher load factors or for high-collision workloads, where home-group hit rate dominates. UFM/Gaps stay at 15-slot (embedded-overflow byte-15 trick is intrinsic to 16-byte metadata). |
 | IPO tag/group-index collision fix + `ByteN_VVV` rename | IPO's default tombstone tag was `LowByte254` (bits 16-23). Once `num_groups > 2¹⁶`, the AND mask reaches into bits 16+, correlating tag bits with the group index and degrading SIMD discrimination — by 2²⁰ groups only ~16 distinct tags remain per group. Fix: switch IPO default to `Byte7_254` (bits 56-63, always decorrelated from AND mask). IPO64 keeps the bits-16-23 strategy under the new name `Byte2_254` (its shift indexing makes the middle of the hash safe). Strategy structs renamed to honest `ByteN_VVV` form; `HighByte128` and `TopByte128` consolidated into `Byte7_128`. |
 
 ## Open — Trait Family
 
-The `Map` → `HashedMap` rename has shipped. Remaining work fleshes out
-`SortedMap` and adds a universal `Map` facade, so generic code can dispatch
-into either flavor via the implementor's preferred path.
+The `Map` → `HashedMap` rename has shipped. Remaining work fleshes out `SortedMap` and adds a universal `Map` facade, so generic code can dispatch into either flavor via the implementor's preferred path.
 
-**Hard invariant:** No type implements both `HashedMap` and `SortedMap`. A
-data structure stores keys in one order and is efficient at one dispatch.
-Mixed impls produce silent O(n) cliffs (hash dispatch can't navigate an
-Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
+**Hard invariant:** No type implements both `HashedMap` and `SortedMap`. A data structure stores keys in one order and is efficient at one dispatch. Mixed impls produce silent O(n) cliffs (hash dispatch can't navigate an Ord-sorted store). Each type implements _one_; the `Map` facade delegates.
 
 | # | Item | Difficulty | Notes |
-|---|------|-----------|-------|
-| 11 | Future: `HashedBTree<K, V>` — tree sorted by `hash(K)` instead of `K`. Implements `HashedMap`, *not* `SortedMap`. | Future | Provides "btree-as-hashmap" without violating the no-mixing invariant. Design sketch: [designs/hashed_btree.md](designs/hashed_btree.md). |
+| --- | --- | --- | --- |
+| 11 | Future: `HashedBTree<K, V>` — tree sorted by `hash(K)` instead of `K`. Implements `HashedMap`, _not_ `SortedMap`. | Future | Provides "btree-as-hashmap" without violating the no-mixing invariant. Design sketch: [designs/hashed_btree.md](designs/hashed_btree.md). |
 
 ### Recently Completed (May 2026 — Ava)
 
 | # | Item | Notes |
-|---|------|-------|
+| --- | --- | --- |
 | 14b-r | Retire `OptiSortedMap` / `OptiSortedSet` | Phase 2 of task 14 closed. Deleted `src/opti_sorted.rs` (1587 lines) plus the `pub use` re-exports. Sorted code now goes through `OptiMap::flat_btree()` / `OptiSet::flat_btree()` (or `Hint::Sorted`), which dispatch into the same `Inner::FlatBTree(FlatBTree)` enum arm. Added the missing constructors on the wrapper side: `OptiMap::from_sorted_iter`, `OptiSet::sorted_with_capacity`, `OptiSet::from_sorted_iter`. Updated `tests/map_trait.rs` to exercise the `Map` facade through `OptiMap::flat_btree()` instead of `OptiSortedMap`. Added a `FlatBTree_raw` / `FlatBTree_opti` row to `dispatch.rs` to keep dispatch overhead tracked on the sorted path: hot ops (lookup_hit, lookup_miss, insert, remove) within ≤5% — same target the hash backends meet — and iter at +25% which matches the per-`next()` enum match overhead the hash rows already show. No semantic change for callers. |
 | 14b-q | Port sorted query API to OptiMap/OptiSet | `first_key_value`/`last_key_value`/`pop_first`/`pop_last`/`iter_sorted`/`range`/`range_mut` on OptiMap; `first`/`last`/`pop_first`/`pop_last`/`iter_sorted`/`range` on OptiSet. Panic on non-FlatBTree. 16 tests. |
 | 14b-m | Port `split_off`/`append` to OptiMap/OptiSet | Returns/takes OptiMap/OptiSet wrappers. Panic on non-FlatBTree. 17 tests. |
@@ -121,126 +114,68 @@ Ord-sorted store). Each type implements *one*; the `Map` facade delegates.
 **Difficulty**: Low \
 **Expected impact**: Up to 3× lookup_hit improvement for hinted callers at ≥1M
 
-Both hints currently route through `Policy::for_hint` to a 2-band shape:
-`MapType::Ipo` (= `Byte7_254`, "TombWide") at cache-resident sizes,
-`MapType::Splitsies` past `TOMBSTONE_DRAM_CLIFF` (1M). Per sweep-2026-05-13:
-- `Tomb` (`Byte7_128`) beats TombWide on lookup_hit at 500K–10M by 1.3–3×
-- The "DRAM cliff" that motivated the Splitsies switch is specific to
-  TombWide; `Tomb` doesn't hit it (lookup_hit @ 5M is 18 ns for Tomb vs
-  44 ns for TombWide vs 77 ns for Splitsies)
+Both hints currently route through `Policy::for_hint` to a 2-band shape: `MapType::Ipo` (= `Byte7_254`, "TombWide") at cache-resident sizes, `MapType::Splitsies` past `TOMBSTONE_DRAM_CLIFF` (1M). Per sweep-2026-05-13:
 
-Simplest retune: both hints become `Policy::pinned(MapType::Tomb)`. Same
-backend as `Hint::Auto`, but the hint signal is preserved on the type
-(useful if we later add miss-heavy vs hit-heavy differentiation). Or
-collapse them entirely and let everyone go through `Auto`.
+- `Tomb` (`Byte7_128`) beats TombWide on lookup_hit at 500K–10M by 1.3–3×
+- The "DRAM cliff" that motivated the Splitsies switch is specific to TombWide; `Tomb` doesn't hit it (lookup_hit @ 5M is 18 ns for Tomb vs 44 ns for TombWide vs 77 ns for Splitsies)
+
+Simplest retune: both hints become `Policy::pinned(MapType::Tomb)`. Same backend as `Hint::Auto`, but the hint signal is preserved on the type (useful if we later add miss-heavy vs hit-heavy differentiation). Or collapse them entirely and let everyone go through `Auto`.
 
 #### `Hint::MissHeavy` for miss-dominated workloads → `MapType::Ipo` (TombWide)
 
 **Difficulty**: Low (new hint variant + Policy mapping)
 
-`TombWide` (`Byte7_254`, IPO) wins lookup_miss at any N ≥ 500K by 1.3–2× over
-`Tomb`, owing to the wider tag's lower false-match rate (1/254 vs 1/128).
-Real workload: caches with low hit rate, hash-join probe sides. Currently
-no way to ask for this profile without explicitly pinning to `MapType::Ipo`.
+`TombWide` (`Byte7_254`, IPO) wins lookup_miss at any N ≥ 500K by 1.3–2× over `Tomb`, owing to the wider tag's lower false-match rate (1/254 vs 1/128). Real workload: caches with low hit rate, hash-join probe sides. Currently no way to ask for this profile without explicitly pinning to `MapType::Ipo`.
 
 #### `Hint::LowLatency` → predictable per-op latency via `FlatBTree`
 
 **Difficulty**: Low (new hint variant)
 
-Sweep-2026-05-13 raw per-N data showed hash inserts spike from 5–10 ns
-steady-state to 100–400 ns at resize-doubling events (e.g. Tomb at N=452:
-370 ns; at N=453: 5 ns). FlatBTree inserts are flat 28–40 ns regardless
-of N — no resize spike. For tail-latency-sensitive callers that can't
-pre-`reserve`, a hint that routes to FlatBTree is a real product
-distinction. Lookup is slower (log N), but jitter-free.
+Sweep-2026-05-13 raw per-N data showed hash inserts spike from 5–10 ns steady-state to 100–400 ns at resize-doubling events (e.g. Tomb at N=452: 370 ns; at N=453: 5 ns). FlatBTree inserts are flat 28–40 ns regardless of N — no resize spike. For tail-latency-sensitive callers that can't pre-`reserve`, a hint that routes to FlatBTree is a real product distinction. Lookup is slower (log N), but jitter-free.
 
-Caveat: trade-off needs to be explicit in the hint docs — "you give up
-2-15× lookup speed and get spike-free insert."
+Caveat: trade-off needs to be explicit in the hint docs — "you give up 2-15× lookup speed and get spike-free insert."
 
 #### Hashbrown wins at small N — residual cold allocate+fill gap
 
 **Difficulty**: Medium \
-**Status**: One cause found and fixed (rehash specialization — see Recently
-Completed). A second, larger gap remains and its cause is **not yet
-identified**. Two hypotheses tested and rejected.
+**Status**: One cause found and fixed (rehash specialization — see Recently Completed). A second, larger gap remains and its cause is **not yet identified**. Two hypotheses tested and rejected.
 
 **What's established (criterion, fixed-N, not the noisy sweep small-batch):**
 
-- `construction/grow_from_empty/10000` (cold alloc + grow through all
-  resizes): post-fix Tomb 161 µs vs hashbrown 118 µs — **36% slower**
-  (was 52% pre-fix).
-- `construction/with_capacity/10000` (cold alloc, pre-sized so **zero
-  resizes**, then fill): Tomb 49 µs vs hashbrown 40 µs — **~22% slower**.
-- `throughput/insert/.../medium` (warm table, `clear()` + refill, no
-  alloc, no resize): Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb **faster**.
+- `construction/grow_from_empty/10000` (cold alloc + grow through all resizes): post-fix Tomb 161 µs vs hashbrown 118 µs — **36% slower** (was 52% pre-fix).
+- `construction/with_capacity/10000` (cold alloc, pre-sized so **zero resizes**, then fill): Tomb 49 µs vs hashbrown 40 µs — **~22% slower**.
+- `throughput/insert/.../medium` (warm table, `clear()` + refill, no alloc, no resize): Tomb 90.8 µs vs hashbrown 91.7 µs — Tomb **faster**.
 
-So the gap is specific to **cold allocate-then-fill**. It is *not* the
-steady-state insert hot path (warm refill ties/wins), *not* resize cadence
-(Tomb does fewer, not more, resizes than hashbrown to reach 10K — they
-share every boundary from N≈14 up), and *not* initial-table size (that
-only diverges for N<14; irrelevant at 10K). The ~22% zero-resize gap is
-the core mystery: same final load (61%), same bucket count (16384), same
-tag width.
+So the gap is specific to **cold allocate-then-fill**. It is _not_ the steady-state insert hot path (warm refill ties/wins), _not_ resize cadence (Tomb does fewer, not more, resizes than hashbrown to reach 10K — they share every boundary from N≈14 up), and _not_ initial-table size (that only diverges for N<14; irrelevant at 10K). The ~22% zero-resize gap is the core mystery: same final load (61%), same bucket count (16384), same tag width.
 
 **Rejected hypotheses (do not re-try without new evidence):**
-1. *Smaller initial-table strategy* — hashbrown's 4/8/16-bucket micro-tables
-   only matter for N<14; benches at N≥1K are past that. Cannot explain a
-   10K gap.
-2. *Double-probe in the plain insert path* — `insert_or_replace`'s overflow
-   fallback did `find_by_hash` then `insert_no_check` (two probes) where the
-   entry path uses the fused `find_or_locate`. Rewriting the fallback to use
-   `find_or_locate` + `insert_at` **regressed** `with_capacity/10000` by
-   ~12% (49→55 µs). `find_or_locate` re-probes the home group (already done
-   in the fast path) and crosses an `#[inline(never)]` boundary to
-   `find_or_locate_overflow`; net worse than the redundant simple probe.
-   Reverted.
+
+1. _Smaller initial-table strategy_ — hashbrown's 4/8/16-bucket micro-tables only matter for N<14; benches at N≥1K are past that. Cannot explain a 10K gap.
+2. _Double-probe in the plain insert path_ — `insert_or_replace`'s overflow fallback did `find_by_hash` then `insert_no_check` (two probes) where the entry path uses the fused `find_or_locate`. Rewriting the fallback to use `find_or_locate` + `insert_at` **regressed** `with_capacity/10000` by ~12% (49→55 µs). `find_or_locate` re-probes the home group (already done in the fast path) and crosses an `#[inline(never)]` boundary to `find_or_locate_overflow`; net worse than the redundant simple probe. Reverted.
 
 **Next steps (need a profiler, not more code-reading):**
-1. `perf stat` / `perf record` on a single-design micro-bench that does only
-   `with_capacity(10000)` + fill, Tomb vs hashbrown. Compare cycles,
-   branch-misses, LLC-misses, page-faults. The zero-resize variant isolates
-   the question cleanly.
-2. Split allocate cost from fill cost: time `with_capacity(10000)` alone
-   (drop without filling) vs fill-only on a warm allocation. Determines
-   whether the gap is in `allocate` (layout math, the memset of metadata,
-   first-touch faulting pattern) or in the per-insert codegen at rising load.
-3. Only after a profiled hotspot is identified: disassembly diff of the
-   identified region vs hashbrown's equivalent.
 
-Methodology note: the original sweep `keys[prev_n..n]` small-batch numbers
-are noise-heavy and resize-spike-dominated; ignore them for this — use the
-`construction` criterion benches above, which are stable and isolate
-alloc/resize/fill.
+1. `perf stat` / `perf record` on a single-design micro-bench that does only `with_capacity(10000)` + fill, Tomb vs hashbrown. Compare cycles, branch-misses, LLC-misses, page-faults. The zero-resize variant isolates the question cleanly.
+2. Split allocate cost from fill cost: time `with_capacity(10000)` alone (drop without filling) vs fill-only on a warm allocation. Determines whether the gap is in `allocate` (layout math, the memset of metadata, first-touch faulting pattern) or in the per-insert codegen at rising load.
+3. Only after a profiled hotspot is identified: disassembly diff of the identified region vs hashbrown's equivalent.
+
+Methodology note: the original sweep `keys[prev_n..n]` small-batch numbers are noise-heavy and resize-spike-dominated; ignore them for this — use the `construction` criterion benches above, which are stable and isolate alloc/resize/fill.
 
 ### Design Space Exploration
 
-These explore new axes in the parameterized design matrix. Each is a new
-composition of existing traits or a small trait extension.
+These explore new axes in the parameterized design matrix. Each is a new composition of existing traits or a small trait extension.
 
 #### ~~Sweep benchmarks for 32/64-slot variants~~ **CLOSED — full investigation completed**
 
-See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md) for
-the complete analysis. Headline findings:
+See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md) for the complete analysis. Headline findings:
 
-- **32-slot is not a net win for general use.** Slight insert advantage (5-15%
-  at 1M+ entries) is offset by a permanent ~10% lookup_miss penalty from
-  wider false-positive group checks. Lookup_hit is statistically tied (±3%).
-- **64-slot is structurally slower** across all ops up to 2M entries (10-20%
-  hit/insert, 40-60% miss). AVX-512 pays for itself only with pathological
-  load factors outside realistic ranges.
-- **Top255 is critical for wider groups**, confirming the hypothesis: base
-  false-match rate of 1/255 vs 1/127 cuts spurious cache misses on miss
-  paths by ~50% when probing 32-64 slots per step.
-- **Embedded-overflow works well** at 32-slot: `Ufm32` (embedded, compact
-  stride, low-byte 255-tag) is the best insert engine across all designs.
-- **Full sweep harness updated**: the `for_each_design!` macro in
-  `benches/sweep.rs` now includes all 32/64-slot separate, embedded,
-  and AND-indexed variants (27 new designs). These will be available for
-  future benchmark sweeps.
+- **32-slot is not a net win for general use.** Slight insert advantage (5-15% at 1M+ entries) is offset by a permanent ~10% lookup_miss penalty from wider false-positive group checks. Lookup_hit is statistically tied (±3%).
+- **64-slot is structurally slower** across all ops up to 2M entries (10-20% hit/insert, 40-60% miss). AVX-512 pays for itself only with pathological load factors outside realistic ranges.
+- **Top255 is critical for wider groups**, confirming the hypothesis: base false-match rate of 1/255 vs 1/127 cuts spurious cache misses on miss paths by ~50% when probing 32-64 slots per step.
+- **Embedded-overflow works well** at 32-slot: `Ufm32` (embedded, compact stride, low-byte 255-tag) is the best insert engine across all designs.
+- **Full sweep harness updated**: the `for_each_design!` macro in `benches/sweep.rs` now includes all 32/64-slot separate, embedded, and AND-indexed variants (27 new designs). These will be available for future benchmark sweeps.
 - **Data preserved**: raw CSV and gnuplot PNGs in `bench-results/`.
-- **The shadow SIMD load (#6 below) remains open** but likely not worth
-  fixing — both loads hit L1 (same cache line), saving one µOP would be
-  invisible outside microbenchmarks.
+- **The shadow SIMD load (#6 below) remains open** but likely not worth fixing — both loads hit L1 (same cache line), saving one µOP would be invisible outside microbenchmarks.
 
 #### Hot-path optimizations for 32/64-slot designs
 
@@ -249,89 +184,48 @@ the complete analysis. Headline findings:
 
 Candidates identified during the Group32/Group64 landing:
 
-1. ~~**`bucket_index` shortcuts for 32/64 stride**~~ **Applied, inverse direction.**
-   The existing 16-slot shortcut `(gi << 4) | si` was **worse** than the
-   naïve `gi * 16 + si`: LEA can fuse `shift + add` into a single µop
-   (`shlq`+`leaq` = 2 µops) but not `shift + or` (`mov`+`shlq`+`orq` =
-   3 µops). Simplified `bucket_index` to just `gi * BUCKET_STRIDE + si`
-   and trusted LLVM to fold the multiply; same change applied to
-   `ipo64::bucket_ptr`. Bench signal was lost in machine noise at this
-   granularity, but codegen is strictly better (1 µop saved per call).
+1. ~~**`bucket_index` shortcuts for 32/64 stride**~~ **Applied, inverse direction.** The existing 16-slot shortcut `(gi << 4) | si` was **worse** than the naïve `gi * 16 + si`: LEA can fuse `shift + add` into a single µop (`shlq`+`leaq` = 2 µops) but not `shift + or` (`mov`+`shlq`+`orq` = 3 µops). Simplified `bucket_index` to just `gi * BUCKET_STRIDE + si` and trusted LLVM to fold the multiply; same change applied to `ipo64::bucket_ptr`. Bench signal was lost in machine noise at this granularity, but codegen is strictly better (1 µop saved per call).
 
-5. ~~**Non-pow2 stride cost (Ufm32/Ufm64 compact stride)**~~ **Tiny,
-   keep the design.** LLVM compiles Ufm32's `gi * 31` as `gi * 32 - gi`
-   but reuses the `gi * 32` already computed for the meta_ptr, so the
-   only actual cost is a single `sub %gi, %r9` (1 µop) per bucket access
-   vs Gaps32's pow-2 stride. Saves 1/32 bucket of memory per group. Net
-   trade is worth keeping both compact-stride (Ufm) and pow-2-stride
-   (Gaps) variants at each width.
-2. ~~**AVX-512 mask-register fusion**~~ **Verified optimal, no action.**
-   Inspection of the matrix bench disassembly shows LLVM emits:
+2. ~~**Non-pow2 stride cost (Ufm32/Ufm64 compact stride)**~~ **Tiny, keep the design.** LLVM compiles Ufm32's `gi * 31` as `gi * 32 - gi` but reuses the `gi * 32` already computed for the meta_ptr, so the only actual cost is a single `sub %gi, %r9` (1 µop) per bucket access vs Gaps32's pow-2 stride. Saves 1/32 bucket of memory per group. Net trade is worth keeping both compact-stride (Ufm) and pow-2-stride (Gaps) variants at each width.
+3. ~~**AVX-512 mask-register fusion**~~ **Verified optimal, no action.** Inspection of the matrix bench disassembly shows LLVM emits:
    - `vpcmpeqb (mem), %zmm0, %k0` — load fused with compare
-   - `vptestmb` / `vptestnmb` for match_non_empty / match_empty (direct
-     test against zero, no need for a broadcast zero register)
+   - `vptestmb` / `vptestnmb` for match_non_empty / match_empty (direct test against zero, no need for a broadcast zero register)
    - `kortestq` on k-registers for "any match" tests (no kmovq round-trip)
    - Single `kmovq` to GP only when iteration (`tzcnt`/`blsr`) is needed
    - `& SLOT_MASK` elided for full-width (all-ones) SLOT_MASK
-   - **`match_byte_and_empty` reuses the load**: one `vmovdqa64 %zmm0`,
-     then `vpcmpeqb` + `vptestnmb` both on `%zmm0` producing `%k0` and
-     `%k1`. Zero spurious reloads.
-   LLVM was already smarter than our source. Nothing to hand-optimize.
-3. ~~**Inline propagation audit**~~ **Verified clean.** `objdump` of the
-   matrix bench binary shows zero `call` instructions targeting
-   `match_byte`/`match_empty`/`Group32`/`Group64` symbols. The raw
-   SIMD ops appear directly at call sites: 68 × `vpcmpeqb %zmm` (AVX-512
-   Group64), 83 × `vpcmpeqb %ymm` (AVX2 Group32), 359 × `vpcmpeqb %xmm`
-   (SSE2 Group<>, VEX-encoded). Trait dispatch through `GroupOps` fully
-   monomorphizes and inlines.
-6. ~~**Embedded-overflow byte read adds a shadow SIMD load**~~ \
-   **CLOSED — not worth fixing.** The 32/64-slot sweep investigation confirmed
-   that even if we saved this one load-port µop, 32-slot designs still carry
-   a structural ~10% lookup_miss penalty over 16-slot. The load-duplication
-   is a symptom, not the cause. See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md).
+   - **`match_byte_and_empty` reuses the load**: one `vmovdqa64 %zmm0`, then `vpcmpeqb` + `vptestnmb` both on `%zmm0` producing `%k0` and `%k1`. Zero spurious reloads. LLVM was already smarter than our source. Nothing to hand-optimize.
+4. ~~**Inline propagation audit**~~ **Verified clean.** `objdump` of the matrix bench binary shows zero `call` instructions targeting `match_byte`/`match_empty`/`Group32`/`Group64` symbols. The raw SIMD ops appear directly at call sites: 68 × `vpcmpeqb %zmm` (AVX-512 Group64), 83 × `vpcmpeqb %ymm` (AVX2 Group32), 359 × `vpcmpeqb %xmm` (SSE2 Group<>, VEX-encoded). Trait dispatch through `GroupOps` fully monomorphizes and inlines.
+5. ~~**Embedded-overflow byte read adds a shadow SIMD load**~~ \
+   **CLOSED — not worth fixing.** The 32/64-slot sweep investigation confirmed that even if we saved this one load-port µop, 32-slot designs still carry a structural ~10% lookup_miss penalty over 16-slot. The load-duplication is a symptom, not the cause. See [32/64-Slot Investigation](optimization/32-64-slot-investigation.md).
 
-4. ~~**Top255 insert regression at 32/64-slot**~~ **Closed — not reproducible.**
-   The initial `--quick` numbers showed Top255_1bitAnd{32,64} regressing
-   vs Top128 on insert (−6%/−15%). A full-sample (100 samples) rerun
-   flipped the sign: Top255 was +5%/+7% *faster*. Codegen analysis does
-   show Top255 uses 1 more µop (`shr+cmp+adc` vs `shr+or`) and the
-   inline-asm acts as a scheduling barrier — but the actual perf
-   difference sits well inside measurement noise at medium size. Tag
-   choice should be driven by false-match rate (255 strictly better at
-   1/254 vs 128's 1/127), not per-op cost.
+6. ~~**Top255 insert regression at 32/64-slot**~~ **Closed — not reproducible.** The initial `--quick` numbers showed Top255*1bitAnd{32,64} regressing vs Top128 on insert (−6%/−15%). A full-sample (100 samples) rerun flipped the sign: Top255 was +5%/+7% \_faster*. Codegen analysis does show Top255 uses 1 more µop (`shr+cmp+adc` vs `shr+or`) and the inline-asm acts as a scheduling barrier — but the actual perf difference sits well inside measurement noise at medium size. Tag choice should be driven by false-match rate (255 strictly better at 1/254 vs 128's 1/127), not per-op cost.
 
 ### Structural (Speculative)
 
 | Item | Difficulty | Risk | Notes |
-|------|-----------|------|-------|
+| --- | --- | --- | --- |
 | Concurrent / lock-free variant | Very High | Research | Overflow bits are suited to lock-free reads. |
 
 #### Splitsies-1bit: design rationale (implemented)
 
-Implemented as `BitSeparate` overflow strategy composed via `Layout16`.
-Replaces per-group overflow byte with a single overflow bit. The overflow
-array becomes a compact bitfield: 1 byte per 8 groups instead of 1 byte
-per group.
+Implemented as `BitSeparate` overflow strategy composed via `Layout16`. Replaces per-group overflow byte with a single overflow bit. The overflow array becomes a compact bitfield: 1 byte per 8 groups instead of 1 byte per group.
 
 **Memory savings** (1-bit vs 8-bit overflow):
 
-| Table size | Groups | 8-bit | 1-bit |
-|-----------|-------:|------:|------:|
-| 100K | ~6.4K | 6.4 KB | 800 B |
-| 1M | ~64K | 64 KB | 8 KB |
-| 10M | ~640K | 640 KB | 80 KB |
+| Table size | Groups |  8-bit | 1-bit |
+| ---------- | -----: | -----: | ----: |
+| 100K       |  ~6.4K | 6.4 KB | 800 B |
+| 1M         |   ~64K |  64 KB |  8 KB |
+| 10M        |  ~640K | 640 KB | 80 KB |
 
-**Trade-off**: miss false-continuation rate rises from ~0.9% (8-channel)
-to ~7% (binary). But the bitfield is always L1-hot, and at typical load
-(<70%) overflow is rare enough that 1-bit vs 8-bit makes almost no
-difference — the memory savings are pure upside.
+**Trade-off**: miss false-continuation rate rises from ~0.9% (8-channel) to ~7% (binary). But the bitfield is always L1-hot, and at typical load (<70%) overflow is rare enough that 1-bit vs 8-bit makes almost no difference — the memory savings are pure upside.
 
 ## Open — FlatBTree
 
 ### Performance
 
 | Item | Difficulty | Notes |
-|------|-----------|-------|
+| --- | --- | --- |
 | ~~Tree-surgery `append` (graft instead of drain+rebuild)~~ | ~~Medium~~ | **Done (May 2026).** See "FlatBTree::append tree-surgery graft" in Recently Completed. Outstanding: when `self.height < other.height` the graft falls back to drain — symmetric work, deferred until a workload demonstrates it's needed. |
 | ~~Estimator bias correction~~ | ~~Low-Medium~~ | **Done (May 2026)** — but in a different shape than originally proposed. Investigation revealed two compounding biases: (1) the +0.10 estimator over-count from uniform-subtree-weighting; (2) a previously-unnoticed 2-3× cost asymmetry between `surgical_left` and `surgical_right` for the same workload (random-insert builds). Together they shift the optimal biased-r cutoff from ~0.6 to ~0.70. Retuned the cutoff in place of structural metadata tracking (no extra per-internal-node field). Win: 2.1× speedup at p045/1M random-build. Tracking actual rightmost-subtree count on insert/remove was deferred — the constant-factor asymmetry is the dominant signal, not the +0.10 count bias. |
 | ~~Investigate std::BTreeMap split_off win at 1M-p050~~ | ~~Low~~ | **Closed (May 2026).** Hypothesis confirmed: std's structural split (Box pointer relinking) avoids deep-copy entirely. Our arena layout requires copy-on-split. Skip-`free_node` micro-optimization saves only 2–6%. Closing the remaining gap requires refcounted/shared arena or pointer-based node refs — both would tax every other operation. See [Closed Investigations](optimization/closed.md). |
@@ -342,17 +236,16 @@ difference — the memory savings are pure upside.
 ### API Completeness
 
 | Item | Difficulty | Notes |
-|------|-----------|-------|
+| --- | --- | --- |
 | ~~`range_mut()`~~ | ~~Low-Medium~~ | **Done (May 2026).** |
 | ~~Arena `shrink_to_fit()`~~ | ~~Medium~~ | **Done (May 2026)** via drain + bulk_load rebuild. |
 
 ## Closed
 
-These have been extensively tested and proven structural. See
-[Closed Investigations](optimization/closed.md) for full documentation.
+These have been extensively tested and proven structural. See [Closed Investigations](optimization/closed.md) for full documentation.
 
 | Item | Why Closed |
-|------|-----------|
+| --- | --- |
 | Lookup hit gap (1.11-1.25x) | Per-probe instruction count is inherent to overflow-bit design. 7 attempts across 2 designs, all failed or traded hit for miss. |
 | Selective prefetch policy | No universal policy exists. Design selection (IPO vs Splitsies vs UFM) is the prefetch policy. |
 | AVX2/AVX-512 for 16-slot groups | 93%+ of probes resolve in home group (one SSE2 load). AVX2 targets the wrong bottleneck. Implemented for IPO64 only. |

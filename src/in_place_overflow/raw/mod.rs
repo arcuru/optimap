@@ -340,7 +340,13 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
             if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
                 unsafe {
                     Group::set_meta(meta, si, reduced);
-                    S::write(self.ctrl, self.extra, Self::bucket_index(gi, si), key, value);
+                    S::write(
+                        self.ctrl,
+                        self.extra,
+                        Self::bucket_index(gi, si),
+                        key,
+                        value,
+                    );
                 }
                 return;
             }
@@ -380,7 +386,13 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
                 unsafe {
                     let ins_meta = self.meta_ptr(ins_gi);
                     Group::set_meta(ins_meta, ins_si, reduced);
-                    S::write(self.ctrl, self.extra, Self::bucket_index(ins_gi, ins_si), key, value);
+                    S::write(
+                        self.ctrl,
+                        self.extra,
+                        Self::bucket_index(ins_gi, ins_si),
+                        key,
+                        value,
+                    );
                 }
                 self.len += 1;
                 if decrement {
@@ -497,7 +509,13 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
             let meta = self.meta_ptr(gi);
             let old_meta = Group::get_meta(meta, si);
             Group::set_meta(meta, si, reduced);
-            S::write(self.ctrl, self.extra, Self::bucket_index(gi, si), key, value);
+            S::write(
+                self.ctrl,
+                self.extra,
+                Self::bucket_index(gi, si),
+                key,
+                value,
+            );
 
             if old_meta == EMPTY {
                 self.growth_left -= 1;
@@ -812,33 +830,54 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> std::iter::FusedIterator for Int
 use crate::raw::table_api::{EntryProbe, RawTableApi};
 
 impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K, V, T, S> {
-    type SlotIter<'a> = SlotIter<'a, K, V, T, S> where K: 'a, V: 'a;
+    type SlotIter<'a>
+        = SlotIter<'a, K, V, T, S>
+    where
+        K: 'a,
+        V: 'a;
     type IntoIter = IntoIter<K, V, T, S>;
 
-    fn new() -> Self { RawTable::new() }
-    fn with_capacity(cap: usize) -> Self { RawTable::with_capacity(cap) }
-
-    #[inline(always)]
-    fn len(&self) -> usize { self.len }
-
-    #[inline(always)]
-    fn capacity(&self) -> usize {
-        if self.is_allocated() { self.num_groups() * GROUP_SIZE } else { 0 }
+    fn new() -> Self {
+        RawTable::new()
+    }
+    fn with_capacity(cap: usize) -> Self {
+        RawTable::with_capacity(cap)
     }
 
     #[inline(always)]
-    fn is_allocated(&self) -> bool { self.max_load > 0 }
+    fn len(&self) -> usize {
+        self.len
+    }
 
     #[inline(always)]
-    fn num_groups(&self) -> usize { self.mask + 1 }
+    fn capacity(&self) -> usize {
+        if self.is_allocated() {
+            self.num_groups() * GROUP_SIZE
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn is_allocated(&self) -> bool {
+        self.max_load > 0
+    }
+
+    #[inline(always)]
+    fn num_groups(&self) -> usize {
+        self.mask + 1
+    }
 
     fn groups_for_capacity(capacity: usize) -> usize {
-        let min_slots = (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
+        let min_slots =
+            (capacity * MAX_LOAD_FACTOR_DEN + MAX_LOAD_FACTOR_NUM - 1) / MAX_LOAD_FACTOR_NUM;
         let min_groups = (min_slots + GROUP_SIZE - 1) / GROUP_SIZE;
         min_groups.next_power_of_two()
     }
 
-    fn clear(&mut self) { self.clear(); }
+    fn clear(&mut self) {
+        self.clear();
+    }
 
     #[inline(always)]
     unsafe fn key_ptr(&self, gi: usize, si: usize) -> *const K {
@@ -856,7 +895,8 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
     }
 
     fn insert_or_replace<H: BuildHasher>(&mut self, key: K, value: V, hb: &H) -> Option<V>
-    where K: Hash + Eq,
+    where
+        K: Hash + Eq,
     {
         if !self.is_allocated() {
             self.allocate(1);
@@ -890,7 +930,13 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         if let Some(si) = empties.lowest_set_bit() {
             unsafe {
                 Group::set_meta(meta, si, reduced);
-                S::write(self.ctrl, self.extra, Self::bucket_index(gi, si), key, value);
+                S::write(
+                    self.ctrl,
+                    self.extra,
+                    Self::bucket_index(gi, si),
+                    key,
+                    value,
+                );
             }
             self.len += 1;
             self.growth_left -= 1;
@@ -910,7 +956,8 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
     }
 
     fn find_for_entry(&self, h: u64, key: &K) -> EntryProbe
-    where K: Eq,
+    where
+        K: Eq,
     {
         if self.growth_left == 0 {
             if let Some((gi, si)) = self.find_by_hash(h, |k| k == key) {
@@ -952,7 +999,10 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         self.insert_no_check(h, k, v)
     }
 
-    fn ensure_capacity<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
+    fn ensure_capacity<H: BuildHasher>(&mut self, hb: &H)
+    where
+        K: Hash,
+    {
         if self.growth_left == 0 {
             self.grow_or_rehash(hb);
         }
@@ -970,7 +1020,10 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         }
     }
 
-    fn reserve<H: BuildHasher>(&mut self, additional: usize, hb: &H) where K: Hash {
+    fn reserve<H: BuildHasher>(&mut self, additional: usize, hb: &H)
+    where
+        K: Hash,
+    {
         let needed = self.len.checked_add(additional).expect("capacity overflow");
         if !self.is_allocated() {
             if additional > 0 {
@@ -986,7 +1039,10 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         }
     }
 
-    fn shrink_to_fit<H: BuildHasher>(&mut self, hb: &H) where K: Hash {
+    fn shrink_to_fit<H: BuildHasher>(&mut self, hb: &H)
+    where
+        K: Hash,
+    {
         if self.len == 0 {
             let mut empty = Self::new();
             std::mem::swap(self, &mut empty);
@@ -998,11 +1054,16 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         }
     }
 
-    fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hb: &H) where K: Hash {
+    fn rehash_with<H: BuildHasher>(&mut self, new_num_groups: usize, hb: &H)
+    where
+        K: Hash,
+    {
         self.rehash_with(new_num_groups, hb);
     }
 
-    fn iter_slots(&self) -> SlotIter<'_, K, V, T, S> { self.iter_slots() }
+    fn iter_slots(&self) -> SlotIter<'_, K, V, T, S> {
+        self.iter_slots()
+    }
 
     fn into_iter_impl(self) -> IntoIter<K, V, T, S> {
         let mask = if !self.is_allocated() {
@@ -1012,7 +1073,11 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         };
         let table = unsafe { ptr::read(&self) };
         std::mem::forget(self);
-        IntoIter { table, group: 0, current_mask: mask }
+        IntoIter {
+            table,
+            group: 0,
+            current_mask: mask,
+        }
     }
 
     fn drain_impl(&mut self) -> IntoIter<K, V, T, S> {
@@ -1020,7 +1085,11 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
         table.into_iter_impl()
     }
 
-    fn clone_table(&self) -> Self where K: Clone, V: Clone {
+    fn clone_table(&self) -> Self
+    where
+        K: Clone,
+        V: Clone,
+    {
         self.clone()
     }
 }
@@ -1095,25 +1164,70 @@ mod tests {
     }
 
     // Byte7_254 (current IPO default — top-byte, decorrelated from AND group index)
-    #[test] fn b7_254_basic() { test_basic::<Byte7_254>(); }
-    #[test] fn b7_254_grow() { test_grow::<Byte7_254>(); }
-    #[test] fn b7_254_clone() { test_clone::<Byte7_254>(); }
-    #[test] fn b7_254_remove_cycle() { test_remove_cycle::<Byte7_254>(); }
-    #[test] fn b7_254_iter() { test_iter::<Byte7_254>(); }
+    #[test]
+    fn b7_254_basic() {
+        test_basic::<Byte7_254>();
+    }
+    #[test]
+    fn b7_254_grow() {
+        test_grow::<Byte7_254>();
+    }
+    #[test]
+    fn b7_254_clone() {
+        test_clone::<Byte7_254>();
+    }
+    #[test]
+    fn b7_254_remove_cycle() {
+        test_remove_cycle::<Byte7_254>();
+    }
+    #[test]
+    fn b7_254_iter() {
+        test_iter::<Byte7_254>();
+    }
 
     // Byte2_254 (pre-fix default; correlated with AND mask above 2^16 groups)
-    #[test] fn b2_254_basic() { test_basic::<Byte2_254>(); }
-    #[test] fn b2_254_grow() { test_grow::<Byte2_254>(); }
-    #[test] fn b2_254_clone() { test_clone::<Byte2_254>(); }
-    #[test] fn b2_254_remove_cycle() { test_remove_cycle::<Byte2_254>(); }
-    #[test] fn b2_254_iter() { test_iter::<Byte2_254>(); }
+    #[test]
+    fn b2_254_basic() {
+        test_basic::<Byte2_254>();
+    }
+    #[test]
+    fn b2_254_grow() {
+        test_grow::<Byte2_254>();
+    }
+    #[test]
+    fn b2_254_clone() {
+        test_clone::<Byte2_254>();
+    }
+    #[test]
+    fn b2_254_remove_cycle() {
+        test_remove_cycle::<Byte2_254>();
+    }
+    #[test]
+    fn b2_254_iter() {
+        test_iter::<Byte2_254>();
+    }
 
     // Byte7_128 (consolidated alternative — TopTag128 + HighByte128 + TopByte128)
-    #[test] fn b7_128_basic() { test_basic::<Byte7_128>(); }
-    #[test] fn b7_128_grow() { test_grow::<Byte7_128>(); }
-    #[test] fn b7_128_clone() { test_clone::<Byte7_128>(); }
-    #[test] fn b7_128_remove_cycle() { test_remove_cycle::<Byte7_128>(); }
-    #[test] fn b7_128_iter() { test_iter::<Byte7_128>(); }
+    #[test]
+    fn b7_128_basic() {
+        test_basic::<Byte7_128>();
+    }
+    #[test]
+    fn b7_128_grow() {
+        test_grow::<Byte7_128>();
+    }
+    #[test]
+    fn b7_128_clone() {
+        test_clone::<Byte7_128>();
+    }
+    #[test]
+    fn b7_128_remove_cycle() {
+        test_remove_cycle::<Byte7_128>();
+    }
+    #[test]
+    fn b7_128_iter() {
+        test_iter::<Byte7_128>();
+    }
 
     // Extra: string keys (verifies Drop + non-Copy types)
     #[test]
@@ -1131,7 +1245,9 @@ mod tests {
     fn clear_table() {
         let hb = RandomState::new();
         let mut table: RawTable<u64, u64> = RawTable::new();
-        for i in 0..50 { table.insert_with_rehash(i, i, &hb); }
+        for i in 0..50 {
+            table.insert_with_rehash(i, i, &hb);
+        }
         table.clear();
         assert_eq!(table.len(), 0);
         assert!(table.capacity() > 0);

@@ -121,7 +121,10 @@ fn assert_no_leak(label: &str, f: impl FnOnce()) {
     let before = AllocSnapshot::now();
     f();
     let after = AllocSnapshot::now();
-    assert_eq!(before, after, "{label}: alloc drift {before:?} -> {after:?}");
+    assert_eq!(
+        before, after,
+        "{label}: alloc drift {before:?} -> {after:?}"
+    );
 }
 
 // ── Shared exercise bodies ─────────────────────────────────────────────────
@@ -138,12 +141,24 @@ trait Cap: Default {
 macro_rules! impl_cap {
     ($t:ident) => {
         impl Cap for $t<String, Vec<u32>> {
-            fn ins(&mut self, k: String, v: Vec<u32>) { self.insert(k, v); }
-            fn rm(&mut self, k: &str) { self.remove(k); }
-            fn cap(capacity: usize) -> Self { Self::with_capacity(capacity) }
-            fn rsv(&mut self, additional: usize) { self.reserve(additional); }
-            fn shrink(&mut self) { self.shrink_to_fit(); }
-            fn ln(&self) -> usize { self.len() }
+            fn ins(&mut self, k: String, v: Vec<u32>) {
+                self.insert(k, v);
+            }
+            fn rm(&mut self, k: &str) {
+                self.remove(k);
+            }
+            fn cap(capacity: usize) -> Self {
+                Self::with_capacity(capacity)
+            }
+            fn rsv(&mut self, additional: usize) {
+                self.reserve(additional);
+            }
+            fn shrink(&mut self) {
+                self.shrink_to_fit();
+            }
+            fn ln(&self) -> usize {
+                self.len()
+            }
         }
     };
 }

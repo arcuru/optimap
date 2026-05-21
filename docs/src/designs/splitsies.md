@@ -1,7 +1,6 @@
 # Splitsies
 
-16-slot groups with a separate contiguous overflow array. Combines the
-tombstone-free overflow-bit design with power-of-2 bucket addressing.
+16-slot groups with a separate contiguous overflow array. Combines the tombstone-free overflow-bit design with power-of-2 bucket addressing.
 
 ## Memory Layout
 
@@ -37,6 +36,7 @@ Buckets:  [slot0 slot1 ... slot15] × num_groups
 ## Performance vs hashbrown (70% load)
 
 ### Wins
+
 - **Remove**: 0.64-0.84x (tombstone-free deletion)
 - **Churn**: 0.62-0.86x (biggest advantage)
 - **Insert**: 0.93-0.97x
@@ -45,13 +45,11 @@ Buckets:  [slot0 slot1 ... slot15] × num_groups
 - **Miss at 85% load**: 0.28x (3.6x faster)
 
 ### Losses
+
 - **Lookup hit**: 1.11-1.23x (structural per-probe overhead)
 - **Entry API**: 1.66x (hit overhead + enum construction)
 - **Counting/aggregation**: 1.28-1.35x
 
 ## Design Note: Overflow Array
 
-The overflow array is contiguous and positioned immediately after the metadata array.
-The overflow pointer is derived from `metadata + num_groups * 16` rather than stored
-separately, saving 8 bytes in the struct. Since overflow access is on the cold path
-(only after a home-group miss), the arithmetic cost is negligible.
+The overflow array is contiguous and positioned immediately after the metadata array. The overflow pointer is derived from `metadata + num_groups * 16` rather than stored separately, saving 8 bytes in the struct. Since overflow access is on the cold path (only after a home-group miss), the arithmetic cost is negligible.

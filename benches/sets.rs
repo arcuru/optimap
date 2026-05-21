@@ -3,8 +3,10 @@
 mod bench_helpers;
 
 use bench_helpers::*;
-use criterion::{BenchmarkGroup, BenchmarkId, Criterion, Throughput, black_box, criterion_group,
-    criterion_main, measurement::WallTime};
+use criterion::{
+    BenchmarkGroup, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
+    measurement::WallTime,
+};
 use optimap::Set;
 
 const N_MEDIUM: usize = 10_000;
@@ -17,8 +19,14 @@ struct TestSize {
 
 fn test_sizes() -> Vec<TestSize> {
     vec![
-        TestSize { name: "10k", n: N_MEDIUM },
-        TestSize { name: "100k", n: N_LARGE },
+        TestSize {
+            name: "10k",
+            n: N_MEDIUM,
+        },
+        TestSize {
+            name: "100k",
+            n: N_LARGE,
+        },
     ]
 }
 
@@ -214,7 +222,13 @@ fn bench_set_contains_miss(c: &mut Criterion) {
         let keys = make_random_keys(sz.n, 42);
         let miss_keys = make_miss_keys(sz.n);
         group.throughput(Throughput::Elements(sz.n as u64));
-        all_sets!(bench_set_contains_miss_for, &mut group, sz.name, &keys, &miss_keys);
+        all_sets!(
+            bench_set_contains_miss_for,
+            &mut group,
+            sz.name,
+            &keys,
+            &miss_keys
+        );
     }
     group.finish();
 }
@@ -242,7 +256,13 @@ fn bench_set_iter(c: &mut Criterion) {
 fn bench_set_churn(c: &mut Criterion) {
     let mut group = c.benchmark_group("set/churn");
     all_sets!(bench_set_churn_for, &mut group, "16k_slots", 50_000, 0xFFFF);
-    all_sets!(bench_set_churn_for, &mut group, "256k_slots", 50_000, 0x3_FFFF);
+    all_sets!(
+        bench_set_churn_for,
+        &mut group,
+        "256k_slots",
+        50_000,
+        0x3_FFFF
+    );
     group.finish();
 }
 

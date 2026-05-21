@@ -192,8 +192,13 @@ fn run_differential(ops: &[Op]) {
                 assert_eq!(tv, rv, "op {i}: entry({k}).or_default()");
             }
             Op::EntryAndModify(k, v) => {
-                test.entry(*k).and_modify(|e| *e = e.wrapping_add(*v)).or_insert(*v);
-                reference.entry(*k).and_modify(|e| *e = e.wrapping_add(*v)).or_insert(*v);
+                test.entry(*k)
+                    .and_modify(|e| *e = e.wrapping_add(*v))
+                    .or_insert(*v);
+                reference
+                    .entry(*k)
+                    .and_modify(|e| *e = e.wrapping_add(*v))
+                    .or_insert(*v);
             }
             Op::SplitOff(at) => {
                 let t_right = test.split_off(at);
@@ -223,14 +228,21 @@ fn run_differential(ops: &[Op]) {
                 test.append(&mut t_other);
                 reference.append(&mut r_other);
                 assert!(t_other.is_empty(), "op {i}: append left other non-empty");
-                assert!(r_other.is_empty(), "op {i}: ref append left other non-empty");
+                assert!(
+                    r_other.is_empty(),
+                    "op {i}: ref append left other non-empty"
+                );
                 let tl: Vec<_> = test.iter_sorted().map(|(&k, &v)| (k, v)).collect();
                 let rl: Vec<_> = reference.iter().map(|(&k, &v)| (k, v)).collect();
                 assert_eq!(tl, rl, "op {i}: append result");
             }
         }
 
-        assert_eq!(test.len(), reference.len(), "op {i}: len mismatch after {op:?}");
+        assert_eq!(
+            test.len(),
+            reference.len(),
+            "op {i}: len mismatch after {op:?}"
+        );
     }
 
     // Final full verification — sorted order must match

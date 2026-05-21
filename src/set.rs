@@ -223,10 +223,15 @@ where
 
     /// Reserves capacity for at least `additional` more elements.
     pub fn reserve(&mut self, additional: usize) {
-        let needed = self.table.len.checked_add(additional).expect("capacity overflow");
+        let needed = self
+            .table
+            .len
+            .checked_add(additional)
+            .expect("capacity overflow");
         if !self.table.is_allocated() {
             if additional > 0 {
-                self.table.allocate(RawTable::<T, ()>::groups_for_capacity(needed));
+                self.table
+                    .allocate(RawTable::<T, ()>::groups_for_capacity(needed));
             }
             return;
         }
@@ -256,7 +261,7 @@ where
     where
         F: FnMut(&T) -> bool,
     {
-        use crate::raw::group::{Group, EMPTY, overflow_bit};
+        use crate::raw::group::{EMPTY, Group, overflow_bit};
 
         if !self.table.is_allocated() {
             return;

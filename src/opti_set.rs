@@ -45,60 +45,82 @@ pub struct OptiSet<T, S = DefaultHashBuilder> {
 impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     /// Create an empty set, letting the policy engine choose the backend.
     pub fn new() -> Self {
-        OptiSet { inner: OptiMap::new() }
+        OptiSet {
+            inner: OptiMap::new(),
+        }
     }
 
     /// Create a set with at least the given capacity, backend chosen by policy.
     pub fn with_capacity(capacity: usize) -> Self {
-        OptiSet { inner: OptiMap::with_capacity(capacity) }
+        OptiSet {
+            inner: OptiMap::with_capacity(capacity),
+        }
     }
 
     /// Create a set with the given workload hint.
     pub fn with_hint(hint: Hint) -> Self {
-        OptiSet { inner: OptiMap::with_hint(hint) }
+        OptiSet {
+            inner: OptiMap::with_hint(hint),
+        }
     }
 
     /// Create a set with both a capacity and a workload hint.
     pub fn with_capacity_and_hint(capacity: usize, hint: Hint) -> Self {
-        OptiSet { inner: OptiMap::with_capacity_and_hint(capacity, hint) }
+        OptiSet {
+            inner: OptiMap::with_capacity_and_hint(capacity, hint),
+        }
     }
 
     /// Create a set pinned to the `UnorderedFlatMap` backend.
     pub fn ufm() -> Self {
-        OptiSet { inner: OptiMap::ufm() }
+        OptiSet {
+            inner: OptiMap::ufm(),
+        }
     }
 
     /// Create a set pinned to the `Splitsies` backend.
     pub fn splitsies() -> Self {
-        OptiSet { inner: OptiMap::splitsies() }
+        OptiSet {
+            inner: OptiMap::splitsies(),
+        }
     }
 
     /// Create a set pinned to the `InPlaceOverflow` backend.
     pub fn ipo() -> Self {
-        OptiSet { inner: OptiMap::ipo() }
+        OptiSet {
+            inner: OptiMap::ipo(),
+        }
     }
 
     /// Create a set pinned to the `Gaps` backend.
     pub fn gaps() -> Self {
-        OptiSet { inner: OptiMap::gaps() }
+        OptiSet {
+            inner: OptiMap::gaps(),
+        }
     }
 
     /// Create a set pinned to the `IPO64` backend.
     pub fn ipo64() -> Self {
-        OptiSet { inner: OptiMap::ipo64() }
+        OptiSet {
+            inner: OptiMap::ipo64(),
+        }
     }
 
     /// Create a set pinned to the `FlatBTree` backend (sorted iteration,
     /// range queries). Requires `T: Ord + Clone`.
     pub fn flat_btree() -> Self {
-        OptiSet { inner: OptiMap::flat_btree() }
+        OptiSet {
+            inner: OptiMap::flat_btree(),
+        }
     }
 
     /// Create a set pinned to `FlatBTree` with the given capacity.
     /// Equivalent to `with_capacity_and_hint(capacity, Hint::Sorted)` but
     /// pinned (no auto-transition on resize).
     pub fn sorted_with_capacity(capacity: usize) -> Self {
-        OptiSet { inner: OptiMap::sorted_with_capacity(capacity) }
+        OptiSet {
+            inner: OptiMap::sorted_with_capacity(capacity),
+        }
     }
 
     /// Build a sorted set from input already sorted with no duplicates.
@@ -112,12 +134,16 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
 
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
-        OptiSet { inner: OptiMap::with_type(map_type) }
+        OptiSet {
+            inner: OptiMap::with_type(map_type),
+        }
     }
 
     /// Create a set pinned to a specific backend with the given capacity.
     pub fn with_type_and_capacity(map_type: MapType, capacity: usize) -> Self {
-        OptiSet { inner: OptiMap::with_type_and_capacity(map_type, capacity) }
+        OptiSet {
+            inner: OptiMap::with_type_and_capacity(map_type, capacity),
+        }
     }
 }
 
@@ -410,7 +436,9 @@ impl<T: Hash + Eq + Ord + Clone + fmt::Debug> fmt::Debug for OptiSet<T> {
 
 impl<T: Hash + Eq + Ord + Clone> Clone for OptiSet<T> {
     fn clone(&self) -> Self {
-        OptiSet { inner: self.inner.clone() }
+        OptiSet {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -512,7 +540,13 @@ mod tests {
 
     #[test]
     fn pinned_backends() {
-        for mt in [MapType::Ufm, MapType::Splitsies, MapType::Ipo, MapType::Gaps, MapType::Ipo64] {
+        for mt in [
+            MapType::Ufm,
+            MapType::Splitsies,
+            MapType::Ipo,
+            MapType::Gaps,
+            MapType::Ipo64,
+        ] {
             let mut set = OptiSet::<u64>::with_type(mt);
             for i in 0..100 {
                 set.insert(i);

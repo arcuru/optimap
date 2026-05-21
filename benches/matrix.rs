@@ -149,7 +149,13 @@ fn bench_lookup_hit(c: &mut Criterion) {
     for sz in test_sizes() {
         let keys = make_random_keys(sz.num_entries, 42);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        matrix_maps!(bench_lookup_hit_for, &mut group, sz.name, &keys, sz.capacity);
+        matrix_maps!(
+            bench_lookup_hit_for,
+            &mut group,
+            sz.name,
+            &keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -160,7 +166,14 @@ fn bench_lookup_miss(c: &mut Criterion) {
         let keys = make_random_keys(sz.num_entries, 42);
         let miss_keys = make_miss_keys(sz.num_entries);
         group.throughput(Throughput::Elements(sz.num_entries as u64));
-        matrix_maps!(bench_lookup_miss_for, &mut group, sz.name, &keys, &miss_keys, sz.capacity);
+        matrix_maps!(
+            bench_lookup_miss_for,
+            &mut group,
+            sz.name,
+            &keys,
+            &miss_keys,
+            sz.capacity
+        );
     }
     group.finish();
 }
@@ -175,5 +188,11 @@ fn bench_remove(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(matrix, bench_insert, bench_lookup_hit, bench_lookup_miss, bench_remove);
+criterion_group!(
+    matrix,
+    bench_insert,
+    bench_lookup_hit,
+    bench_lookup_miss,
+    bench_remove
+);
 criterion_main!(matrix);

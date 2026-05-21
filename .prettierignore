@@ -1,0 +1,15 @@
+# Rust source (formatted by cargo fmt)
+*.rs
+
+# Nix files (formatted by their own tools)
+*.nix
+
+# Generated/book output
+docs/book/
+
+# Misc
+*.png
+*.svg
+*.ico
+*.lock
+target/

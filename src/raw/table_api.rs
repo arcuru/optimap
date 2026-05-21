@@ -87,12 +87,7 @@ pub trait RawTableApi<K, V>: Sized {
     /// Insert a key-value pair. Returns the old value if the key already existed.
     ///
     /// Each design implements its own fused home-group fast path here.
-    fn insert_or_replace<S: BuildHasher>(
-        &mut self,
-        key: K,
-        value: V,
-        hb: &S,
-    ) -> Option<V>
+    fn insert_or_replace<S: BuildHasher>(&mut self, key: K, value: V, hb: &S) -> Option<V>
     where
         K: Hash + Eq;
 

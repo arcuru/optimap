@@ -1,9 +1,7 @@
 //! Tests for the `Map` facade trait — exercises generic dispatch across
 //! both hash-dispatched and ord-dispatched backends through a single bound.
 
-use optimap::{
-    FlatBTree, Gaps, IPO64, InPlaceOverflow, Map, OptiMap, Splitsies, UnorderedFlatMap,
-};
+use optimap::{FlatBTree, Gaps, IPO64, InPlaceOverflow, Map, OptiMap, Splitsies, UnorderedFlatMap};
 use std::collections::{BTreeMap, HashMap};
 
 fn exercise<M: Map<i32, i32>>() {

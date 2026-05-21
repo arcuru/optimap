@@ -4,14 +4,9 @@
 
 The five hash map designs shared 95-100% of their code at two levels:
 
-1. **Map wrapper** (~1000 lines each): constructors, entry API, iterators,
-   `FromIterator`, `Clone`, `Debug`, `PartialEq`, `Index`, etc. — identical
-   across all 5 designs except the struct name.
+1. **Map wrapper** (~1000 lines each): constructors, entry API, iterators, `FromIterator`, `Clone`, `Debug`, `PartialEq`, `Index`, etc. — identical across all 5 designs except the struct name.
 
-2. **Overflow-bit raw table** (~900 lines each): UFM, Splitsies, and Gaps had
-   nearly identical probe loops, insert logic, allocation, rehash, and iteration.
-   The only differences were parameterizable: overflow storage location, bucket
-   stride, and SIMD bitmask width.
+2. **Overflow-bit raw table** (~900 lines each): UFM, Splitsies, and Gaps had nearly identical probe loops, insert logic, allocation, rehash, and iteration. The only differences were parameterizable: overflow storage location, bucket stride, and SIMD bitmask width.
 
 Total duplication: ~8,500 lines across 15 files.
 
@@ -27,8 +22,7 @@ A single map wrapper that replaces all 5 `map.rs` files. Contains:
 - Core ops (`get`, `insert`, `remove`, `contains_key`, `get_key_value`, `get_mut`)
 - Entry API (`Entry`, `OccupiedEntry`, `VacantEntry`)
 - Iterators (`Iter`, `IterMut`, `IntoIter`, `Keys`, `Values`, `ValuesMut`)
-- Trait impls (`Default`, `IntoIterator`, `FromIterator`, `Extend`, `Index`,
-  `Debug`, `Clone`, `PartialEq`, `Eq`)
+- Trait impls (`Default`, `IntoIterator`, `FromIterator`, `Extend`, `Index`, `Debug`, `Clone`, `PartialEq`, `Eq`)
 - Bulk ops (`retain`, `drain`, `reserve`, `shrink_to_fit`)
 
 Each concrete map type is a type alias:
@@ -46,7 +40,7 @@ pub type IPO64<K, V, S>           = GenericMap<K, V, S, ipo64::RawTable<K, V>>;
 The contract between GenericMap and each raw table backend. Key methods:
 
 | Category | Methods |
-|----------|---------|
+| --- | --- |
 | Construction | `new()`, `with_capacity()` |
 | Queries | `len()`, `capacity()`, `is_allocated()`, `num_groups()` |
 | Lookups | `find_bucket()`, `find_by_hash()` |
@@ -56,14 +50,11 @@ The contract between GenericMap and each raw table backend. Key methods:
 | Iteration | `iter_slots()`, `into_iter_impl()`, `drain_impl()` |
 | Capacity | `reserve()`, `shrink_to_fit()`, `rehash_with()` |
 
-Performance-critical methods (`insert_or_replace`, `find_for_entry`) include the
-fused home-group SIMD fast path inside the raw table, not in GenericMap. Each
-design's fast path is fully specialized via monomorphization.
+Performance-critical methods (`insert_or_replace`, `find_for_entry`) include the fused home-group SIMD fast path inside the raw table, not in GenericMap. Each design's fast path is fully specialized via monomorphization.
 
 ### GroupLayout + overflow_table::RawTable<K, V, L>
 
-A single generic overflow-bit raw table replaces three separate implementations.
-The `GroupLayout` trait composes three strategy traits:
+A single generic overflow-bit raw table replaces three separate implementations. The `GroupLayout` trait composes three strategy traits:
 
 ```rust
 pub trait GroupLayout: 'static + Copy {
@@ -81,7 +72,7 @@ pub trait GroupLayout: 'static + Copy {
 Named layouts for existing designs:
 
 | Axis | UFM | Splitsies | Gaps |
-|------|-----|-----------|------|
+| --- | --- | --- | --- |
 | Usable slots | 15 | 16 | 15 |
 | Bucket stride | 15 (`gi*15+si`) | 16 (`(gi<<4)\|si`) | 16 (`(gi<<4)\|si`) |
 | SIMD mask | `0x7FFF` | `0xFFFF` | `0x7FFF` |
@@ -89,58 +80,39 @@ Named layouts for existing designs:
 | Extra allocation | 0 | `num_groups` bytes | 0 |
 | Prefetch strategy | 2 prefetches/probe | 3 (extra for overflow) | 2 |
 
-All constants and pointer arithmetic are resolved at compile time. The `GroupOps`
-associated type carries the SIMD operations parameterized by slot mask, avoiding
-unstable `generic_const_exprs`.
+All constants and pointer arithmetic are resolved at compile time. The `GroupOps` associated type carries the SIMD operations parameterized by slot mask, avoiding unstable `generic_const_exprs`.
 
 ### Design matrix: tag × overflow × indexing
 
-Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose
-any `TagStrategy` with any `OverflowStrategy`:
+Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose any `TagStrategy` with any `OverflowStrategy`:
 
 | Tag (bits) \ Overflow | 8-bit (ByteSeparate) | 1-bit (BitSeparate) | Tombstone (IPO) |
-|---|---|---|---|
-| `Byte0_255` (0-7)   | Splitsies (baseline) | `Byte0_1bit` | — |
-| `Byte0_128` (0-7)   | `Byte0_128_8bit` | `Byte0_128_1bit` | — |
-| `Byte1_255` (8-15)  | `Byte1_8bit` | `Byte1_1bit` | — |
+| --- | --- | --- | --- |
+| `Byte0_255` (0-7) | Splitsies (baseline) | `Byte0_1bit` | — |
+| `Byte0_128` (0-7) | `Byte0_128_8bit` | `Byte0_128_1bit` | — |
+| `Byte1_255` (8-15) | `Byte1_8bit` | `Byte1_1bit` | — |
 | `Byte2_254` (16-23) | — | — | IPO64 (default) / `Byte2_254_TombMap` |
 | `Byte7_128` (56-63) (AND) | — | `Byte7_128_1bitAnd` | `Byte7_128_TombMap` |
 | `Byte7_255` (56-63) (AND) | — | `Byte7_255_1bitAnd` | — |
 | `Byte7_254` (56-63) (AND) | — | — | IPO (default) / `Byte7_254_Tomb64Map` (collision-prone on IPO64) |
 
-Strategy names follow `ByteN_VVV`: `N` is the byte index in the 64-bit
-hash (0=lowest, 7=highest), `VVV` is the count of distinct tag values.
+Strategy names follow `ByteN_VVV`: `N` is the byte index in the 64-bit hash (0=lowest, 7=highest), `VVV` is the count of distinct tag values.
 
-AND-indexed variants use `Layout16And` which sets `AND_INDEX = true`. See
-the "Group indexing" section below.
+AND-indexed variants use `Layout16And` which sets `AND_INDEX = true`. See the "Group indexing" section below.
 
 ### Group indexing: shift vs AND
 
 Hash tables map a hash value to a group index. Two strategies:
 
-**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits.
-Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`, `Byte2_254`)
-since they're decorrelated. Costs 2 instructions (variable shift + AND).
+**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits. Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`, `Byte2_254`) since they're decorrelated. Costs 2 instructions (variable shift + AND).
 
-**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction
-(just AND), but tags must come from top hash bits (`Byte7_*`) to avoid
-correlation. Note that `Byte2_254` (bits 16-23) is *not* safe under AND
-indexing once `num_groups > 2¹⁶` — at that point the mask reaches into
-bits 16+ and tag bits become correlated with the group index. IPO uses
-`Byte7_254` (bits 56-63) as its default to escape this trap; IPO64 keeps
-`Byte2_254` (shift indexing → top bits are the group index, so the middle
-of the hash is the right safe region).
+**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction (just AND), but tags must come from top hash bits (`Byte7_*`) to avoid correlation. Note that `Byte2_254` (bits 16-23) is _not_ safe under AND indexing once `num_groups > 2¹⁶` — at that point the mask reaches into bits 16+ and tag bits become correlated with the group index. IPO uses `Byte7_254` (bits 56-63) as its default to escape this trap; IPO64 keeps `Byte2_254` (shift indexing → top bits are the group index, so the middle of the hash is the right safe region).
 
-Additionally, 8-bit overflow channels use `1 << (h & 7)` which also uses
-low bits — every key in the same group would get the same channel, making
-8-channel overflow useless. **AND indexing is only safe with 1-bit overflow
-(BitSeparate) or tombstone designs (no overflow channels).**
+Additionally, 8-bit overflow channels use `1 << (h & 7)` which also uses low bits — every key in the same group would get the same channel, making 8-channel overflow useless. **AND indexing is only safe with 1-bit overflow (BitSeparate) or tombstone designs (no overflow channels).**
 
 ### Memory layout: mid-pointer design
 
-Both RawTable implementations use a mid-pointer allocation layout inspired
-by hashbrown. A single `ctrl` pointer sits at the boundary between buckets
-(backward) and metadata (forward):
+Both RawTable implementations use a mid-pointer allocation layout inspired by hashbrown. A single `ctrl` pointer sits at the boundary between buckets (backward) and metadata (forward):
 
 ```text
   Overflow-bit designs:
@@ -162,32 +134,22 @@ by hashbrown. A single `ctrl` pointer sits at the boundary between buckets
 - **Buckets**: `ctrl.cast::<(K,V)>().sub(slot_index + 1)` (backward from ctrl)
 - **Overflow** (overflow-bit only): `ctrl + num_groups * 16 + offset` (forward, after metadata)
 
-This eliminates a separate `buckets` pointer field, reducing the struct
-from 7 fields to 5 (overflow-bit) or 5 (tombstone). Both metadata and
-bucket access derive from `ctrl` in opposite directions, saving a register
-and an address computation in the hot path. hashbrown uses the same trick.
+This eliminates a separate `buckets` pointer field, reducing the struct from 7 fields to 5 (overflow-bit) or 5 (tombstone). Both metadata and bucket access derive from `ctrl` in opposite directions, saving a register and an address computation in the hot path. hashbrown uses the same trick.
 
-Overflow-bit designs have 3 memory regions but only need 2 pointers worth
-of addressing: the hot path (metadata + bucket) uses `ctrl`, and overflow
-is computed as a forward offset from `ctrl` (only accessed on miss/insert).
+Overflow-bit designs have 3 memory regions but only need 2 pointers worth of addressing: the hot path (metadata + bucket) uses `ctrl`, and overflow is computed as a forward offset from `ctrl` (only accessed on miss/insert).
 
 ## What Stays Separate
 
-- **IPO and IPO64** keep their own `RawTable` implementations. Their probe
-  strategy (tombstone-based, EMPTY termination) is fundamentally different from
-  the overflow-bit family. IPO's `RawTable<K,V,T: TombstoneTag>` is parameterized
-  by tag strategy and also uses the mid-pointer layout. They implement
-  `RawTableApi` and use GenericMap for the wrapper layer.
+- **IPO and IPO64** keep their own `RawTable` implementations. Their probe strategy (tombstone-based, EMPTY termination) is fundamentally different from the overflow-bit family. IPO's `RawTable<K,V,T: TombstoneTag>` is parameterized by tag strategy and also uses the mid-pointer layout. They implement `RawTableApi` and use GenericMap for the wrapper layer.
 
 - **FlatBTree** is a B+ tree, not a hash table. No overlap.
 
-- **UnorderedFlatSet** (`set.rs`) is hand-written with direct UFM raw table
-  access for SIMD fast paths. Uses the legacy UFM raw table in `raw/mod.rs`.
+- **UnorderedFlatSet** (`set.rs`) is hand-written with direct UFM raw table access for SIMD fast paths. Uses the legacy UFM raw table in `raw/mod.rs`.
 
 ## Impact
 
 | Metric | Before | After |
-|--------|--------|-------|
+| --- | --- | --- |
 | Map wrapper code | 5 x ~1000 lines | 1 x 740 lines |
 | Overflow-bit raw tables | 3 x ~900 lines | 1 x 936 lines |
 | Overflow-bit group ops | 3 x ~250 lines | 1 x 173 lines |
@@ -195,9 +157,7 @@ is computed as a forward offset from `ctrl` (only accessed on miss/insert).
 | **Total** | **~8,500 lines** | **~2,400 lines** |
 | **Net reduction** | — | **~4,500 lines deleted (-72%)** |
 
-Performance: zero-cost. All generics monomorphize to identical machine code.
-Benchmarks show no systematic regressions (17 improvements vs 3 regressions
-in full throughput suite, regressions attributable to measurement noise).
+Performance: zero-cost. All generics monomorphize to identical machine code. Benchmarks show no systematic regressions (17 improvements vs 3 regressions in full throughput suite, regressions attributable to measurement noise).
 
 ## Adding a New Overflow-Bit Design
 
@@ -212,31 +172,24 @@ That's it. No new probe loops, no new entry API, no new iterators.
 ### TagStrategy & Hash Reduction
 
 Each `GroupLayout` has an associated `TagStrategy` that determines:
+
 - How the hash tag byte is extracted from the 64-bit hash
 - How the overflow channel bits are selected
 
-The tag byte for a given key is computed once during insertion and stored
-as the metadata byte. During probing, the SIMD group match compares stored
-tags against the probe key's tag.
+The tag byte for a given key is computed once during insertion and stored as the metadata byte. During probing, the SIMD group match compares stored tags against the probe key's tag.
 
 Tag strategies come in two families:
 
-| Strategy | Byte | Values | Reduction | Indexing |
-|----------|------|--------|-----------|----------|
-| `Byte0_255` | 0 (low) | 255 | crate `hash_tag()` | Shift |
-| `Byte0_128` | 0 (low) | 128 | `b \| 1` (inline) | Shift |
-| `Byte0_255Pure` | 0 (low) | 255 | `b \| (b==0) as u8` | Shift |
-| `Byte1_255` | 1 | 255 | crate `hash_tag()` | Shift |
-| `Byte7_128` | 7 (high) | 128 | `b \| 0x80` (inline) | AND |
-| `Byte7_255` | 7 (high) | 255 | crate `hash_tag()` | AND |
-| `Byte7_255Pure` | 7 (high) | 255 | `b \| (b==0) as u8` | AND |
+| Strategy        | Byte     | Values | Reduction            | Indexing |
+| --------------- | -------- | ------ | -------------------- | -------- |
+| `Byte0_255`     | 0 (low)  | 255    | crate `hash_tag()`   | Shift    |
+| `Byte0_128`     | 0 (low)  | 128    | `b \| 1` (inline)    | Shift    |
+| `Byte0_255Pure` | 0 (low)  | 255    | `b \| (b==0) as u8`  | Shift    |
+| `Byte1_255`     | 1        | 255    | crate `hash_tag()`   | Shift    |
+| `Byte7_128`     | 7 (high) | 128    | `b \| 0x80` (inline) | AND      |
+| `Byte7_255`     | 7 (high) | 255    | crate `hash_tag()`   | AND      |
+| `Byte7_255Pure` | 7 (high) | 255    | `b \| (b==0) as u8`  | AND      |
 
-The `Pure` variants always use a pure-Rust hash reduction (3 instructions:
-`test; sete; or`), independent of the crate's `reduced-hash-asm` feature.
-The non-Pure variants route through `crate::hash_tag()` which selects the
-asm idiom (`cmp; adc`) on x86_64 or the pure-Rust fallback elsewhere.
-`Byte0_128` and `Byte7_128` inline their own 1-instruction reduction and
-never call `crate::hash_tag()`.
+The `Pure` variants always use a pure-Rust hash reduction (3 instructions: `test; sete; or`), independent of the crate's `reduced-hash-asm` feature. The non-Pure variants route through `crate::hash_tag()` which selects the asm idiom (`cmp; adc`) on x86_64 or the pure-Rust fallback elsewhere. `Byte0_128` and `Byte7_128` inline their own 1-instruction reduction and never call `crate::hash_tag()`.
 
-This per-strategy control lets different backends choose different hash
-reduction strategies, decoupling from the global feature flag.
+This per-strategy control lets different backends choose different hash reduction strategies, decoupling from the global feature flag.

@@ -2,13 +2,12 @@
 
 ## What This Is
 
-A Rust library (`optimap`) providing multiple SIMD-accelerated hash map implementations
-with different performance trade-offs, benchmarked against hashbrown (Rust's std HashMap).
+A Rust library (`optimap`) providing multiple SIMD-accelerated hash map implementations with different performance trade-offs, benchmarked against hashbrown (Rust's std HashMap).
 
 ## Designs
 
 | Design | Key Idea | Best At |
-|--------|----------|---------|
+| --- | --- | --- |
 | **UnorderedFlatMap** | 15-slot groups, overflow byte | High-load miss, churn |
 | **Splitsies** | 16-slot, separate overflow array | Balanced (miss + insert), tombstone-free |
 | **InPlaceOverflow** | 16-slot Swiss-table, 254-value tag (`Byte7_254`) | Lookup hit, insert; miss at large N (wider tag) |
@@ -39,46 +38,34 @@ Requires Rust nightly (for SIMD intrinsics) + miri component. The flake provides
 Hash map designs split into two families based on deletion strategy:
 
 **Overflow-bit family** (tombstone-free): UFM, Splitsies, Gaps, matrix variants
+
 - Overflow bits track displaced entries → O(1) miss termination
 - Deletion clears the slot and adjusts max_load — no tombstones
 - Generic `RawTable<K,V,L: GroupLayout>` in `src/raw/overflow_table.rs`
 
 **Tombstone family**: InPlaceOverflow (IPO), IPO64, `Byte2_254_TombMap`, `Byte7_128_TombMap`, `Byte7_254_Tomb64Map`
+
 - Tombstones for deletion, EMPTY-based probe termination (like hashbrown)
 - IPO's `RawTable<K,V,T: TombstoneTag>` in `src/in_place_overflow/raw/mod.rs`
 - IPO64's `RawTable<K,V,T: TombstoneTag>` in `src/ipo64/raw/mod.rs`
 
-Both families use the **mid-pointer memory layout**: a single `ctrl` pointer
-sits between buckets (backward) and metadata (forward). This eliminates a
-struct field and an address computation from the hot path — the same trick
-hashbrown uses. For overflow-bit designs, the overflow region sits after
-metadata (also forward from ctrl).
+Both families use the **mid-pointer memory layout**: a single `ctrl` pointer sits between buckets (backward) and metadata (forward). This eliminates a struct field and an address computation from the hot path — the same trick hashbrown uses. For overflow-bit designs, the overflow region sits after metadata (also forward from ctrl).
 
 ### Parameterization axes
 
 The design space is parameterized by composable traits:
 
 | Axis | Trait | Implementations |
-|------|-------|-----------------|
+| --- | --- | --- |
 | **Tag extraction** | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte2_254`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` (named `ByteN_VVV`: byte index + distinct-value count) |
 | **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
 | **Group indexing** | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
 | **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
 | **Load factor** | `GroupLayout::LOAD_FACTOR_NUM/DEN` | Default 7/8 (87.5%), customizable per layout |
 
-New design variants are ~30 lines: a type alias composing these traits.
-The `matrix_types` module in `src/lib.rs` has experimental combinations.
+New design variants are ~30 lines: a type alias composing these traits. The `matrix_types` module in `src/lib.rs` has experimental combinations.
 
-**AND-based indexing constraint**: uses low hash bits for group index, so tags
-must come from top bits (`Byte7_*`). `Byte0_254` / `Byte2_254` are *not* safe
-under AND indexing — bits 0–7 / 16–23 overlap with the AND mask. IPO uses
-`Byte7_254` (top byte) as default; IPO64 (shift-indexed) uses `Byte0_254`
-(bottom byte, one shift cheaper than `Byte2_254`). `Byte2_254` is kept only
-as a labelled benchmark variant for the IPO collision A/B test
-(`Byte2_254_TombMap`). For 8-bit overflow channels under AND indexing, use
-shifted channel strategies (`Byte7_128Ch`, `Byte7_255Ch`) that source
-channels from top bits too. Standard channel strategies (`1 << (h & 7)`)
-correlate with the AND group index.
+**AND-based indexing constraint**: uses low hash bits for group index, so tags must come from top bits (`Byte7_*`). `Byte0_254` / `Byte2_254` are _not_ safe under AND indexing — bits 0–7 / 16–23 overlap with the AND mask. IPO uses `Byte7_254` (top byte) as default; IPO64 (shift-indexed) uses `Byte0_254` (bottom byte, one shift cheaper than `Byte2_254`). `Byte2_254` is kept only as a labelled benchmark variant for the IPO collision A/B test (`Byte2_254_TombMap`). For 8-bit overflow channels under AND indexing, use shifted channel strategies (`Byte7_128Ch`, `Byte7_255Ch`) that source channels from top bits too. Standard channel strategies (`1 << (h & 7)`) correlate with the AND group index.
 
 ## Project Structure
 
@@ -130,28 +117,23 @@ correlate with the AND group index.
 
 ## Working Practices
 
-- **Long-term plans and future work go in `docs/src/roadmap.md`**, not in ephemeral
-  plan files. The roadmap is checked into the repo and survives across sessions.
-- Investigation results and design rationale belong in `docs/` (mdbook) alongside
-  the code they describe, not in external notes.
+- **Long-term plans and future work go in `docs/src/roadmap.md`**, not in ephemeral plan files. The roadmap is checked into the repo and survives across sessions.
+- Investigation results and design rationale belong in `docs/` (mdbook) alongside the code they describe, not in external notes.
 
 ## Optimization Status
 
-All designs have been through extensive optimization passes. See `docs/src/optimization/`
-(mdbook) for detailed logs and `docs/src/roadmap.md` for current open/closed work.
+All designs have been through extensive optimization passes. See `docs/src/optimization/` (mdbook) for detailed logs and `docs/src/roadmap.md` for current open/closed work.
 
 Key results (107K entries, `Byte7_128_Tomb` (formerly `Hi128_Tomb`) vs hashbrown):
+
 - Lookup hit: 4.07 vs 4.25 ns (4% faster)
 - Insert: 503 vs 603 µs (17% faster)
 - Remove: 763 vs 1079 µs (29% faster)
 
 Key optimizations applied:
-- **Mid-pointer memory layout** — single `ctrl` pointer between buckets (backward)
-  and metadata (forward), eliminating a struct field and address computation
-- **AND-based group indexing** — `h & mask` (1 instruction) vs `h >> shift` (2 instructions),
-  applied to IPO and 1-bit overflow designs
-- **Tag-group decorrelation** — tags must use hash bits disjoint from group index bits;
-  AND indexing requires tags from top bits (57+)
 
-Future ideas (see plan file): AND indexing for 8-bit overflow with shifted channels,
-mid-pointer for 15-slot designs (UFM/Gaps embed overflow → only 2 regions).
+- **Mid-pointer memory layout** — single `ctrl` pointer between buckets (backward) and metadata (forward), eliminating a struct field and address computation
+- **AND-based group indexing** — `h & mask` (1 instruction) vs `h >> shift` (2 instructions), applied to IPO and 1-bit overflow designs
+- **Tag-group decorrelation** — tags must use hash bits disjoint from group index bits; AND indexing requires tags from top bits (57+)
+
+Future ideas (see plan file): AND indexing for 8-bit overflow with shifted channels, mid-pointer for 15-slot designs (UFM/Gaps embed overflow → only 2 regions).
