@@ -225,11 +225,46 @@ While instrumenting `load_factor_1m`, three-run-median data at 1M cap shows:
 
 The original "hashbrown beats every OptiMap design at large N" framing missed that **UFM consistently wins at this load point by ≈30%.** UFM uses an 8-channel embedded overflow byte (`OverflowStrategy::UfmEmbedded`, `src/raw/group_layout.rs:336-377`); the probe loop terminates when the *specific hash's* overflow channel was never set in the current group, vs Tomb/hashbrown's "any-empty-slot" termination. At 85% load this cuts false-continuation probes by ≈8×. The wrapper's `Policy::auto()` picks Tomb as the single-band default precisely because Tomb wins the *averaged* sweep, but at the high-load lookup-hit point that prompted this investigation, UFM is strictly better. A follow-up worth running: re-evaluate whether `Policy::auto()` should split bands so DRAM-scale (≥1M) lookup-hit-heavy workloads pin to UFM instead of Tomb (would interact with the existing tombstone-DRAM-cliff logic; needs miss/insert data at the same point before recommending).
 
-**Remaining open suspects** (not yet tested in this lap):
+**Experiment 4 — perf stat at the resize transient (N=920K):**
 
-- **SSE2 intrinsic ordering / I-cache footprint** — `_mm_movemask_epi8` placement, µop scheduling, hot path code-size differences. Verifiable only with `perf record` (cycle stalls, branch mispredicts, L1d miss rate, L1i miss rate). Cost: needs perf in the dev shell, microbench at pinned load, ~30 min of analysis. Not yet started.
-- **Per-N measurement noise in sweep CSV** — see methodology improvements below; the multi-run load_factor data above (CV ~3-15% across 3 runs at fixed cap) is the cleanest available signal until the sweep harness gets multi-trial aggregation.
-- **Tomb-specific code-size investigation** — if `perf` shows L1i pressure, look at whether `find_by_hash` and its callees fit a single I-cache line. UFM's hot path is smaller (fewer inline expansions); if Tomb's path is larger, splitting might help.
+`examples/perf_isolate.rs` + `examples/spike_repro.rs` isolate the spike that produces the sweep's sawtooth-shaped lookup_hit curve. Direct measurement of 5 back-to-back 50K-lookup passes after pre-seeding to N=920K (just past Tomb's resize):
+
+```
+                       Tomb      hashbrown
+  Cycles                187.8M    144.7M     Tomb +30%
+  Instructions          135.7M    159.0M     Tomb -15%
+  IPC                   0.72      1.10       Tomb 35% lower
+  L1d misses              5.5M      5.8M     ~equal
+  L1i misses              2.2K      3.7K     both negligible
+  dTLB misses             514K      501K     ~equal
+  iTLB misses             279       349      both negligible
+  Branch mispredicts      435K      352K     Tomb +23%
+
+  Per-pass ns/op (Tomb):    25.4 → 20.5 → 19.3 → 16.5 → 15.1
+  Per-pass ns/op (hashbrown): 22.9 →  4.3 →  4.1 →  4.0 →  4.4
+```
+
+**The actual diagnosis:** at the resize transient, both maps see P1≈24ns (allocator/TLB/scheduler-induced shared cost). Hashbrown recovers in one pass; Tomb takes 25+ passes to fully warm up. The cause is **pipeline efficiency**, not memory:
+
+1. **IPC 0.72 vs 1.10.** Tomb executes *fewer* instructions per lookup but takes *more* cycles to retire them. Load-use stalls and dependency-chain serialization in `find_by_hash` (`src/in_place_overflow/raw/mod.rs:272-305`). Hashbrown's equivalent `find_inner` (hashbrown-0.15.5/src/raw/mod.rs:1894) schedules its instructions to extract more parallelism.
+2. **Branch mispredicts +23%.** Hashbrown's `likely()` hints on the hit branch and the empty-terminator help the BPU stay hot. Tomb has neither.
+3. **Probe-loop prefetch interaction.** Tomb's two `_mm_prefetch` calls per probe step (rejected by experiment 2 as a fix — they help steady state) appear to slow the transient recovery by polluting L1d with next-iteration cache lines while the bench is still touching this-iteration ones. Confirmed: dropping prefetch made steady-state worse, but its effect on the transient was never measured separately.
+
+The "consistency gap" between Tomb and hashbrown in the sweep CSV's lookup_hit graph is **the bench's single-batch timing window catching Tomb mid-recovery from a resize**, and aliasing against hashbrown's 1-pass recovery. At fully-warmed steady state (large N, many passes), Tomb reaches ≈4 ns/op matching hashbrown. The sweep's `calibrate_repeats` actively amplifies this by giving slow operations *fewer* repeats — less averaging across the recovery curve.
+
+**Experiment 3.5 — branch hints in the spike (also rejected):**
+
+Re-ran `examples/perf_isolate.rs --features tomb-branch-hints` at N=920K. Tomb pass 1 went from 25.4 ns → 30.3 ns (worse), instruction count rose from 135.7M → 169.5M, branch-mispredict count fell only modestly (435K → 417K, -4%). LLVM appears to bloat the loop layout when `likely()` is annotated here, and the BPU isn't undertrained enough at 50K iterations/pass for the hint to pay back. Suspect rejected for this scenario too.
+
+**Remaining open lines** (concrete and tractable):
+
+1. **Tomb's `find_by_hash` IPC improvement.** Annotate the µop chain (`perf annotate` on `find_by_hash` at the symbol level, or read disassembly of `target/release/examples/perf_isolate`). Candidates: `Storage::key_ptr` trait dispatch adding indirection, `meta_ptr` vs hashbrown's `ctrl()` address-mode differences, `loaded_match_byte`'s aligned load + post-match BitMask iterator vs hashbrown's `match_tag` + direct bucket pointer.
+
+2. **Targeted prefetch policy.** Drop the per-probe prefetch (rejected for steady state) but add a single home-group K/V prefetch from the entry to `find_by_hash` — narrower than "prefetch every step", may help the transient without hurting steady state. Behind a new feature flag, ~30 min to test.
+
+3. **Bench methodology fix.** Have `sweep.rs` run K warmup passes per N before the timed window so the measured number reflects steady state, not the recovery curve. Mechanical, sweep CSV will visibly stabilize without changing Tomb at all. Separate from the underlying engineering question but cheap to ship.
+
+4. **Tomb-vs-UFM revisit.** UFM beat hashbrown by 30% at pinned 1M-cap. Run `examples/perf_isolate.rs --features hasher-foldhash` on UFM at the same N=920K transient — if UFM's IPC is closer to 1.0, that's an existence proof that an OptiMap design *can* hit hashbrown's pipeline efficiency. UFM's smaller hot path (single SIMD op terminator) is the likely reason.
 
 **Open methodology improvements:**
 
