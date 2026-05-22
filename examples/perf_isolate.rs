@@ -2,8 +2,8 @@
 //! then do N lookup passes. Per-pass timings printed to stderr so perf stat
 //! captures total over all passes.
 
-use optimap::Map;
 use optimap::matrix_types::Byte7_128_TombMap;
+use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 use std::time::Instant;
 
 #[path = "../benches/bench_helpers.rs"]
@@ -32,8 +32,24 @@ fn main() {
     match kind {
         "tomb" => run::<Byte7_128_TombMap<u64, u64>>(&keys, n, lookups, passes),
         "hb" => run::<hashbrown::HashMap<u64, u64>>(&keys, n, lookups, passes),
-        _ => panic!("kind must be 'tomb' or 'hb'"),
+        "ufm" => run::<UnorderedFlatMap<u64, u64>>(&keys, n, lookups, passes),
+        "ipo" => run::<InPlaceOverflow<u64, u64>>(&keys, n, lookups, passes),
+        "split" => run::<Splitsies<u64, u64>>(&keys, n, lookups, passes),
+        _ => panic!("kind must be tomb|hb|ufm|ipo|split"),
     }
+}
+
+/// Isolated lookup loop — marked #[inline(never)] AND called through a
+/// function pointer (via black_box) so LLVM can't inline it into the caller.
+/// Required for perf-annotate work: this function needs to be its own
+/// symbol in the binary.
+#[inline(never)]
+fn do_lookups<M: Map<u64, u64>>(map: &M, keys: &[u64], lookups: usize) -> u64 {
+    let mut sum = 0u64;
+    for i in 0..lookups {
+        sum = sum.wrapping_add(*map.get(&keys[i]).unwrap_or(&0));
+    }
+    sum
 }
 
 fn run<M: Map<u64, u64>>(keys: &[u64], n: usize, lookups: usize, passes: usize) {
@@ -42,12 +58,13 @@ fn run<M: Map<u64, u64>>(keys: &[u64], n: usize, lookups: usize, passes: usize) 
         map.insert(keys[i], i as u64);
     }
     eprintln!("inserted {} keys; running {} passes of {} lookups", n, passes, lookups);
+    // Force do_lookups to remain a separate symbol by routing through a
+    // function pointer that LLVM cannot statically resolve.
+    let lookup_fn: fn(&M, &[u64], usize) -> u64 =
+        std::hint::black_box(do_lookups::<M> as fn(&M, &[u64], usize) -> u64);
     for p in 0..passes {
         let start = Instant::now();
-        let mut sum = 0u64;
-        for i in 0..lookups {
-            sum = sum.wrapping_add(*map.get(&keys[i]).unwrap_or(&0));
-        }
+        let sum = lookup_fn(&map, keys, lookups);
         std::hint::black_box(sum);
         let ns_per_op = start.elapsed().as_nanos() as f64 / lookups as f64;
         eprintln!("pass {}: {:.2} ns/op", p + 1, ns_per_op);
