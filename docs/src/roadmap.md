@@ -161,10 +161,12 @@ So the gap is specific to **cold allocate-then-fill**. It is _not_ the steady-st
 
 Methodology note: the original sweep `keys[prev_n..n]` small-batch numbers are noise-heavy and resize-spike-dominated; ignore them for this — use the `construction` criterion benches above, which are stable and isolate alloc/resize/fill.
 
-#### Hashbrown wins at large N on lookup_hit — investigation in progress, methodology issue uncovered
+#### Hashbrown wins at large N on lookup_hit — diagnosis complete, implementation pending
 
 **Difficulty**: Medium \
-**Status**: Two experiments run May 2026 (foldhash → ahash swap; in progress: prefetch removal). Both the original CV table and the original "40% faster" headline turn out to overstate a single noisy sample. CV computed across the N = 1M–10M band on a single sweep run varies wildly run-to-run.
+**Status (2026-05-22):** Diagnosis complete. Root cause identified mechanistically: Tomb's probe loop emits 11 instructions per probe step vs hashbrown's 3, consuming 3 load-port slots per probe vs 1, with duplicate `gi → gi * 16` computation across two registers. IPC at the resize transient is 0.88 vs hashbrown's 1.23. Full write-up: **[Tomb lookup_hit IPC Gap](optimization/tomb-lookup-ipc-gap.md)** — includes the disassembly comparison, hardware-counter evidence, five rejected hypotheses with reasons, the fix design (byte-offset probe refactor), and a reproduction harness.
+
+The summary below is preserved as a historical record of the experiment loop. New work should reference the dedicated investigation document.
 
 **The headline that triggered this investigation** — "hashbrown is ~40% faster than `Tomb` on lookup_hit at N=5M, with CV 10% vs Tomb's 55%" — was a single-sample artifact. Three back-to-back foldhash sweeps on the same machine show hashbrown's CV at **10%, 33%, 34%** and Tomb's mean at **10.5, 9.0, 9.5 ns** — both quantities are noisy enough at single-sample granularity that any conclusion needs multi-run averaging. CV across N is dominated by where the sawtooth peaks happen to land within sweep sample points, and the resize-spike-adjacent points are themselves resize-affected (the bench measures `keys[prev_n..n]` and an adjacent resize lands inside or outside the timed batch depending on cadence). **For consistency claims, multi-run aggregation is required.**
 
