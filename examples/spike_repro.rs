@@ -20,14 +20,20 @@ fn time_pass<M: Map<u64, u64>>(map: &M, keys: &[u64], n_lookups: usize) -> f64 {
     elapsed / n_lookups as f64
 }
 
-fn run<M: Map<u64, u64>>(label: &str, keys: &[u64]) {
+fn run<M: Map<u64, u64>>(label: &str, keys: &[u64], warmup: bool) {
     // Inserting growth points that span Tomb's resize at ~917K
     let growth_points: Vec<usize> = vec![
         900_000, 920_000, 940_000, 960_000, 990_000, 1_020_000, 1_060_000, 1_100_000,
     ];
     let n_lookups = 50_000;
-    println!("\n=== {label} ===");
-    println!("{:>9} {:>8} {:>8} {:>8} {:>8} {:>8}", "N", "P1(ns)", "P2(ns)", "P3(ns)", "P4(ns)", "P5(ns)");
+    println!(
+        "\n=== {label} {} ===",
+        if warmup { "(2K-key I-cache warmup)" } else { "(no warmup)" }
+    );
+    println!(
+        "{:>9} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "N", "P1(ns)", "P2(ns)", "P3(ns)", "P4(ns)", "P5(ns)"
+    );
 
     let mut map = M::new();
     let mut prev = 0;
@@ -36,6 +42,11 @@ fn run<M: Map<u64, u64>>(label: &str, keys: &[u64]) {
             map.insert(keys[i], i as u64);
         }
         prev = n;
+        // I-cache warmup: call time_pass itself so the warmup primes the
+        // exact same monomorphized function the measurement uses.
+        if warmup {
+            let _ = time_pass(&map, keys, 2000);
+        }
         let passes: Vec<f64> = (0..5).map(|_| time_pass(&map, keys, n_lookups)).collect();
         println!(
             "{:>9} {:>7.2}  {:>7.2}  {:>7.2}  {:>7.2}  {:>7.2}",
@@ -47,6 +58,8 @@ fn run<M: Map<u64, u64>>(label: &str, keys: &[u64]) {
 fn main() {
     let mut rng = Sfc64::new(42);
     let keys: Vec<u64> = (0..1_200_000).map(|_| rng.next_u64()).collect();
-    run::<Byte7_128_TombMap<u64, u64>>("Tomb (Byte7_128)", &keys);
-    run::<hashbrown::HashMap<u64, u64>>("hashbrown", &keys);
+    run::<Byte7_128_TombMap<u64, u64>>("Tomb (Byte7_128)", &keys, false);
+    run::<Byte7_128_TombMap<u64, u64>>("Tomb (Byte7_128)", &keys, true);
+    run::<hashbrown::HashMap<u64, u64>>("hashbrown", &keys, false);
+    run::<hashbrown::HashMap<u64, u64>>("hashbrown", &keys, true);
 }
