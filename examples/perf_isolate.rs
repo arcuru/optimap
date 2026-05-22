@@ -1,0 +1,55 @@
+//! Minimal binary for perf stat: pre-seed map to just past resize boundary,
+//! then do N lookup passes. Per-pass timings printed to stderr so perf stat
+//! captures total over all passes.
+
+use optimap::Map;
+use optimap::matrix_types::Byte7_128_TombMap;
+use std::time::Instant;
+
+#[path = "../benches/bench_helpers.rs"]
+mod bench_helpers;
+use bench_helpers::Sfc64;
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let kind = args.get(1).map(|s| s.as_str()).unwrap_or("tomb");
+    let n: usize = args
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(920_000);
+    let lookups: usize = args
+        .get(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50_000);
+    let passes: usize = args
+        .get(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+
+    let mut rng = Sfc64::new(42);
+    let keys: Vec<u64> = (0..(n.max(lookups))).map(|_| rng.next_u64()).collect();
+
+    match kind {
+        "tomb" => run::<Byte7_128_TombMap<u64, u64>>(&keys, n, lookups, passes),
+        "hb" => run::<hashbrown::HashMap<u64, u64>>(&keys, n, lookups, passes),
+        _ => panic!("kind must be 'tomb' or 'hb'"),
+    }
+}
+
+fn run<M: Map<u64, u64>>(keys: &[u64], n: usize, lookups: usize, passes: usize) {
+    let mut map = M::new();
+    for i in 0..n {
+        map.insert(keys[i], i as u64);
+    }
+    eprintln!("inserted {} keys; running {} passes of {} lookups", n, passes, lookups);
+    for p in 0..passes {
+        let start = Instant::now();
+        let mut sum = 0u64;
+        for i in 0..lookups {
+            sum = sum.wrapping_add(*map.get(&keys[i]).unwrap_or(&0));
+        }
+        std::hint::black_box(sum);
+        let ns_per_op = start.elapsed().as_nanos() as f64 / lookups as f64;
+        eprintln!("pass {}: {:.2} ns/op", p + 1, ns_per_op);
+    }
+}
