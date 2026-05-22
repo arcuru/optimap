@@ -247,6 +247,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
             unsafe {
                 L::Grp::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(not(feature = "overflow-table-drop-kv-prefetch"))]
                 L::Grp::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
                 if L::SEPARATE_OVERFLOW {
                     L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);
@@ -412,6 +413,7 @@ impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
 
             unsafe {
                 L::Grp::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(not(feature = "overflow-table-drop-kv-prefetch"))]
                 L::Grp::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
                 if L::SEPARATE_OVERFLOW {
                     L::Grp::prefetch_read(self.overflow_ptr(gi) as *const u8);

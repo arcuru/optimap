@@ -271,6 +271,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
                 probe += 1;
                 gi = (gi.wrapping_add(probe)) & self.mask;
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(feature = "ipo64-prefetch-kv")]
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }
@@ -302,6 +303,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
                 probe += 1;
                 gi = (gi.wrapping_add(probe)) & self.mask;
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(feature = "ipo64-prefetch-kv")]
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }
@@ -331,6 +333,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
                 probe += 1;
                 gi = (gi.wrapping_add(probe)) & self.mask;
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(feature = "ipo64-prefetch-kv")]
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }
@@ -501,6 +504,7 @@ impl<K, V, T: TombstoneTag> RawTable<K, V, T> {
 
             unsafe {
                 Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                #[cfg(feature = "ipo64-prefetch-kv")]
                 Group::prefetch_read(self.bucket_ptr(gi, 0) as *const u8);
             }
         }

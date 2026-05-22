@@ -3,7 +3,7 @@
 //! captures total over all passes.
 
 use optimap::matrix_types::Byte7_128_TombMap;
-use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
+use optimap::{IPO64, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 use std::time::Instant;
 
 #[path = "../benches/bench_helpers.rs"]
@@ -34,8 +34,9 @@ fn main() {
         "hb" => run::<hashbrown::HashMap<u64, u64>>(&keys, n, lookups, passes),
         "ufm" => run::<UnorderedFlatMap<u64, u64>>(&keys, n, lookups, passes),
         "ipo" => run::<InPlaceOverflow<u64, u64>>(&keys, n, lookups, passes),
+        "ipo64" => run::<IPO64<u64, u64>>(&keys, n, lookups, passes),
         "split" => run::<Splitsies<u64, u64>>(&keys, n, lookups, passes),
-        _ => panic!("kind must be tomb|hb|ufm|ipo|split"),
+        _ => panic!("kind must be tomb|hb|ufm|ipo|ipo64|split"),
     }
 }
 

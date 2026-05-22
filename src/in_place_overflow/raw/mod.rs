@@ -269,47 +269,101 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
     }
 
     /// Core lookup: SIMD match + EMPTY-based probe termination + prefetch.
+    ///
+    /// Under `tomb-byte-offset-probe`, the probe position is stored as a byte
+    /// offset into the metadata region (16-aligned), matching hashbrown's
+    /// representation. This collapses the per-iter `gi * 16` recompute and
+    /// reduces load-port pressure. See
+    /// docs/src/optimization/tomb-lookup-ipc-gap.md.
     #[inline(always)]
     pub(crate) fn find_by_hash<F>(&self, h: u64, eq: F) -> Option<(usize, usize)>
     where
         F: Fn(&K) -> bool,
     {
         let reduced = T::reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
 
-        loop {
-            let meta = unsafe { self.meta_ptr(gi) };
+        #[cfg(feature = "tomb-byte-offset-probe")]
+        {
+            let byte_mask = (self.mask << 4) | 0xF;
+            let mut pos = ((h as usize) & self.mask) << 4;
+            let mut stride = 0usize;
 
-            let data = unsafe { Group::load(meta) };
+            loop {
+                let meta = unsafe { self.ctrl.add(pos) };
 
-            for si in unsafe { Group::loaded_match_byte(data, reduced) } {
-                let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                let data = unsafe { Group::load(meta) };
+
+                for si in unsafe { Group::loaded_match_byte(data, reduced) } {
+                    let key = unsafe { &*S::key_ptr(self.ctrl, pos | si) };
+                    #[cfg(feature = "tomb-branch-hints")]
+                    if std::hint::likely(eq(key)) {
+                        return Some((pos >> 4, si));
+                    }
+                    #[cfg(not(feature = "tomb-branch-hints"))]
+                    if eq(key) {
+                        return Some((pos >> 4, si));
+                    }
+                }
+
                 #[cfg(feature = "tomb-branch-hints")]
-                if std::hint::likely(eq(key)) {
-                    return Some((gi, si));
+                if std::hint::likely(unsafe { Group::loaded_match_empty(data).any_set() }) {
+                    return None;
                 }
                 #[cfg(not(feature = "tomb-branch-hints"))]
-                if eq(key) {
-                    return Some((gi, si));
+                if unsafe { Group::loaded_match_empty(data).any_set() } {
+                    return None;
+                }
+
+                stride += GROUP_SIZE;
+                pos = pos.wrapping_add(stride) & byte_mask;
+
+                unsafe {
+                    Group::prefetch_read(self.ctrl.add(pos) as *const u8);
+                    #[cfg(feature = "tomb-prefetch-kv")]
+                    Group::prefetch_read(S::key_ptr(self.ctrl, pos) as *const u8);
                 }
             }
+        }
 
-            #[cfg(feature = "tomb-branch-hints")]
-            if std::hint::likely(unsafe { Group::loaded_match_empty(data).any_set() }) {
-                return None;
-            }
-            #[cfg(not(feature = "tomb-branch-hints"))]
-            if unsafe { Group::loaded_match_empty(data).any_set() } {
-                return None;
-            }
+        #[cfg(not(feature = "tomb-byte-offset-probe"))]
+        {
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
 
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
+            loop {
+                let meta = unsafe { self.meta_ptr(gi) };
 
-            unsafe {
-                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-                Group::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
+                let data = unsafe { Group::load(meta) };
+
+                for si in unsafe { Group::loaded_match_byte(data, reduced) } {
+                    let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                    #[cfg(feature = "tomb-branch-hints")]
+                    if std::hint::likely(eq(key)) {
+                        return Some((gi, si));
+                    }
+                    #[cfg(not(feature = "tomb-branch-hints"))]
+                    if eq(key) {
+                        return Some((gi, si));
+                    }
+                }
+
+                #[cfg(feature = "tomb-branch-hints")]
+                if std::hint::likely(unsafe { Group::loaded_match_empty(data).any_set() }) {
+                    return None;
+                }
+                #[cfg(not(feature = "tomb-branch-hints"))]
+                if unsafe { Group::loaded_match_empty(data).any_set() } {
+                    return None;
+                }
+
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+
+                unsafe {
+                    Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                    #[cfg(feature = "tomb-prefetch-kv")]
+                    Group::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
+                }
             }
         }
     }
@@ -341,28 +395,54 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
     #[inline(always)]
     pub(crate) fn insert_after_resize(&mut self, h: u64, key: K, value: V) {
         let reduced = T::reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
 
-        loop {
-            let meta = unsafe { self.meta_ptr(gi) };
+        #[cfg(feature = "tomb-byte-offset-probe")]
+        {
+            let byte_mask = (self.mask << 4) | 0xF;
+            let mut pos = ((h as usize) & self.mask) << 4;
+            let mut stride = 0usize;
 
-            if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
-                unsafe {
-                    Group::set_meta(meta, si, reduced);
-                    S::write(
-                        self.ctrl,
-                        self.extra,
-                        Self::bucket_index(gi, si),
-                        key,
-                        value,
-                    );
+            loop {
+                let meta = unsafe { self.ctrl.add(pos) };
+
+                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                    unsafe {
+                        Group::set_meta(meta, si, reduced);
+                        S::write(self.ctrl, self.extra, pos | si, key, value);
+                    }
+                    return;
                 }
-                return;
-            }
 
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
+                stride += GROUP_SIZE;
+                pos = pos.wrapping_add(stride) & byte_mask;
+            }
+        }
+
+        #[cfg(not(feature = "tomb-byte-offset-probe"))]
+        {
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
+
+            loop {
+                let meta = unsafe { self.meta_ptr(gi) };
+
+                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                    unsafe {
+                        Group::set_meta(meta, si, reduced);
+                        S::write(
+                            self.ctrl,
+                            self.extra,
+                            Self::bucket_index(gi, si),
+                            key,
+                            value,
+                        );
+                    }
+                    return;
+                }
+
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+            }
         }
     }
 
@@ -371,48 +451,95 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
     #[inline(always)]
     pub(crate) fn insert_no_check(&mut self, h: u64, key: K, value: V) -> (usize, usize) {
         let reduced = T::reduced_hash(h);
-        let mut gi = self.group_index(h);
-        let mut probe = 0usize;
-        let mut first_tombstone: Option<(usize, usize)> = None;
 
-        loop {
-            let meta = unsafe { self.meta_ptr(gi) };
+        #[cfg(feature = "tomb-byte-offset-probe")]
+        {
+            let byte_mask = (self.mask << 4) | 0xF;
+            let mut pos = ((h as usize) & self.mask) << 4;
+            let mut stride = 0usize;
+            // first_tombstone stored as byte_pos | si (a bucket index)
+            let mut first_tombstone: Option<usize> = None;
 
-            // Track first tombstone slot
-            if first_tombstone.is_none()
-                && let Some(si) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
-            {
-                first_tombstone = Some((gi, si));
-            }
+            loop {
+                let meta = unsafe { self.ctrl.add(pos) };
 
-            // Check for EMPTY slot — this is our termination condition
-            if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
-                let (ins_gi, ins_si, decrement) = if let Some((tgi, tsi)) = first_tombstone {
-                    (tgi, tsi, false)
-                } else {
-                    (gi, si, true)
-                };
-
-                unsafe {
-                    let ins_meta = self.meta_ptr(ins_gi);
-                    Group::set_meta(ins_meta, ins_si, reduced);
-                    S::write(
-                        self.ctrl,
-                        self.extra,
-                        Self::bucket_index(ins_gi, ins_si),
-                        key,
-                        value,
-                    );
+                if first_tombstone.is_none()
+                    && let Some(si) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
+                {
+                    first_tombstone = Some(pos | si);
                 }
-                self.len += 1;
-                if decrement {
-                    self.growth_left -= 1;
-                }
-                return (ins_gi, ins_si);
-            }
 
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
+                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                    let (ins_bucket, decrement) = if let Some(tbi) = first_tombstone {
+                        (tbi, false)
+                    } else {
+                        (pos | si, true)
+                    };
+
+                    let ins_pos = ins_bucket & !0xF;
+                    let ins_si = ins_bucket & 0xF;
+                    unsafe {
+                        let ins_meta = self.ctrl.add(ins_pos);
+                        Group::set_meta(ins_meta, ins_si, reduced);
+                        S::write(self.ctrl, self.extra, ins_bucket, key, value);
+                    }
+                    self.len += 1;
+                    if decrement {
+                        self.growth_left -= 1;
+                    }
+                    return (ins_pos >> 4, ins_si);
+                }
+
+                stride += GROUP_SIZE;
+                pos = pos.wrapping_add(stride) & byte_mask;
+            }
+        }
+
+        #[cfg(not(feature = "tomb-byte-offset-probe"))]
+        {
+            let mut gi = self.group_index(h);
+            let mut probe = 0usize;
+            let mut first_tombstone: Option<(usize, usize)> = None;
+
+            loop {
+                let meta = unsafe { self.meta_ptr(gi) };
+
+                // Track first tombstone slot
+                if first_tombstone.is_none()
+                    && let Some(si) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
+                {
+                    first_tombstone = Some((gi, si));
+                }
+
+                // Check for EMPTY slot — this is our termination condition
+                if let Some(si) = unsafe { Group::match_empty(meta) }.lowest_set_bit() {
+                    let (ins_gi, ins_si, decrement) = if let Some((tgi, tsi)) = first_tombstone {
+                        (tgi, tsi, false)
+                    } else {
+                        (gi, si, true)
+                    };
+
+                    unsafe {
+                        let ins_meta = self.meta_ptr(ins_gi);
+                        Group::set_meta(ins_meta, ins_si, reduced);
+                        S::write(
+                            self.ctrl,
+                            self.extra,
+                            Self::bucket_index(ins_gi, ins_si),
+                            key,
+                            value,
+                        );
+                    }
+                    self.len += 1;
+                    if decrement {
+                        self.growth_left -= 1;
+                    }
+                    return (ins_gi, ins_si);
+                }
+
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+            }
         }
     }
 
@@ -463,41 +590,92 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
     where
         F: Fn(&K) -> bool,
     {
-        let mut probe = 1usize;
-        let mut gi = (home_gi.wrapping_add(probe)) & self.mask;
+        #[cfg(feature = "tomb-byte-offset-probe")]
+        {
+            let byte_mask = (self.mask << 4) | 0xF;
+            let mut stride: usize = GROUP_SIZE;
+            let mut pos = (home_gi << 4).wrapping_add(stride) & byte_mask;
 
-        loop {
-            let meta = unsafe { self.meta_ptr(gi) };
-            let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+            loop {
+                let meta = unsafe { self.ctrl.add(pos) };
+                let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
 
-            for si in matches {
-                let key = unsafe { &*self.key_ptr_impl(gi, si) };
-                if eq(key) {
-                    return ProbeResult::Found(gi, si);
+                for si in matches {
+                    let key = unsafe { &*S::key_ptr(self.ctrl, pos | si) };
+                    if eq(key) {
+                        return ProbeResult::Found(pos >> 4, si);
+                    }
+                }
+
+                if first_available.is_none() {
+                    if let Some(tsi) =
+                        unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
+                    {
+                        first_available = Some((pos >> 4, tsi));
+                    } else if let Some(si) = empties.lowest_set_bit() {
+                        first_available = Some((pos >> 4, si));
+                    }
+                }
+
+                if empties.any_set() {
+                    return match first_available {
+                        Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si, 0),
+                        None => ProbeResult::NotFound,
+                    };
+                }
+
+                stride += GROUP_SIZE;
+                pos = pos.wrapping_add(stride) & byte_mask;
+
+                unsafe {
+                    Group::prefetch_read(self.ctrl.add(pos) as *const u8);
+                    #[cfg(feature = "tomb-prefetch-kv")]
+                    Group::prefetch_read(S::key_ptr(self.ctrl, pos) as *const u8);
                 }
             }
+        }
 
-            if first_available.is_none() {
-                if let Some(tsi) = unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit() {
-                    first_available = Some((gi, tsi));
-                } else if let Some(si) = empties.lowest_set_bit() {
-                    first_available = Some((gi, si));
+        #[cfg(not(feature = "tomb-byte-offset-probe"))]
+        {
+            let mut probe = 1usize;
+            let mut gi = (home_gi.wrapping_add(probe)) & self.mask;
+
+            loop {
+                let meta = unsafe { self.meta_ptr(gi) };
+                let (matches, empties) = unsafe { Group::match_byte_and_empty(meta, reduced) };
+
+                for si in matches {
+                    let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                    if eq(key) {
+                        return ProbeResult::Found(gi, si);
+                    }
                 }
-            }
 
-            if empties.any_set() {
-                return match first_available {
-                    Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si, 0),
-                    None => ProbeResult::NotFound,
-                };
-            }
+                if first_available.is_none() {
+                    if let Some(tsi) =
+                        unsafe { Group::match_byte(meta, TOMBSTONE) }.lowest_set_bit()
+                    {
+                        first_available = Some((gi, tsi));
+                    } else if let Some(si) = empties.lowest_set_bit() {
+                        first_available = Some((gi, si));
+                    }
+                }
 
-            probe += 1;
-            gi = (gi.wrapping_add(probe)) & self.mask;
+                if empties.any_set() {
+                    return match first_available {
+                        Some((ins_gi, ins_si)) => ProbeResult::InsertSlot(ins_gi, ins_si, 0),
+                        None => ProbeResult::NotFound,
+                    };
+                }
 
-            unsafe {
-                Group::prefetch_read(self.meta_ptr(gi) as *const u8);
-                Group::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
+                probe += 1;
+                gi = (gi.wrapping_add(probe)) & self.mask;
+
+                unsafe {
+                    Group::prefetch_read(self.meta_ptr(gi) as *const u8);
+                    #[cfg(feature = "tomb-prefetch-kv")]
+                    Group::prefetch_read(self.key_ptr_impl(gi, 0) as *const u8);
+                }
             }
         }
     }

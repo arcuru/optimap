@@ -31,6 +31,38 @@ no-probe-prefetch = []
 # std::hint::likely(). Hashbrown does this; OptiMap doesn't. Requires nightly
 # (#![feature(likely_unlikely)]).
 tomb-branch-hints = []
+# Store the probe position in `in_place_overflow::raw::RawTable` as a byte
+# offset into the metadata array (`pos`), rather than as a group index (`gi`)
+# that must be multiplied by 16 on every iteration. This matches hashbrown's
+# representation and collapses the duplicate `shl` materializations that
+# inflate per-probe instruction count and load-port pressure. See
+# docs/src/optimization/tomb-lookup-ipc-gap.md.
+tomb-byte-offset-probe = []
+# Re-enable the K/V prefetch in the IPO probe loop (legacy behavior).
+# Default issues only the meta prefetch — clean-environment sweep at
+# N=1M-10M shows ~-3% mean improvement for the Tomb family with K/V
+# dropped. The trade-off: K/V *helps* during the cold-cache transient
+# right after a resize (+5-9% at post-resize N), but slightly hurts in
+# warm steady state (-2 to -3%). Net is steady-state-positive because
+# steady-state N points outnumber transient ones in the sweep. Enable
+# this flag to restore the legacy behavior (better post-resize spikes,
+# slightly slower steady state). See
+# docs/src/optimization/tomb-lookup-ipc-gap.md for the per-N profile.
+tomb-prefetch-kv = []
+# Drop the K/V prefetch in the overflow_table family probe loop (UFM,
+# Splitsies, Gaps, matrix variants). NOT default — clean-environment
+# paired-alternating sweep showed K/V drop is neutral-to-slightly-negative
+# on this family (UFM regresses ~+3.6%, Splitsies ~+0.5%, Gaps ~-1.0%; no
+# CV improvement). Earlier dirty-environment measurement suggesting -15%
+# wins was noise. Kept as an opt-in flag for future investigation, but the
+# default behavior is to keep the K/V prefetch.
+overflow-table-drop-kv-prefetch = []
+# Re-enable the K/V prefetch in the IPO64 (64-slot AVX-512) probe loop.
+# Default drops, matching the IPO convention. Clean-environment paired
+# sweep shows ~-2.8% mean improvement on Tomb64 with K/V dropped (small,
+# within noise on a single design but consistent direction). Enable to
+# restore legacy.
+ipo64-prefetch-kv = []
 
 [dev-dependencies]
 rand = "0.8"

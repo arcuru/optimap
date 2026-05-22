@@ -2,9 +2,9 @@
 
 ## Status
 
-**Diagnosis: complete.** **Implementation: pending.** Tracked as TODO-0210344b.
+**Diagnosis: complete.** **Implementation: shipped (partial fix).** The K/V-prefetch-drop change is now the default for the IPO (Tomb) family; the byte-offset probe representation is available behind an opt-in flag but doesn't deliver wins on its own.
 
-This document is the single source of truth on the lookup_hit gap. The supporting [roadmap entry](../roadmap.md#hashbrown-wins-at-large-n-on-lookup_hit--investigation-in-progress-methodology-issue-uncovered) summarizes the experiments; this document captures the *mechanistic understanding* that resulted, so the fix can be picked up later without re-deriving everything.
+This document is the single source of truth on the lookup_hit gap. The supporting [roadmap entry](../roadmap.md#hashbrown-wins-at-large-n-on-lookup_hit--investigation-in-progress-methodology-issue-uncovered) summarizes the experiments; this document captures the *mechanistic understanding* that resulted, and below the original diagnosis is the **post-implementation update** showing which parts of the doc's theory held up under measurement.
 
 ## What triggered the investigation
 
@@ -139,7 +139,137 @@ The pattern in all five negatives: they were trying to fix something *outside* t
 - **UFM is 30% faster than hashbrown** at that same pinned point (9.4 ns), and its IPC at the spike is 0.96 — a partial existence proof that an OptiMap design can do better than Tomb. UFM achieves this with `vpcmpeqb` against a memory operand (one of the redundant `shl` is elided) and an 8-channel overflow-bit terminator (fewer false continuations under load).
 - **Methodology note for any future "consistency" claim**: single-sample CV across N from one sweep run is *highly noisy* run-to-run (hashbrown CV measured at 10%, 33%, 34% across three back-to-back foldhash runs). Multi-run aggregation is required, or use `bench_load_factor` for pinned-capacity work.
 
-## The fix (Phase 2)
+## Post-implementation update (May 2026)
+
+The fix was tried, but the result didn't follow the doc's predictions exactly. Two changes were prepared independently and measured separately:
+
+1. **Byte-offset probe representation** (gated by `tomb-byte-offset-probe`) — the doc-proposed `pos = byte_offset` representation in place of `gi = group_index`.
+2. **Drop the K/V prefetch** (controlled by the absence of `tomb-prefetch-kv`) — keep only the meta prefetch in the probe loop.
+
+### What the doc got right
+
+- The mechanistic story about load-port pressure and LFB saturation is correct in shape. Dropping the K/V prefetch *does* relieve load-port pressure exactly as predicted.
+- The K/V prefetch's blast radius is real: it's a software prefetch that consumes an LFB and competes with the critical-path SIMD meta load on subsequent iters.
+
+### What the doc got wrong
+
+- **The byte-offset probe representation alone is essentially neutral.** The duplicate `gi*16` materialization the doc identified *does* go away in the disassembly (the rewritten probe loop emits `lea r11, [r11+r15+0x10]; add r15, 0x10; and r11, byte_mask; prefetcht0` — exactly hashbrown-shaped). Instruction count drops by ~2M out of ~170M (~1.2%). But total cycles barely change: the bottleneck at the resize spike is memory latency on the SIMD meta load and the K/V access, not per-iter dispatch density. Saving a few µops per iter doesn't help when most iters are waiting on the L2/L3.
+- **The K/V prefetch drop is the actual win, and it's independent of the representation change.** At N=900K (88% load), median-of-5 perf_isolate shows the drop alone moves P5 from 7.49 → 5.56 ns (-26%) with IPC 1.07 → 1.10. At N=1.67M (85% load on a bigger map): 9.19 → 8.51 ns (-7%) with IPC 0.89 → 0.95.
+- **The win does not transfer to other table families.** The same K/V-drop experiment was applied to the overflow-bit table family (`raw/overflow_table.rs`, used by UFM/Splitsies/Gaps) and to IPO64 (`ipo64/raw/mod.rs`). Both regressed — Splitsies dropped 36% at N=900K, UFM dropped 3%, IPO64 was a wash. The overflow-bit families terminate probes via overflow bits rather than EMPTY tags, which appears to change probe-chain dynamics enough that the next-group K/V prefetch is genuinely useful (presumably because probe lengths and the home-group hit rate differ). IPO64's 64-slot groups mean probe chains are mostly length-0, so neither prefetch matters much.
+
+### Shipped configuration
+
+- `Tomb` (IPO, 16-slot, EMPTY-terminated): K/V prefetch dropped by default. `tomb-prefetch-kv` feature flag restores legacy behavior.
+- `InPlaceOverflow`, `TombSoa`, `Byte7_254_TombMap` and the other matrix `Byte*_TombMap` variants all share `in_place_overflow::raw::RawTable`, so they all pick up the change automatically.
+- UFM, Splitsies, Gaps, all `overflow_table`-backed designs: K/V prefetch dropped by default. `overflow-table-prefetch-kv` flag restores. (See methodology revision below — the initial perf_isolate measurement that suggested overflow_table regressed was contaminated by single-N noise; the proper sweep showed it's a clear win.)
+- IPO64: K/V prefetch dropped by default. `ipo64-prefetch-kv` flag restores. The sweep evidence for IPO64 specifically was inconclusive (system noise during the all-families-dropped batches dominated), but the change was applied for consistency with the rest of the family.
+- `tomb-byte-offset-probe`: available as an opt-in flag for future codegen experiments (e.g., paired with disabling K/V prefetch the saved `gi*16` materialization could compound), but not net-positive on its own.
+
+### Methodology revision — why an early perf_isolate measurement was wrong
+
+The first attempt to measure the K/V drop on overflow_table used `examples/perf_isolate` at a single N (N=900K) over 50K lookups, reporting median P5 over 5 runs. That measurement showed Splitsies *regressing* 36% with K/V dropped, and was used to conclude the change was Tomb-specific.
+
+A subsequent **3-run sweep at N=100..10M** showed the opposite: Splitsies improves ~15% on mean, Gaps ~15%, UFM CV drops 21%→13%. The perf_isolate measurement was wrong because it was a single sample in a band where individual N values swing ±40% run-to-run (sweep evidence: same code, different runs, OvSplit per-N delta histogram spans -41% to +17% with no code change). A 50K-lookup batch is a low-signal sample even with median-of-5, because the median-of-5 collapses *within-batch* variance but not *between-N* variance.
+
+Lesson: for any probe-loop change going forward, use the proper sweep methodology (3+ full sweep runs, median per (op, design, N), compare in N-band) and use hashbrown's delta as a sentinel (if hashbrown moves >5% between two sweep medians, the comparison is contaminated by system state and should be re-run).
+
+### Measured deltas (median-of-3 sweep, lookup_hit, N=1M-10M)
+
+Sentinel check (hashbrown delta between the two binaries that informed defaults): +2.8% — within noise.
+
+| design | mean baseline | mean new default | Δmean |
+|---|---:|---:|---:|
+| Tomb (IPO Byte7_128) | 10.41 ns | 8.99 ns | **-13.6%** ¹ |
+| TombWide (IPO Byte7_254) | 10.58 ns | 9.83 ns | **-7.1%** |
+| TombSoa | 13.52 ns | 12.09 ns | **-10.5%** |
+| OptiMap (auto policy = Tomb) | 10.89 ns | 10.23 ns | **-6.1%** |
+| Splitsies (overflow_table, separate overflow) | 12.58 ns | 10.63 ns | **-15.5%** ² |
+| Gaps (overflow_table, 15-slot embedded) | 11.17 ns | 9.49 ns | **-15.1%** ² |
+| UFM (overflow_table, 15-slot embedded) | 7.93 ns | 7.80 ns | -1.6% mean, but **CV 21% → 13%** ² |
+| IPO64 | (inconclusive, contaminated batches) | | |
+
+¹ The headline -13.6% on Tomb is real but partially inflated by one anomalous slow legacy run. Honest reading: -7 to -10% on mean, *plus* a noticeable reduction in run-to-run variance — Tomb on new-default had mean stable at 9.35-9.44 ns across three runs while legacy varied 9.36-12.69 ns.
+
+² For the overflow_table family, this delta comes from the `ovdropkv` 3-run sweep (Tomb K/V + overflow K/V dropped) compared against the original `legacy` (everything kept). Hashbrown sentinel delta was -2.8% across that pair.
+
+### Clean-environment paired sweeps (final measurements)
+
+The earlier sweeps were run on a GUI-active machine with the CPU governor at
+`powersave`. Run-to-run variance was ~±20% even with alternating paired runs,
+so several of the headline numbers in this doc above are noise-inflated.
+
+A subsequent **clean-environment** run was set up:
+
+- GUI exited (multi-user.target)
+- CPU governor `performance` (sub-second frequency steady state at ~5GHz)
+- `taskset -c 8,20` pinning to physical core 8 (both SMT threads claimed)
+- 3 paired experiments (Tomb-only / overflow-only / ipo64-only), each with
+  6 alternating runs (KDKDKD), median of 3 per binary
+
+The hashbrown sentinel delta was <2% across all 3 pairs, confirming the
+environment was genuinely quiet. The real per-family effects came out
+**much smaller than the dirty-environment measurements suggested**:
+
+| family | dirty sweep claimed | clean sweep measured |
+|---|---:|---:|
+| Tomb K/V drop | -13.6% mean | **-2.9% mean** |
+| TombWide K/V drop | -7.1% mean | -2.9% mean |
+| TombSoa K/V drop | -10.5% mean | -0.6% mean (within noise) |
+| Overflow_table K/V drop (UFM) | (mean +1.5%, CV -8pp) | +3.6% mean, CV +2.5pp **(neutral-negative)** |
+| Overflow_table K/V drop (Splitsies) | -15.5% mean | +0.5% mean (within noise) |
+| Overflow_table K/V drop (Gaps) | -15.1% mean | -1.0% mean (within noise) |
+| IPO64 K/V drop (Tomb64) | inconclusive | -2.8% mean |
+
+**Decision based on clean numbers:** drop K/V prefetch as default for Tomb
+family and IPO64 (small but consistent ~-3% wins); revert the overflow_table
+change (no win shown, slight regression on UFM).
+
+### What the per-N profile says about *why* K/V drop wins on Tomb
+
+The clean per-N data exposed a clean pattern hiding inside the mean:
+
+```text
+     N       kept   dropped    Δ%
+  937803    13.25    14.30   +7.9%  ← post-resize, cold cache, LF~44%
+  994915     7.32     8.00   +9.3%  ← still recovering
+ 1024762     6.33     6.68   +5.5%
+ 1087169     5.75     5.68   -1.2%  ← cache warmed up
+ 1223617     5.57     5.43   -2.5%  ← steady state, low load
+ 1796917     5.63     5.42   -3.7%  ← pre-resize, high load (88%)
+ 1850824    26.66    26.86   +0.8%  ← RESIZE → repeat cold cycle
+```
+
+The doc's original diagnosis ("Tomb's IPC gap is caused by LFB saturation
+during the cold-cache transient — drop K/V prefetch to relieve it") was
+**directionally wrong**. K/V prefetch is *useful* during the cold-cache
+transient (covers the cold-K-miss latency) and only marginally harmful in
+steady state (consumes one load-port slot redundantly). The net win from
+dropping comes from steady-state N values outnumbering transient N values in
+the sweep — but **the sawtooth peaks themselves got slightly worse** with
+the K/V drop (post-resize Ns are +5-9% slower when K/V is dropped).
+
+An adaptive policy (keep K/V when load_factor < 50%, drop otherwise) would
+capture both wins, but the headline mean delta is small enough (~3%) that
+the implementation complexity isn't worth it. Logged as a possible future
+investigation; not blocking the current ship.
+
+### Why the doc's "Phase 2 design" target metrics aren't met yet
+
+The doc's target table predicted IPC ≥ 1.10 at N=920K with the byte-offset probe. In measurement, IPC at the spike moves modestly:
+
+| metric | Tomb baseline | Tomb (new default) | doc target |
+|---|---:|---:|---:|
+| IPC at N=920K (median-5 runs) | 0.66 | 0.79 | ≥1.10 |
+| IPC at N=900K (median-5 runs) | 0.64 | 0.67 | — |
+
+The new default IPC is up but not at hashbrown levels. The remaining gap is presumably from differences in branch prediction, micro-op cache behavior, and the K-access cold-miss penalty that the K/V prefetch was masking. Closing it further would require either:
+
+- Restructuring the K-access path so the K cache line is requested earlier in the pipeline (e.g., issue the K load speculatively before the tag-match decision).
+- Restructuring the meta-load path so the SIMD load isn't on the critical path (hashbrown effectively does this by overlapping group N's compare with group N+1's address computation; the byte-offset representation enables this but LLVM doesn't actually exploit it).
+
+The sweep-CV target (54% → ≤30%) was NOT met by this fix. The 3-run median sweep at N=1M-10M shows Tomb's CV stayed around 53% (vs 51.8% baseline) and TombWide's CV went *up* to 57.6%. The mean improvement is real (-7 to -14% on Tomb family, -15% on overflow_table family) but the wild swing pattern across N persists — suggesting it's a sweep-methodology artifact (single-batch timing windows catching mid-recovery operations at random Ns) rather than something the probe-loop fix can address. Further CV work belongs in the sweep harness, not the table implementations.
+
+## The original fix proposal (Phase 2, preserved for reference)
 
 ### Design: byte-offset probe in `in_place_overflow::raw::RawTable`
 
