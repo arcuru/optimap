@@ -27,6 +27,10 @@ hasher-ahash = ["dep:ahash"]
 # prefetch is helping or hurting at large N. Wrappers become no-ops; all
 # probe-loop call sites compile down to nothing.
 no-probe-prefetch = []
+# Wrap the Tomb (in_place_overflow) find_by_hash hit + match_empty branches in
+# std::hint::likely(). Hashbrown does this; OptiMap doesn't. Requires nightly
+# (#![feature(likely_unlikely)]).
+tomb-branch-hints = []
 
 [dev-dependencies]
 rand = "0.8"

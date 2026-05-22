@@ -285,11 +285,21 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTable<K, V, T, S> {
 
             for si in unsafe { Group::loaded_match_byte(data, reduced) } {
                 let key = unsafe { &*self.key_ptr_impl(gi, si) };
+                #[cfg(feature = "tomb-branch-hints")]
+                if std::hint::likely(eq(key)) {
+                    return Some((gi, si));
+                }
+                #[cfg(not(feature = "tomb-branch-hints"))]
                 if eq(key) {
                     return Some((gi, si));
                 }
             }
 
+            #[cfg(feature = "tomb-branch-hints")]
+            if std::hint::likely(unsafe { Group::loaded_match_empty(data).any_set() }) {
+                return None;
+            }
+            #[cfg(not(feature = "tomb-branch-hints"))]
             if unsafe { Group::loaded_match_empty(data).any_set() } {
                 return None;
             }

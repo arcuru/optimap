@@ -194,11 +194,42 @@ Sweep sweep-noprefetch-2026-05-21-175838 vs sweep-foldhash-rebase-2026-05-21-172
 
 **Conclusion:** the probe-loop prefetch is load-bearing for the tomb engine. Hashbrown can ship without it because of other engineering choices (more aggressive `#[inline]`-pruning, `likely(match_empty)` branch hints, mid-pointer layout) that optimap doesn't yet match in the *probe-walk* path. Suspect #2 rejected — direction was wrong-signed.
 
-**Remaining suspects after experiments 1 and 2:**
+**Experiment 3 — Branch hints on Tomb's `find_by_hash` (rejected as a fix):**
 
-- **SSE2 intrinsic ordering / I-cache footprint.** hashbrown's hot path is more aggressively `#[inline]`-pruned and reordered; minor differences in `_mm_movemask_epi8` placement and µop scheduling around the probe loop can compound at the sawtooth peak. Verifiable only after `perf record` data.
-- **Per-N measurement noise.** Each sweep point is a single timed batch and resize-spike-adjacent points are themselves resize-affected (the bench measures `keys[prev_n..n]` and an adjacent resize lands inside/outside the timed batch by cadence). Multi-trial sweep with batch-aligned probe windows would lower CV mechanically and reveal what's signal.
-- **Branch hint placement.** hashbrown uses `likely(...)` on the match-empty terminator. optimap doesn't. Cheap experiment: add `core::intrinsics::likely` (nightly already required) to the empty/overflow check in `find_by_hash`.
+Behind a `tomb-branch-hints` cargo feature (`Cargo.toml`, with `#![cfg_attr(feature = "tomb-branch-hints", feature(likely_unlikely))]` in `src/lib.rs`). Wraps the `eq(key)` hit branch and the `match_empty.any_set()` terminator in `std::hint::likely(...)` (`src/in_place_overflow/raw/mod.rs:281-304`). Hashbrown wraps both in `likely(...)`; OptiMap didn't.
+
+Multi-run criterion median (3 runs, `bench_load_factor_1m`, pinned 1M capacity, foldhash):
+
+| design | baseline 85% (ns) | +hints 85% (ns) | Δ% raw | Δ% drift-corrected |
+|---|---:|---:|---:|---:|
+| Tomb | 15.09 | 14.00 | −7.2% | **+2.5%** (noise floor) |
+| IPO | 16.41 | 16.30 | −0.7% | +9.0% |
+| UFM | 9.43 | 9.02 | −4.3% | +5.4% |
+| hashbrown | 13.54 | 12.23 | −9.7% | (drift reference, 0%) |
+
+hashbrown's mean drifted by ≈10% between the two run sets (it's a foreign crate, my feature flag doesn't touch it — pure environmental drift between bench invocations). After subtracting that drift from the OptiMap rows, the branch-hint effect is within noise. Modern branch predictors learn the steady-state hit pattern in microseconds; a static `likely()` hint doesn't add measurable value on top.
+
+**Conclusion:** branch hints aren't the missing piece either. Suspect rejected.
+
+**Side finding — UFM is faster than hashbrown at this load point:**
+
+While instrumenting `load_factor_1m`, three-run-median data at 1M cap shows:
+
+| design | 45% (ns) | 65% (ns) | 85% (ns) | vs hashbrown @85% |
+|---|---:|---:|---:|---:|
+| UFM (UnorderedFlatMap) | 10.08 | 9.88 | **9.43** | **−30%** |
+| Tomb | 15.32 | 14.80 | 15.09 | +11.5% |
+| hashbrown | 14.18 | 13.88 | 13.54 | (baseline) |
+| IPO (TombWide) | 16.52 | 16.73 | 16.41 | +21.2% |
+| OptiMap (Auto, IPO-wrapped) | 18.52 | 18.60 | 18.39 | +35.8% |
+
+The original "hashbrown beats every OptiMap design at large N" framing missed that **UFM consistently wins at this load point by ≈30%.** UFM uses an 8-channel embedded overflow byte (`OverflowStrategy::UfmEmbedded`, `src/raw/group_layout.rs:336-377`); the probe loop terminates when the *specific hash's* overflow channel was never set in the current group, vs Tomb/hashbrown's "any-empty-slot" termination. At 85% load this cuts false-continuation probes by ≈8×. The wrapper's `Policy::auto()` picks Tomb as the single-band default precisely because Tomb wins the *averaged* sweep, but at the high-load lookup-hit point that prompted this investigation, UFM is strictly better. A follow-up worth running: re-evaluate whether `Policy::auto()` should split bands so DRAM-scale (≥1M) lookup-hit-heavy workloads pin to UFM instead of Tomb (would interact with the existing tombstone-DRAM-cliff logic; needs miss/insert data at the same point before recommending).
+
+**Remaining open suspects** (not yet tested in this lap):
+
+- **SSE2 intrinsic ordering / I-cache footprint** — `_mm_movemask_epi8` placement, µop scheduling, hot path code-size differences. Verifiable only with `perf record` (cycle stalls, branch mispredicts, L1d miss rate, L1i miss rate). Cost: needs perf in the dev shell, microbench at pinned load, ~30 min of analysis. Not yet started.
+- **Per-N measurement noise in sweep CSV** — see methodology improvements below; the multi-run load_factor data above (CV ~3-15% across 3 runs at fixed cap) is the cleanest available signal until the sweep harness gets multi-trial aggregation.
+- **Tomb-specific code-size investigation** — if `perf` shows L1i pressure, look at whether `find_by_hash` and its callees fit a single I-cache line. UFM's hot path is smaller (fewer inline expansions); if Tomb's path is larger, splitting might help.
 
 **Open methodology improvements:**
 

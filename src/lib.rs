@@ -159,6 +159,7 @@
 //!   O(1) miss termination, flat performance at high load
 //! - **Maximum compatibility**: [`UnorderedFlatMap`] — original Boost-inspired design
 
+#![cfg_attr(feature = "tomb-branch-hints", feature(likely_unlikely))]
 #![allow(clippy::manual_div_ceil)]
 #![allow(dead_code)]
 // The SIMD group ops (GroupOps, Group{,32,64}::match_*, etc.) share a single
