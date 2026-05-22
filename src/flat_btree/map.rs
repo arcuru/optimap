@@ -9,7 +9,11 @@ use std::ops::RangeBounds;
 use super::node::*;
 use super::raw::RawBTree;
 
+#[cfg(not(feature = "hasher-ahash"))]
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
+
+#[cfg(feature = "hasher-ahash")]
+pub type DefaultHashBuilder = ahash::RandomState;
 
 /// A cache-line-optimized B+ tree map.
 ///

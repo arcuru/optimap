@@ -94,6 +94,8 @@ impl<const SLOT_MASK: u16> Group<SLOT_MASK> {
     /// Prefetch a cache line for temporal read access.
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
+        let _ = ptr;
+        #[cfg(not(feature = "no-probe-prefetch"))]
         unsafe {
             _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
         }

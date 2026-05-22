@@ -17,7 +17,11 @@ use crate::raw::hash;
 use crate::raw::table_api::{EntryProbe, RawTableApi};
 
 /// Default hasher for all map types.
+#[cfg(not(feature = "hasher-ahash"))]
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
+
+#[cfg(feature = "hasher-ahash")]
+pub type DefaultHashBuilder = ahash::RandomState;
 
 /// A hash map generic over its raw table backend.
 ///

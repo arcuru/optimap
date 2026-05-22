@@ -18,6 +18,15 @@ default = ["reduced-hash-asm"]
 # - neither: pure Rust `low | (low == 0) as u8` — 3 instructions, 255 values
 reduced-hash-asm = []
 reduced-hash-128 = []
+# Swap default hasher from foldhash to ahash. Experimental — see roadmap entry
+# "Hashbrown wins at large N on lookup_hit". With this on, every map type's
+# DefaultHashBuilder becomes ahash::RandomState instead of foldhash::fast::RandomState.
+hasher-ahash = ["dep:ahash"]
+# Disable _mm_prefetch calls inside the probe loops (matches hashbrown's
+# zero-prefetch stance). Used to test whether the existing per-iteration
+# prefetch is helping or hurting at large N. Wrappers become no-ops; all
+# probe-loop call sites compile down to nothing.
+no-probe-prefetch = []
 
 [dev-dependencies]
 rand = "0.8"

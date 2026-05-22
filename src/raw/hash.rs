@@ -16,7 +16,7 @@ impl IsAvalanching for foldhash::quality::RandomState {}
 impl IsAvalanching for foldhash::quality::FixedState {}
 impl IsAvalanching for foldhash::quality::SeedableRandomState {}
 
-#[cfg(feature = "ahash")]
+#[cfg(feature = "hasher-ahash")]
 impl IsAvalanching for ahash::RandomState {}
 
 /// Compute hash for a key, applying the post-mixer.

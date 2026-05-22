@@ -313,6 +313,8 @@ impl Group {
 
     #[inline(always)]
     pub unsafe fn prefetch_read(ptr: *const u8) {
+        let _ = ptr;
+        #[cfg(not(feature = "no-probe-prefetch"))]
         unsafe {
             _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
         }

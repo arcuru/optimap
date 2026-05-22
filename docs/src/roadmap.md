@@ -161,6 +161,53 @@ So the gap is specific to **cold allocate-then-fill**. It is _not_ the steady-st
 
 Methodology note: the original sweep `keys[prev_n..n]` small-batch numbers are noise-heavy and resize-spike-dominated; ignore them for this — use the `construction` criterion benches above, which are stable and isolate alloc/resize/fill.
 
+#### Hashbrown wins at large N on lookup_hit — investigation in progress, methodology issue uncovered
+
+**Difficulty**: Medium \
+**Status**: Two experiments run May 2026 (foldhash → ahash swap; in progress: prefetch removal). Both the original CV table and the original "40% faster" headline turn out to overstate a single noisy sample. CV computed across the N = 1M–10M band on a single sweep run varies wildly run-to-run.
+
+**The headline that triggered this investigation** — "hashbrown is ~40% faster than `Tomb` on lookup_hit at N=5M, with CV 10% vs Tomb's 55%" — was a single-sample artifact. Three back-to-back foldhash sweeps on the same machine show hashbrown's CV at **10%, 33%, 34%** and Tomb's mean at **10.5, 9.0, 9.5 ns** — both quantities are noisy enough at single-sample granularity that any conclusion needs multi-run averaging. CV across N is dominated by where the sawtooth peaks happen to land within sweep sample points, and the resize-spike-adjacent points are themselves resize-affected (the bench measures `keys[prev_n..n]` and an adjacent resize lands inside or outside the timed batch depending on cadence). **For consistency claims, multi-run aggregation is required.**
+
+Tomb's CV alone is stable at **54%** across three runs — that part of the original finding holds. The hashbrown-vs-OptiMap CV gap exists but is narrower than the first table suggested and varies sample-to-sample.
+
+**Experiment 1 — Hasher swap to ahash (rejected as a fix):**
+
+Behind a `hasher-ahash` cargo feature (`Cargo.toml`, swaps `DefaultHashBuilder` in `src/generic_map.rs`, `src/set.rs`, `src/flat_btree/map.rs`). Sweep run sweep-ahash-2026-05-21-165553 vs sweep-foldhash-rebase-2026-05-21-172816 (back-to-back, same machine):
+
+- **Tomb mean +5.6%, CV −0.2pp** (no consistency improvement, slight slowdown — within drift)
+- **Overflow-bit family hurt badly:** OvSplit +103%, OvInlineGaps +85%, TombWide +80%, Tomb64 +72%, OvInline +21%. Hash function is in the per-lookup hot path; ahash's per-hash cost exceeds foldhash's by enough to dominate at large N. Most striking on the overflow-bit designs because their probe walks more groups under tombstone pressure.
+- **OptiMap (Auto) +179% — the wrapper is paying ahash cost without any consistency benefit.**
+
+**Conclusion:** hash distribution is not the source of OptiMap's sawtooth-amplitude / consistency gap. Tomb's CV is unchanged with a different hasher. Suspect #1 rejected.
+
+**Experiment 2 — Drop probe-loop prefetch (rejected as a fix):**
+
+Behind a `no-probe-prefetch` cargo feature (`Cargo.toml`). Gates the body of every `Group::prefetch_read` impl (`src/raw/group.rs`, `group32.rs`, `group64.rs`, `generic_group.rs`, `in_place_overflow/raw/group.rs`, `ipo64/raw/group.rs`) — wrappers become no-ops; all ~20 probe-loop call sites in `find_by_hash`, `find_bucket`, `find_or_locate`, `remove_by_hash` (across `src/raw/mod.rs`, `src/raw/overflow_table.rs`, `src/in_place_overflow/raw/mod.rs`, `src/ipo64/raw/mod.rs`) compile down to nothing. **Motivation:** the original "missing prefetch" suspicion was inverted — hashbrown 0.15.5 ships zero `_mm_prefetch` calls in `src/raw/`, while OptiMap is already prefetch-aggressive. Hypothesis tested: optimap's per-iteration prefetch is hurting at large N.
+
+Sweep sweep-noprefetch-2026-05-21-175838 vs sweep-foldhash-rebase-2026-05-21-172816 (back-to-back, same machine):
+
+- **Tomb lookup_hit mean +39.7%, CV +46.5pp (54.6% → 101.2%).** Dropping the prefetch nearly *doubles* Tomb's sawtooth amplitude on lookup_hit at N=1M–10M. The prefetch is doing real work.
+- OvInline +8.8% mean, +27pp CV — also clearly worse.
+- TombWide +13.7% mean, ≈0 CV change.
+- Most others within drift, but **none improved.**
+- insert / remove / lookup_miss: essentially unchanged across all 12 designs (deltas under 3% mean, CV deltas under 8pp), confirming the prefetch's value is concentrated in the hit path.
+
+**Conclusion:** the probe-loop prefetch is load-bearing for the tomb engine. Hashbrown can ship without it because of other engineering choices (more aggressive `#[inline]`-pruning, `likely(match_empty)` branch hints, mid-pointer layout) that optimap doesn't yet match in the *probe-walk* path. Suspect #2 rejected — direction was wrong-signed.
+
+**Remaining suspects after experiments 1 and 2:**
+
+- **SSE2 intrinsic ordering / I-cache footprint.** hashbrown's hot path is more aggressively `#[inline]`-pruned and reordered; minor differences in `_mm_movemask_epi8` placement and µop scheduling around the probe loop can compound at the sawtooth peak. Verifiable only after `perf record` data.
+- **Per-N measurement noise.** Each sweep point is a single timed batch and resize-spike-adjacent points are themselves resize-affected (the bench measures `keys[prev_n..n]` and an adjacent resize lands inside/outside the timed batch by cadence). Multi-trial sweep with batch-aligned probe windows would lower CV mechanically and reveal what's signal.
+- **Branch hint placement.** hashbrown uses `likely(...)` on the match-empty terminator. optimap doesn't. Cheap experiment: add `core::intrinsics::likely` (nightly already required) to the empty/overflow check in `find_by_hash`.
+
+**Open methodology improvements:**
+
+1. **Multi-run CV.** Run the sweep N times, compute per-(design, n) median first, then CV across N. Single-sample CV is too noisy to draw consistency conclusions from.
+2. **Resize-aligned timing windows.** Hold off measurement for the first M post-resize inserts so the timed window doesn't straddle a resize boundary. Use the `load_factor.rs` scaffolding to pin load points.
+3. **`perf record` on a lookup-only micro-bench pinned to a sawtooth peak** (N ≈ 900K at 87% load). Compare cycle stalls, branch mispredicts, L1d miss rate, `Tomb` vs `hashbrown`. Targeted hand-tuning only after data points at a region.
+
+**Methodology note:** for consistency-style claims, work from CV / peak-floor across a sawtooth band averaged over multiple runs — never a single-sample CV; the single-sample swings 3× from run to run (hashbrown 10%/33%/34%; OvInline32 17%/147%/11%).
+
 ### Design Space Exploration
 
 These explore new axes in the parameterized design matrix. Each is a new composition of existing traits or a small trait extension.

@@ -7,7 +7,11 @@ use crate::raw::RawTable;
 use crate::raw::hash;
 
 /// Default hasher for the set. Uses foldhash for speed.
+#[cfg(not(feature = "hasher-ahash"))]
 pub type DefaultHashBuilder = foldhash::fast::RandomState;
+
+#[cfg(feature = "hasher-ahash")]
+pub type DefaultHashBuilder = ahash::RandomState;
 
 /// A hash set using open addressing with SIMD-accelerated group probing,
 /// inspired by `boost::unordered_flat_set`.
