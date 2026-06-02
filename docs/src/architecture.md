@@ -138,6 +138,100 @@ This eliminates a separate `buckets` pointer field, reducing the struct from 7 f
 
 Overflow-bit designs have 3 memory regions but only need 2 pointers worth of addressing: the hot path (metadata + bucket) uses `ctrl`, and overflow is computed as a forward offset from `ctrl` (only accessed on miss/insert).
 
+## The design axes, visually
+
+The text above describes the matrix in terms of trait composition. This section adds the visual scaffolding for each axis — what one SIMD probe step looks like, how the tag byte is encoded, how group width interacts with SIMD registers, and how the three overflow tracking strategies differ in memory.
+
+### A probe step
+
+A *probe step* loads one group's worth of metadata into a SIMD register and compares it against the broadcast tag in a single instruction:
+
+```text
+ctrl + gi*16 →   [m0 ][m1 ][m2 ][m3 ][m4 ][m5 ][m6 ][m7 ][m8 ][m9 ][mA ][mB ][mC ][mD ][mE ][mF ]
+                  0x4A 0x73 0x4A TOMB EMPT 0x4A 0xB1 0x12 EMPT 0x4A 0x77 0x09 0x55 EMPT 0xC4 0x4A
+
+  broadcast      [0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A][0x4A]
+  tag (target)
+
+  _mm_cmpeq_epi8 → 16-bit mask of tag matches:
+
+                  bit:  F E D C B A 9 8 7 6 5 4 3 2 1 0
+                  val:  0 0 0 0 1 0 0 0 0 1 0 1 0 1 0 1   ← slots 0,2,5,9,B match
+```
+
+A bit set in the mask means "the tag matches — go check `K == key` at that bucket".
+The probe terminates either when a key matches, or when the group contains an EMPTY slot (for the tombstone family) or when the overflow bit for the query's hash class is clear (for the overflow-bit family).
+
+### Tag byte encoding (the three schemes)
+
+The metadata byte is one of three encodings depending on which `TagStrategy` the layout uses:
+
+```text
+128 values (hashbrown, Tomb — Byte7_128, Byte0_128):
+  FILLED:    0xxxxxxx        ← top bit = 0, low 7 bits = tag
+  TOMBSTONE: 0x80            ← top bit = 1
+  EMPTY:     0xFF            ← top bit = 1
+  tag extraction:  shr h, 57; and reg, 0x7F            → 2 instructions
+
+254 values (TombWide IPO, IPO64 — Byte7_254, Byte2_254):
+  FILLED:    0x01..0xFE      ← 254 distinct tags
+  EMPTY:     0x00
+  TOMBSTONE: 0xFF
+  tag extraction:  shr h, N; cmp 0xFF; adc reg, 0      → 3 instructions
+
+255 values (overflow-bit family — UFM, Splitsies, Gaps — Byte0_255 etc.):
+  FILLED:    0x01..0xFF      ← 255 distinct tags
+  EMPTY:     0x00            ← only sentinel (no tombstone needed)
+  tag extraction:  inline asm: cmp 0xFF; adc reg, 0    → 2 instructions
+```
+
+False-match rate at a SIMD compare is `WIDTH / values_kept`. For a 16-slot group: ~12% for 128-value tags, ~6% for 254/255-value tags. Wider tags = fewer wasted bucket dereferences on miss, paid for in one extra instruction at hash time. The crate's `reduced-hash-asm` feature toggles between the `cmp; adc` x86_64 idiom and a pure-Rust fallback (`b | (b == 0) as u8`).
+
+### Group width and SIMD register width
+
+Each probe step loads `GROUP_SIZE` metadata bytes into a SIMD register and runs a single compare:
+
+```text
+ 16-slot (SSE2):    [m]×16   →   xmm register   (128 bits, _mm_cmpeq_epi8)
+ 32-slot (AVX2):    [m]×32   →   ymm register   (256 bits, vpcmpeqb ymm)
+ 64-slot (AVX-512): [m]×64   →   zmm register   (512 bits, vpcmpeqb zmm)
+```
+
+Wider groups → fewer probe steps before terminating. At 64 slots most probes resolve in step 0 even at high load factor.
+
+Hidden cost: a wider SIMD compare is also a wider net for false-positive tag matches. At 128 tag values and 64 slots, the false-match rate hits ~50% — half of all misses pay a wasted bucket dereference inside the group. This is why all wide-group designs in the matrix pair with `Byte*_254` or `Byte*_255` tags rather than `Byte*_128`. See [32/64-slot investigation](optimization/32-64-slot-investigation.md) for the measured tradeoff.
+
+### Overflow tracking — three layouts compared
+
+A tombstone-free design needs to know whether some entry once spilled past this group's home position. Three places to store that bit:
+
+```text
+8-bit (ByteSeparate) — one byte per group, 8 channels indexed by tag bits 0..2:
+
+  metadata region:   [meta × 16] [meta × 16] [meta × 16] [meta × 16] …
+  overflow region:   [ ov byte ] [ ov byte ] [ ov byte ] [ ov byte ] … (1B/group)
+
+1-bit (BitSeparate) — one packed bit per group, bitfield:
+
+  metadata region:   [meta × 16] [meta × 16] [meta × 16] [meta × 16] …
+  overflow region:   [bbbbbbbb] [bbbbbbbb] …      ← 8 groups packed into one byte
+
+embedded (UfmEmbedded) — overflow bits live inside the metadata itself:
+
+  metadata region:   [meta × 15][ov]  [meta × 15][ov]  [meta × 15][ov]  …
+                                 ▲
+                       byte 15 of each group holds the overflow channels.
+                       Only 15 usable slots per group, but zero extra loads.
+```
+
+| Strategy | Used by | Bytes / group | False-continuation | Slots / group |
+|---|---|---:|---:|---:|
+| `ByteSeparate` (8-bit, 8 channels) | Splitsies (legacy) | 1.0 | ~0.9% | 16 |
+| `BitSeparate` (1-bit) | Splitsies (current), `*_1bitAnd*` matrix variants | 0.125 | ~7% | 16 |
+| `UfmEmbedded` (in metadata byte 15) | UFM, Gaps | 0 (in-band) | varies by load | 15 |
+
+`ByteSeparate` has the lowest false-continuation rate but the largest separate allocation. `BitSeparate` is 8× smaller and still always L1-hot. `UfmEmbedded` puts the bits inside the metadata cache line itself (zero extra memory loads), but burns one slot per group and is structurally tied to 16-byte SIMD width.
+
 ## What Stays Separate
 
 - **IPO and IPO64** keep their own `RawTable` implementations. Their probe strategy (tombstone-based, EMPTY termination) is fundamentally different from the overflow-bit family. IPO's `RawTable<K,V,T: TombstoneTag>` is parameterized by tag strategy and also uses the mid-pointer layout. They implement `RawTableApi` and use GenericMap for the wrapper layer.
