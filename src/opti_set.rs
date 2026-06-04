@@ -569,7 +569,16 @@ mod tests {
     #[test]
     fn hint_constructors() {
         let s = OptiSet::<u64>::with_hint(Hint::ReadHeavy);
+        assert_eq!(s.map_type(), MapType::Tomb);
+
+        let s = OptiSet::<u64>::with_hint(Hint::WriteHeavy);
+        assert_eq!(s.map_type(), MapType::Tomb);
+
+        let s = OptiSet::<u64>::with_hint(Hint::MissHeavy);
         assert_eq!(s.map_type(), MapType::Ipo);
+
+        let s = OptiSet::<u64>::with_hint(Hint::LowLatency);
+        assert_eq!(s.map_type(), MapType::FlatBTree);
 
         let s = OptiSet::<u64>::with_hint(Hint::Churn);
         assert_eq!(s.map_type(), MapType::Splitsies);

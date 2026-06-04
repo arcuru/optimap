@@ -333,10 +333,25 @@ pub enum Hint {
     /// General purpose — the policy picks based on size.
     #[default]
     Auto,
-    /// Read-heavy: optimise for lookup hit.
+    /// Read-heavy: optimise for lookup hit. Routes to [`MapType::Tomb`] —
+    /// per sweep-2026-06-02, Tomb matches or beats TombWide on lookup_hit
+    /// at every measured size (≤500K tied; 1M–10M wins by 1.06–1.23×).
     ReadHeavy,
-    /// Write-heavy: optimise for insert throughput.
+    /// Write-heavy: optimise for insert throughput. Routes to
+    /// [`MapType::Tomb`] — same backend as `ReadHeavy` since Tomb is the
+    /// strongest single-backend choice across hot ops at large N.
     WriteHeavy,
+    /// Miss-heavy: optimise for lookup miss (caches with low hit rate,
+    /// hash-join probe sides). Routes to [`MapType::Ipo`] — the wider
+    /// `Byte7_254` tag cuts the false-match rate from 1/127 to 1/254, and
+    /// per sweep-2026-06-02 wins lookup_miss at 500K–10M by 1.16–1.49× over
+    /// Tomb.
+    MissHeavy,
+    /// Low-latency / tail-sensitive: predictable per-op latency. Routes to
+    /// [`MapType::FlatBTree`] — hash inserts spike 40–80× at resize-doubling
+    /// events, FlatBTree stays within ~14× max/p50. Trade-off: ~3–10× slower
+    /// median insert and log-N lookup. Requires `K: Ord + Clone`.
+    LowLatency,
     /// High churn: frequent insert + delete of the same keys.
     Churn,
     /// Iteration-heavy: optimise for sequential scan.
@@ -434,11 +449,9 @@ impl Policy {
     pub fn for_hint(hint: Hint) -> Self {
         match hint {
             Hint::Auto => Self::auto(),
-            // Read/Write-heavy: IPO at cache-resident sizes, Splitsies past
-            // the tomb-DRAM cliff. Matches the legacy `select_backend` shape.
-            Hint::ReadHeavy | Hint::WriteHeavy => {
-                Self::pinned(MapType::Ipo).band(TOMBSTONE_DRAM_CLIFF, MapType::Splitsies)
-            }
+            Hint::ReadHeavy | Hint::WriteHeavy => Self::pinned(MapType::Tomb),
+            Hint::MissHeavy => Self::pinned(MapType::Ipo),
+            Hint::LowLatency => Self::pinned(MapType::FlatBTree),
             Hint::Churn => Self::pinned(MapType::Splitsies),
             Hint::Iteration => Self::pinned(MapType::Gaps),
             Hint::Sorted => Self::pinned(MapType::FlatBTree),
@@ -503,21 +516,6 @@ enum Inner<K, V, S = DefaultHashBuilder> {
     Ipo64(IPO64<K, V, S>),
     FlatBTree(FlatBTree<K, V, S>),
 }
-
-// ── Policy engine ──────────────────────────────────────────────────────────
-
-/// Capacity threshold above which the wider-tag tombstone designs (IPO =
-/// `Byte7_254`, IPO64 = `Byte0_254`) suffer the "tombstone-at-DRAM" cliff:
-/// lookup_miss probe chains elongate as deletions accumulate and the table
-/// no longer fits in cache.
-///
-/// Sweep data (2026-04-20) showed IPO miss latency spiking from ~6 ns at
-/// 100K entries to ~104 ns at 100M (vs ~5 ns for overflow-bit designs at
-/// the same size). Used by `Hint::ReadHeavy` / `WriteHeavy` to switch to
-/// Splitsies past this point. [`Policy::auto`] does not consult this — the
-/// 128-tag [`MapType::Tomb`] variant doesn't hit the cliff, per
-/// sweep-2026-05-13.
-const TOMBSTONE_DRAM_CLIFF: usize = 1_000_000;
 
 // ── Dispatch macro ─────────────────────────────────────────────────────────
 
@@ -1474,7 +1472,16 @@ mod tests {
     #[test]
     fn hint_constructors() {
         let m = OptiMap::<u64, u64>::with_hint(Hint::ReadHeavy);
+        assert_eq!(m.map_type(), MapType::Tomb);
+
+        let m = OptiMap::<u64, u64>::with_hint(Hint::WriteHeavy);
+        assert_eq!(m.map_type(), MapType::Tomb);
+
+        let m = OptiMap::<u64, u64>::with_hint(Hint::MissHeavy);
         assert_eq!(m.map_type(), MapType::Ipo);
+
+        let m = OptiMap::<u64, u64>::with_hint(Hint::LowLatency);
+        assert_eq!(m.map_type(), MapType::FlatBTree);
 
         let m = OptiMap::<u64, u64>::with_hint(Hint::Churn);
         assert_eq!(m.map_type(), MapType::Splitsies);
@@ -1581,13 +1588,35 @@ mod tests {
     }
 
     #[test]
-    fn read_heavy_hint_band() {
-        // ReadHeavy: IPO at cache-resident, Splitsies past the tomb-DRAM cliff
-        // (the legacy Hint mapping; not yet retuned to use Tomb).
-        let m = OptiMap::<u64, u64>::with_capacity_and_hint(10_000, Hint::ReadHeavy);
-        assert_eq!(m.map_type(), MapType::Ipo);
-        let m = OptiMap::<u64, u64>::with_capacity_and_hint(5_000_000, Hint::ReadHeavy);
-        assert_eq!(m.map_type(), MapType::Splitsies);
+    fn read_write_heavy_pin_tomb_at_all_caps() {
+        // ReadHeavy / WriteHeavy are single-band Tomb per sweep-2026-06-02:
+        // Tomb matches or beats TombWide on lookup_hit at every measured N,
+        // and ties or beats hashbrown at 10M.
+        for cap in [0, 10_000, 500_000, 5_000_000] {
+            let m = OptiMap::<u64, u64>::with_capacity_and_hint(cap, Hint::ReadHeavy);
+            assert_eq!(m.map_type(), MapType::Tomb, "ReadHeavy at cap={cap}");
+            let m = OptiMap::<u64, u64>::with_capacity_and_hint(cap, Hint::WriteHeavy);
+            assert_eq!(m.map_type(), MapType::Tomb, "WriteHeavy at cap={cap}");
+        }
+    }
+
+    #[test]
+    fn miss_heavy_pins_ipo() {
+        // MissHeavy → Ipo (TombWide, Byte7_254). Per sweep-2026-06-02, wins
+        // lookup_miss vs Tomb at 500K–10M by 1.16–1.49×.
+        for cap in [0, 10_000, 5_000_000] {
+            let m = OptiMap::<u64, u64>::with_capacity_and_hint(cap, Hint::MissHeavy);
+            assert_eq!(m.map_type(), MapType::Ipo, "MissHeavy at cap={cap}");
+        }
+    }
+
+    #[test]
+    fn low_latency_pins_flat_btree() {
+        // LowLatency → FlatBTree for jitter-free per-op cost (no resize spikes).
+        for cap in [0, 10_000, 5_000_000] {
+            let m = OptiMap::<u64, u64>::with_capacity_and_hint(cap, Hint::LowLatency);
+            assert_eq!(m.map_type(), MapType::FlatBTree, "LowLatency at cap={cap}");
+        }
     }
 
     #[test]

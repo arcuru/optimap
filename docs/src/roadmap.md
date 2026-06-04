@@ -4,6 +4,12 @@ Ordered roughly by expected impact. Items in the "Closed" section have been thor
 
 ## Recently Completed
 
+### June 2026
+
+| Item | Scope |
+| --- | --- |
+| `Hint` retunes: `ReadHeavy`/`WriteHeavy` → `Tomb`; new `MissHeavy` → `Ipo`; new `LowLatency` → `FlatBTree` | Three coupled changes to `Policy::for_hint`, validated against the 2026-06-02 overnight sweep. **(1) `ReadHeavy`/`WriteHeavy` → `MapType::Tomb` (single-band).** Was: `Ipo` at cache-resident sizes, `Splitsies` past `TOMBSTONE_DRAM_CLIFF` (legacy 2-band shape). Sweep verification: Tomb matches TombWide on lookup_hit at 500K (5.49 vs 5.51 ns, tied), wins at 1M (6.75 vs 8.27 ns, 1.23×), 2M (6.79 vs 8.06, 1.19×), 5M (6.49 vs 6.89, 1.06×), 10M (12.60 vs 14.88, 1.18×). Tomb is also the `Auto` default — `ReadHeavy`/`WriteHeavy` now share its single-band shape. **(2) New `Hint::MissHeavy` → `MapType::Ipo`.** Wider `Byte7_254` tag cuts false-match rate 1/127 → 1/254. Sweep verification at lookup_miss: TombWide beats Tomb at 500K (2.33 vs 2.86 ns, 1.23×), 1M (2.51 vs 2.92, 1.16×), 2M (2.70 vs 3.32, 1.23×), 5M (3.37 vs 4.13, 1.23×), 10M (3.20 vs 4.77, 1.49× — also beats hashbrown's 5.58). Targets caches with low hit rate and hash-join probe sides. **(3) New `Hint::LowLatency` → `MapType::FlatBTree`.** Trade off median speed for predictable per-op latency. Sweep verification on insert across N∈[1K,1M]: max/p50 ratio is FlatBTree 14× vs Tomb 40× / hashbrown 72× / TombWide 80×. Caveat documented on the variant: ~3-10× slower median insert, log-N lookup. Requires `K: Ord + Clone` (same constraint as `Hint::Sorted`). **Cleanup**: `TOMBSTONE_DRAM_CLIFF` const removed — was only consulted by the legacy `ReadHeavy`/`WriteHeavy` 2-band shape, now dead. **Tests**: 517/517 lib pass. New: `hint_constructors` (both OptiMap and OptiSet, all 6 explicit hints), `read_write_heavy_pin_tomb_at_all_caps`, `miss_heavy_pins_ipo`, `low_latency_pins_flat_btree`. Doc-string updated on each `Hint` variant citing the sweep-2026-06-02 numbers. |
+
 ### May 2026
 
 | Item | Scope |
@@ -108,32 +114,6 @@ The `Map` → `HashedMap` rename has shipped. Remaining work fleshes out `Sorted
 (none — allocator stress testing shipped May 2026; see Recently Completed)
 
 ### Performance Investigations
-
-#### Retune `Hint::ReadHeavy` / `WriteHeavy` to target `Tomb`
-
-**Difficulty**: Low \
-**Expected impact**: Up to 3× lookup_hit improvement for hinted callers at ≥1M
-
-Both hints currently route through `Policy::for_hint` to a 2-band shape: `MapType::Ipo` (= `Byte7_254`, "TombWide") at cache-resident sizes, `MapType::Splitsies` past `TOMBSTONE_DRAM_CLIFF` (1M). Per sweep-2026-05-13:
-
-- `Tomb` (`Byte7_128`) beats TombWide on lookup_hit at 500K–10M by 1.3–3×
-- The "DRAM cliff" that motivated the Splitsies switch is specific to TombWide; `Tomb` doesn't hit it (lookup_hit @ 5M is 18 ns for Tomb vs 44 ns for TombWide vs 77 ns for Splitsies)
-
-Simplest retune: both hints become `Policy::pinned(MapType::Tomb)`. Same backend as `Hint::Auto`, but the hint signal is preserved on the type (useful if we later add miss-heavy vs hit-heavy differentiation). Or collapse them entirely and let everyone go through `Auto`.
-
-#### `Hint::MissHeavy` for miss-dominated workloads → `MapType::Ipo` (TombWide)
-
-**Difficulty**: Low (new hint variant + Policy mapping)
-
-`TombWide` (`Byte7_254`, IPO) wins lookup_miss at any N ≥ 500K by 1.3–2× over `Tomb`, owing to the wider tag's lower false-match rate (1/254 vs 1/128). Real workload: caches with low hit rate, hash-join probe sides. Currently no way to ask for this profile without explicitly pinning to `MapType::Ipo`.
-
-#### `Hint::LowLatency` → predictable per-op latency via `FlatBTree`
-
-**Difficulty**: Low (new hint variant)
-
-Sweep-2026-05-13 raw per-N data showed hash inserts spike from 5–10 ns steady-state to 100–400 ns at resize-doubling events (e.g. Tomb at N=452: 370 ns; at N=453: 5 ns). FlatBTree inserts are flat 28–40 ns regardless of N — no resize spike. For tail-latency-sensitive callers that can't pre-`reserve`, a hint that routes to FlatBTree is a real product distinction. Lookup is slower (log N), but jitter-free.
-
-Caveat: trade-off needs to be explicit in the hint docs — "you give up 2-15× lookup speed and get spike-free insert."
 
 #### Hashbrown wins at small N — residual cold allocate+fill gap
 
