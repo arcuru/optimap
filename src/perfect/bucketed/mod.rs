@@ -174,7 +174,7 @@ where
 
         // SAFETY: `bucket < num_buckets` and `tags.len() == num_buckets`.
         let bucket_tags = unsafe { self.tags.get_unchecked(bucket) };
-        let mask = unsafe { algorithm::match_tag_16(bucket_tags.0.as_ptr(), tag) };
+        let mask = unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
 
         let base = bucket * SLOTS_PER_BUCKET;
         for slot in mask {
@@ -399,7 +399,7 @@ where
         let tag = crate::hash_tag(hash);
 
         let bucket_tags = unsafe { self.tags.get_unchecked(bucket) };
-        let mask = unsafe { algorithm::match_tag_16(bucket_tags.0.as_ptr(), tag) };
+        let mask = unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
 
         let base = bucket * SLOTS_PER_BUCKET;
         for slot in mask {

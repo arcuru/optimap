@@ -18,6 +18,7 @@
 //! and the same hash is reused across CHD retries.
 
 use super::phf::{BuildError, PerfectHashFunction};
+use super::util::{bucket_of, has_duplicate};
 
 /// Default average bucket size. CHD's theoretical lower bound is around
 /// λ ≈ 4 for minimal PHFs; λ = 5 is a common practical default — fewer
@@ -34,25 +35,6 @@ const MAX_SEED_RETRIES: u32 = 32;
 /// many attempts. Cap loosely; if we hit this, the seed family is bad and
 /// we retry from scratch.
 const MAX_DISPLACEMENT: u32 = 1 << 24;
-
-/// 64-bit mixer based on splitmix64 — used to derive bucket and slot hashes
-/// from the input key hash + CHD seed without touching the upstream hasher.
-#[inline(always)]
-fn mix(h: u64, seed: u64) -> u64 {
-    let mut x = h ^ seed;
-    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
-    x ^= x >> 30;
-    x = x.wrapping_mul(0x94d049bb133111eb);
-    x ^= x >> 31;
-    x
-}
-
-#[inline(always)]
-fn bucket_of(h: u64, seed: u64, r: u64) -> usize {
-    // Top 32 bits of the mix go to bucket selection.
-    let mixed = mix(h, seed);
-    ((mixed >> 32) % r) as usize
-}
 
 #[inline(always)]
 fn slot_of(h: u64, seed: u64, d: u32, m: u64) -> usize {
@@ -159,16 +141,6 @@ impl PerfectHashFunction for ChdPhf {
 /// A non-trivial starting seed (splitmix64-style constant) keeps the first
 /// attempt's hash family distinct from the input hasher's identity.
 const SEED_BASE: u64 = 0xD6E8FEB86659FD93;
-
-/// Check whether any two values in `hashes` are equal. Used as a fail-fast
-/// gate before CHD construction — a true u64 collision cannot be resolved
-/// by any PHF algorithm. Sort-based to avoid an allocation-heavy HashSet
-/// on the hot construction path.
-fn has_duplicate(hashes: &[u64]) -> bool {
-    let mut sorted: Vec<u64> = hashes.to_vec();
-    sorted.sort_unstable();
-    sorted.windows(2).any(|w| w[0] == w[1])
-}
 
 /// One CHD construction attempt under a fixed `seed`.
 fn try_build_seed(
@@ -279,6 +251,7 @@ fn bitset_set(bits: &mut [u64], i: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perfect::util::mix;
 
     fn make_hashes(n: usize) -> Vec<u64> {
         // Deterministic, well-mixed input. The PHF doesn't care what the

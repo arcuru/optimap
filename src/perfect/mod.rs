@@ -42,6 +42,7 @@ pub mod bucketed;
 mod chd;
 mod phf;
 mod set;
+mod util;
 
 pub use bucketed::{
     BucketedConfig, BucketedPhf, PerfectMapBucketed, PerfectSetBucketed,

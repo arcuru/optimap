@@ -25,6 +25,36 @@ pub fn overflow_bit(h: u64) -> u8 {
     1u8 << (h & 7)
 }
 
+/// Match `value` across a 16-byte SSE2 group, returning the unmasked
+/// 16-bit hit bitmask. Callers that treat byte 15 as data (e.g. bucketed
+/// PHF, 16 tag slots) use this directly; callers that reserve byte 15
+/// for an overflow byte ([`Group::match_byte`]) AND the result with
+/// `0x7FFF`.
+///
+/// SAFETY: `ptr` must be 16-byte aligned.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[inline(always)]
+pub unsafe fn match_byte_full_16(ptr: *const u8, value: u8) -> BitMask {
+    unsafe {
+        let data = _mm_load_si128(ptr as *const __m128i);
+        let needle = _mm_set1_epi8(value as i8);
+        let cmp = _mm_cmpeq_epi8(data, needle);
+        BitMask(_mm_movemask_epi8(cmp) as u16)
+    }
+}
+
+#[cfg(any(not(target_arch = "x86_64"), miri))]
+#[inline(always)]
+pub unsafe fn match_byte_full_16(ptr: *const u8, value: u8) -> BitMask {
+    let mut mask = 0u16;
+    for i in 0..META_GROUP_BYTES {
+        if unsafe { *ptr.add(i) } == value {
+            mask |= 1 << i;
+        }
+    }
+    BitMask(mask)
+}
+
 /// A Group operates directly on a pointer to 16 bytes of metadata in-place.
 /// No copying — all operations work on the metadata array directly via SSE2.
 ///
@@ -37,17 +67,12 @@ pub struct Group;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 impl Group {
     /// Return a bitmask of slots matching `value` using SSE2.
-    /// Only the lower 15 bits are meaningful.
+    /// Only the lower 15 bits are meaningful — byte 15 is the overflow byte.
     /// SAFETY: `ptr` must be 16-byte aligned.
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
-        unsafe {
-            let data = _mm_load_si128(ptr as *const __m128i);
-            let needle = _mm_set1_epi8(value as i8);
-            let cmp = _mm_cmpeq_epi8(data, needle);
-            let mask = _mm_movemask_epi8(cmp) as u16;
-            BitMask(mask & 0x7FFF)
-        }
+        let mask = unsafe { match_byte_full_16(ptr, value) };
+        BitMask(mask.0 & 0x7FFF)
     }
 
     /// Return a bitmask of empty slots.
@@ -144,13 +169,8 @@ pub struct Group;
 impl Group {
     #[inline(always)]
     pub unsafe fn match_byte(ptr: *const u8, value: u8) -> BitMask {
-        let mut mask = 0u16;
-        for i in 0..GROUP_SIZE {
-            if unsafe { *ptr.add(i) } == value {
-                mask |= 1 << i;
-            }
-        }
-        BitMask(mask)
+        let mask = unsafe { match_byte_full_16(ptr, value) };
+        BitMask(mask.0 & 0x7FFF)
     }
 
     #[inline(always)]
@@ -293,6 +313,22 @@ mod tests {
         assert!(reduced_hash(0x00) >= 1);
         // High values stay high
         assert_eq!(reduced_hash(0xFF), 255);
+    }
+
+    #[test]
+    fn match_byte_full_16_keeps_byte_15() {
+        // Group::match_byte masks bit 15 to reserve the overflow byte;
+        // match_byte_full_16 must NOT mask it. Verify both behaviors so
+        // a refactor can't silently break either invariant.
+        let mut buf = make_aligned();
+        buf[3] = 42;
+        buf[15] = 42;
+        unsafe {
+            let masked: Vec<usize> = Group::match_byte(buf.as_ptr(), 42).collect();
+            assert_eq!(masked, vec![3], "Group::match_byte must drop bit 15");
+            let full: Vec<usize> = match_byte_full_16(buf.as_ptr(), 42).collect();
+            assert_eq!(full, vec![3, 15], "match_byte_full_16 must keep bit 15");
+        }
     }
 
     #[test]

@@ -21,6 +21,7 @@
 //! bits per key).
 
 use crate::perfect::phf::BuildError;
+use crate::perfect::util::{bucket_of, has_duplicate};
 
 /// Slots per bucket — matches the SSE2 SIMD group width. Hard-coded; the
 /// lookup path uses 128-bit intrinsics directly.
@@ -50,28 +51,6 @@ pub const MAX_SEED_RETRIES: u32 = 64;
 /// hasher's identity so the first attempt is a genuinely independent
 /// hash family.
 const SEED_BASE: u64 = 0xD6E8FEB86659FD93;
-
-/// Mix `h` with `seed` via two splitmix64 rounds. Each `seed` value gives
-/// an effectively independent hash family — varying `seed` re-permutes
-/// keys across buckets rather than shifting them together.
-#[inline(always)]
-fn mix(h: u64, seed: u64) -> u64 {
-    let mut x = h ^ seed;
-    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
-    x ^= x >> 30;
-    x = x.wrapping_mul(0x94d049bb133111eb);
-    x ^= x >> 31;
-    x
-}
-
-/// Map a hash to its bucket under the given seed and bucket count.
-#[inline(always)]
-pub(crate) fn bucket_of(h: u64, seed: u64, r: u64) -> usize {
-    // Top 32 bits of the mix go to bucket selection — independent from
-    // the low byte used as a tag in lookup.
-    let mixed = mix(h, seed);
-    ((mixed >> 32) % r) as usize
-}
 
 /// Bucketed perfect hash function. Compact runtime form: one seed + one
 /// bucket count. No per-bucket displacement table — bucket-level
@@ -195,74 +174,10 @@ impl BucketedPhf {
     }
 }
 
-/// Sort-based duplicate check. Used as a fail-fast gate before construction
-/// — two equal u64 hashes can never be perfect-hashed by any algorithm.
-fn has_duplicate(hashes: &[u64]) -> bool {
-    let mut sorted: Vec<u64> = hashes.to_vec();
-    sorted.sort_unstable();
-    sorted.windows(2).any(|w| w[0] == w[1])
-}
-
-// ── SIMD tag scan ─────────────────────────────────────────────────────────
-
-/// 16-slot bitmask returned by the bucket tag scan. Set bits correspond to
-/// tag matches within the bucket.
-#[derive(Clone, Copy, Debug)]
-pub struct BucketMask(u16);
-
-impl BucketMask {
-    #[inline]
-    pub fn any(self) -> bool {
-        self.0 != 0
-    }
-}
-
-impl Iterator for BucketMask {
-    type Item = usize;
-    #[inline]
-    fn next(&mut self) -> Option<usize> {
-        if self.0 == 0 {
-            None
-        } else {
-            let idx = self.0.trailing_zeros() as usize;
-            self.0 &= self.0 - 1;
-            Some(idx)
-        }
-    }
-}
-
-/// Match a single tag byte against all 16 slots of a bucket.
-///
-/// SAFETY: `ptr` must point to 16 valid bytes of tag data, 16-byte aligned.
-/// Callers must hold a shared borrow on the underlying bucket.
-#[inline(always)]
-#[cfg(all(target_arch = "x86_64", not(miri)))]
-pub(crate) unsafe fn match_tag_16(ptr: *const u8, tag: u8) -> BucketMask {
-    use std::arch::x86_64::*;
-    unsafe {
-        let data = _mm_load_si128(ptr as *const __m128i);
-        let needle = _mm_set1_epi8(tag as i8);
-        let cmp = _mm_cmpeq_epi8(data, needle);
-        // movemask_epi8 packs the high bit of each byte into 16 bits.
-        BucketMask(_mm_movemask_epi8(cmp) as u16)
-    }
-}
-
-#[inline(always)]
-#[cfg(any(not(target_arch = "x86_64"), miri))]
-pub(crate) unsafe fn match_tag_16(ptr: *const u8, tag: u8) -> BucketMask {
-    let mut mask = 0u16;
-    for i in 0..SLOTS_PER_BUCKET {
-        if unsafe { *ptr.add(i) } == tag {
-            mask |= 1 << i;
-        }
-    }
-    BucketMask(mask)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perfect::util::mix;
 
     fn make_hashes(n: usize) -> Vec<u64> {
         // Well-mixed deterministic input. The PHF only cares that values
@@ -339,21 +254,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn match_tag_16_returns_correct_hits() {
-        #[repr(C, align(16))]
-        struct Aligned([u8; SLOTS_PER_BUCKET]);
-        let buf = Aligned([0, 5, 0, 5, 0, 0, 5, 0, 0, 0, 0, 5, 0, 0, 0, 0]);
-        let hits: Vec<usize> = unsafe { match_tag_16(buf.0.as_ptr(), 5) }.collect();
-        assert_eq!(hits, vec![1, 3, 6, 11]);
-    }
-
-    #[test]
-    fn match_tag_16_zero_when_no_hits() {
-        #[repr(C, align(16))]
-        struct Aligned([u8; SLOTS_PER_BUCKET]);
-        let buf = Aligned([0u8; SLOTS_PER_BUCKET]);
-        let mask = unsafe { match_tag_16(buf.0.as_ptr(), 42) };
-        assert!(!mask.any());
-    }
 }
