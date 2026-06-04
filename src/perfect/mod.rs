@@ -285,6 +285,25 @@ pub struct PerfectMapSparse<K, V, P = ChdPhf, S = DefaultHashBuilder> {
     len: usize,
 }
 
+impl<K, V> PerfectMapSparse<K, V, ChdPhf, DefaultHashBuilder>
+where
+    K: Hash + Eq,
+{
+    /// Build with the default algorithm (CHD), default hash builder, and
+    /// the default [`PerfectMapConfig`] (`load_factor = 1.10`). Mirrors
+    /// [`PerfectMap::from_iter_perfect`].
+    pub fn from_iter_perfect<I>(entries: I) -> Result<Self, BuildError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+    {
+        Self::from_entries_with(
+            entries,
+            DefaultHashBuilder::default(),
+            &PerfectMapConfig::default(),
+        )
+    }
+}
+
 impl<K, V, P, S> PerfectMapSparse<K, V, P, S>
 where
     K: Hash + Eq,
