@@ -132,6 +132,17 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
         }
     }
 
+    /// Consume `self` and return a [`PerfectSet`](crate::PerfectSet) over
+    /// the current key set — read-only, exact membership, one indirection +
+    /// one key compare per `contains`.
+    ///
+    /// Panics on PHF construction failure (rare; only if two keys hash to
+    /// the same u64, which would be a true hasher collision).
+    pub fn make_perfect(self) -> crate::PerfectSet<T> {
+        crate::PerfectSet::from_iter_perfect(self)
+            .expect("make_perfect: CHD construction failed at minimal load")
+    }
+
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         OptiSet {

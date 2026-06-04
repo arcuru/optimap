@@ -666,44 +666,48 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
 // ── Perfect-hash conversion ────────────────────────────────────────────────
 
 impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
-    /// Consume `self` and return a [`PerfectMap`] over the current key set.
+    /// Consume `self` and return a [`PerfectMap`](crate::PerfectMap) over
+    /// the current key set — dense storage (`Box<[(K, V)]>`), minimal
+    /// perfect hash, miss-safe via stored-key compare. The default choice.
     ///
-    /// Builds a minimal perfect hash (table size equals key count) using
-    /// the default algorithm (CHD) and a fresh default hash builder. Stores
-    /// the keys alongside the values, so [`PerfectMap::get`] is miss-safe.
-    ///
-    /// Panics if construction fails — that requires either two keys hashing
-    /// to the same `u64` (genuine hasher collision) or CHD exhausting its
-    /// internal retry budget at minimal load. For a fallible variant or to
-    /// configure the load factor, use [`Self::make_perfect_with`].
+    /// Panics if CHD can't fit the key set into a minimal table or two
+    /// keys hash to the same u64. For non-minimal load factors, see
+    /// [`Self::make_perfect_sparse`]. For zero key storage, see
+    /// [`Self::make_perfect_unchecked`].
     pub fn make_perfect(self) -> crate::PerfectMap<K, V> {
         crate::PerfectMap::from_iter_perfect(self)
-            .expect("make_perfect: CHD construction failed under default config")
+            .expect("make_perfect: CHD construction failed at minimal load")
     }
 
-    /// Consume `self` and return a [`PerfectMap`] built under an explicit
-    /// [`PerfectMapConfig`] (load factor) and hash builder. Returns a
-    /// [`BuildError`] instead of panicking on construction failure.
-    pub fn make_perfect_with<S>(
-        self,
-        hash_builder: S,
-        config: &crate::PerfectMapConfig,
-    ) -> Result<crate::PerfectMap<K, V, crate::ChdPhf, S>, crate::BuildError>
-    where
-        S: std::hash::BuildHasher,
-    {
-        crate::PerfectMap::from_entries_with(self, hash_builder, config)
-    }
-
-    /// Consume `self` and return a [`PerfectMapUnchecked`] over the current
-    /// key set — minimal perfect hash, no stored keys, no key compare on
-    /// lookup. Trades miss-safety for the smallest per-slot footprint and
-    /// the fastest lookup.
+    /// Consume `self` and return a [`PerfectMapSparse`](crate::PerfectMapSparse)
+    /// built with a load factor > 1.0 (sparse storage with empty slack
+    /// slots). Fallible: returns [`BuildError`](crate::BuildError) on PHF
+    /// construction failure rather than panicking.
     ///
-    /// Panics on construction failure (see [`Self::make_perfect`]).
+    /// Use this when you want construction to finish faster at the cost of
+    /// `(load_factor − 1) · n` extra slots. For minimal storage, use
+    /// [`Self::make_perfect`].
+    pub fn make_perfect_sparse(
+        self,
+        config: &crate::PerfectMapConfig,
+    ) -> Result<crate::PerfectMapSparse<K, V>, crate::BuildError> {
+        crate::PerfectMapSparse::from_entries_with(
+            self,
+            crate::map::DefaultHashBuilder::default(),
+            config,
+        )
+    }
+
+    /// Consume `self` and return a
+    /// [`PerfectMapUnchecked`](crate::PerfectMapUnchecked) — minimal
+    /// perfect hash, no stored keys, no key compare on lookup.
+    ///
+    /// `get_unchecked` returns `&V` directly; out-of-set queries return an
+    /// arbitrary in-set value. Use only when membership is an invariant.
+    /// Panics on PHF construction failure.
     pub fn make_perfect_unchecked(self) -> crate::PerfectMapUnchecked<K, V> {
         crate::PerfectMapUnchecked::from_iter_perfect(self)
-            .expect("make_perfect_unchecked: CHD construction failed under default config")
+            .expect("make_perfect_unchecked: CHD construction failed at minimal load")
     }
 }
 

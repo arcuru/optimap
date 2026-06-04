@@ -293,7 +293,8 @@ pub use optimap::VacantEntry;
 // ── Perfect-hash maps ──────────────────────────────────────────────────────
 
 pub use perfect::{
-    BuildError, ChdPhf, PerfectHashFunction, PerfectMap, PerfectMapConfig, PerfectMapUnchecked,
+    BuildError, ChdPhf, PerfectHashFunction, PerfectMap, PerfectMapConfig, PerfectMapSparse,
+    PerfectMapUnchecked, PerfectSet,
 };
 
 // ── Set types ───────────────────────────────────────────────────────────────
