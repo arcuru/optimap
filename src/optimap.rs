@@ -709,6 +709,39 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
         crate::PerfectMapUnchecked::from_iter_perfect(self)
             .expect("make_perfect_unchecked: CHD construction failed at minimal load")
     }
+
+    /// Consume `self` and return a
+    /// [`PerfectMapBucketed`](crate::PerfectMapBucketed) — Swiss-table-style
+    /// bucketed perfect hash with SIMD tag scan. Construction is faster
+    /// than CHD-MPH (no per-bucket displacement search) and the miss path
+    /// rejects without touching the value array; the trade is `~K/λ`
+    /// slot overhead and a one-byte tag per slot.
+    ///
+    /// Returns [`BuildError::DuplicateHash`](crate::BuildError) on a true
+    /// hasher collision and [`BuildError::Exhausted`](crate::BuildError)
+    /// if all seed families overflowed a bucket — extremely rare at the
+    /// default λ. For a custom λ, see [`Self::make_perfect_bucketed_with`].
+    pub fn make_perfect_bucketed(
+        self,
+    ) -> Result<crate::PerfectMapBucketed<K, V>, crate::BuildError> {
+        crate::PerfectMapBucketed::from_iter_perfect(self)
+    }
+
+    /// Consume `self` and return a
+    /// [`PerfectMapBucketed`](crate::PerfectMapBucketed) built with the
+    /// given [`BucketedConfig`](crate::BucketedConfig). Use this to tune λ
+    /// (average bucket load) — lower λ trades memory for build reliability,
+    /// higher λ tightens memory at the cost of more seed-retry pressure.
+    pub fn make_perfect_bucketed_with(
+        self,
+        config: &crate::BucketedConfig,
+    ) -> Result<crate::PerfectMapBucketed<K, V>, crate::BuildError> {
+        crate::PerfectMapBucketed::from_entries(
+            self,
+            crate::map::DefaultHashBuilder::default(),
+            config,
+        )
+    }
 }
 
 fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize) -> Inner<K, V> {
@@ -1482,6 +1515,35 @@ mod tests {
         assert_eq!(map.get("world"), Some(&99));
         assert_eq!(map.len(), 2);
         assert!(!map.is_empty());
+    }
+
+    #[test]
+    fn make_perfect_bucketed_round_trip() {
+        let mut map: OptiMap<u64, u64> = OptiMap::new();
+        for i in 0..1000u64 {
+            map.insert(i, i.wrapping_mul(31));
+        }
+        let perfect = map.make_perfect_bucketed().expect("default λ should build");
+        assert_eq!(perfect.len(), 1000);
+        for i in 0..1000u64 {
+            assert_eq!(perfect.get(&i), Some(&i.wrapping_mul(31)));
+        }
+        assert_eq!(perfect.get(&9999), None);
+    }
+
+    #[test]
+    fn make_perfect_bucketed_with_custom_lambda() {
+        let mut map: OptiMap<u64, u64> = OptiMap::new();
+        for i in 0..500u64 {
+            map.insert(i, i);
+        }
+        let config = crate::BucketedConfig::default().with_lambda(8.0);
+        let perfect = map
+            .make_perfect_bucketed_with(&config)
+            .expect("λ=8 should build for well-mixed input");
+        for i in 0..500u64 {
+            assert_eq!(perfect.get(&i), Some(&i));
+        }
     }
 
     #[test]

@@ -143,6 +143,27 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
             .expect("make_perfect: CHD construction failed at minimal load")
     }
 
+    /// Consume `self` and return a
+    /// [`PerfectSetBucketed`](crate::PerfectSetBucketed) — Swiss-table-style
+    /// bucketed perfect hash with SIMD tag scan. Sibling to
+    /// [`Self::make_perfect`]; trades `~K/λ` slot overhead + a tag byte per
+    /// slot for fast construction and SIMD miss rejection.
+    pub fn make_perfect_bucketed(
+        self,
+    ) -> Result<crate::PerfectSetBucketed<T>, crate::BuildError> {
+        crate::PerfectSetBucketed::from_iter_perfect(self)
+    }
+
+    /// Consume `self` and return a
+    /// [`PerfectSetBucketed`](crate::PerfectSetBucketed) built with the
+    /// given [`BucketedConfig`](crate::BucketedConfig). Use to tune λ.
+    pub fn make_perfect_bucketed_with(
+        self,
+        config: &crate::BucketedConfig,
+    ) -> Result<crate::PerfectSetBucketed<T>, crate::BuildError> {
+        crate::PerfectSetBucketed::from_keys(self, DefaultHashBuilder::default(), config)
+    }
+
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         OptiSet {
@@ -547,6 +568,35 @@ mod tests {
         assert!(set.contains("world"));
         assert!(!set.contains("foo"));
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn make_perfect_bucketed_round_trip() {
+        let mut set: OptiSet<u64> = OptiSet::new();
+        for i in 0..1000u64 {
+            set.insert(i);
+        }
+        let perfect = set.make_perfect_bucketed().expect("default λ should build");
+        assert_eq!(perfect.len(), 1000);
+        for i in 0..1000u64 {
+            assert!(perfect.contains(&i));
+        }
+        assert!(!perfect.contains(&9999));
+    }
+
+    #[test]
+    fn make_perfect_bucketed_with_custom_lambda() {
+        let mut set: OptiSet<u64> = OptiSet::new();
+        for i in 0..500u64 {
+            set.insert(i);
+        }
+        let config = crate::BucketedConfig::default().with_lambda(8.0);
+        let perfect = set
+            .make_perfect_bucketed_with(&config)
+            .expect("λ=8 should build for well-mixed input");
+        for i in 0..500u64 {
+            assert!(perfect.contains(&i));
+        }
     }
 
     #[test]

@@ -27,7 +27,7 @@ use std::mem::MaybeUninit;
 pub struct BucketedConfig {
     /// Average target keys per bucket. Must be in `(0, SLOTS_PER_BUCKET)`.
     /// Lower λ → larger slot array, easier construction. Higher λ → denser,
-    /// more seed-retry pressure. Default [`DEFAULT_LAMBDA`] (12).
+    /// more seed-retry pressure. Default [`DEFAULT_LAMBDA`] (4).
     pub lambda: f64,
 }
 
@@ -251,7 +251,9 @@ where
     }
 
     /// Total tag-table bits per key, including empty-slot bytes. At
-    /// λ = 12, K = 16 this is `8 · 16/12 ≈ 10.7` bits/key.
+    /// λ = 4, K = 16 this is `8 · 16/4 = 32` bits/key — the bucketed
+    /// family trades tag-table space for fast construction and SIMD miss
+    /// rejection.
     pub fn tag_bits_per_key(&self) -> f64 {
         if self.len == 0 {
             return 0.0;

@@ -12,8 +12,9 @@
 //! they don't break the build, only burn a key compare.
 //!
 //! Construction is O(n) per seed attempt with no per-bucket displacement
-//! search (CHD's main cost). At λ = 12, K = 16, the per-attempt failure
-//! probability is small enough that one or two seeds typically suffice.
+//! search (CHD's main cost). At λ = 4, K = 16, the per-attempt failure
+//! probability is ~1e-6 so the first seed almost always succeeds; raising
+//! λ pushes that probability up sharply (see [`DEFAULT_LAMBDA`]).
 //!
 //! Per-key storage in the PHF itself: 64 bits seed + 32 bits bucket count
 //! ≈ ~0.0001 bits/key in the limit — the cost is paid in the *slot array*
@@ -43,7 +44,7 @@ pub const SLOTS_PER_BUCKET: usize = 16;
 pub const DEFAULT_LAMBDA: f64 = 4.0;
 
 /// How many independent seed hash families to try before giving up. Build
-/// failure within this budget is extremely rare at λ = 12 — increase if
+/// failure within this budget is extremely rare at λ = 4 — increase if
 /// you tune λ closer to `SLOTS_PER_BUCKET`.
 pub const MAX_SEED_RETRIES: u32 = 64;
 
@@ -208,7 +209,7 @@ mod tests {
         for &n in &[2usize, 16, 64, 256, 1024] {
             let hashes = make_hashes(n);
             let (phf, placements) = BucketedPhf::build(&hashes, DEFAULT_LAMBDA)
-                .expect("build at λ=12 should succeed for well-mixed input");
+                .expect("build at λ=4 should succeed for well-mixed input");
 
             // Every key has a valid (bucket, slot) pair within bounds and
             // distinct across input.
