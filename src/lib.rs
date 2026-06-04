@@ -258,6 +258,7 @@ pub mod ipo64;
 pub(crate) mod map;
 mod opti_set;
 pub mod optimap;
+pub mod perfect;
 pub mod raw;
 pub mod raw_entry;
 mod set;
@@ -288,6 +289,12 @@ pub use optimap::OccupiedEntry;
 pub use optimap::OptiMap;
 pub use optimap::Policy;
 pub use optimap::VacantEntry;
+
+// ── Perfect-hash maps ──────────────────────────────────────────────────────
+
+pub use perfect::{
+    BuildError, ChdPhf, PerfectHashFunction, PerfectMap, PerfectMapConfig, PerfectMapUnchecked,
+};
 
 // ── Set types ───────────────────────────────────────────────────────────────
 
