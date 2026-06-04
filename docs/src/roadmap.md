@@ -8,6 +8,7 @@ Ordered roughly by expected impact. Items in the "Closed" section have been thor
 
 | Item | Scope |
 | --- | --- |
+| `PerfectMapBucketed` / `PerfectSetBucketed` — bucketed PHF prototype | Third ship on `src/perfect/`. New sibling family under `src/perfect/bucketed/` — separate algorithmic class from CHD-MPH. Each key is assigned to a bucket of K=16 slots via `bucket(h, seed) mod r`; construction succeeds the first time every bucket holds at most K keys, otherwise the seed is incremented for a fresh hash family. Lookup is one bucket index + one SIMD tag scan (`_mm_load_si128` + `_mm_cmpeq_epi8` + `_mm_movemask_epi8` on a 16-byte aligned tag slab via `repr(align(16))`) + key compare on hits. **DEFAULT_LAMBDA = 4** — the original λ=12 prediction in the roadmap was wrong: at K=16, P(Poisson(12) > 16) ≈ 13 % so any sizeable r overflows every seed. The Poisson tail makes single-shot seed-retry require λ ≪ K (λ=4 ⇒ P(overflow) ≈ 1e-6 ⇒ first seed almost always succeeds at 1M). Multi-level schemes (BBHash, PTHash) recover λ near K by overflowing into a secondary structure — that's a follow-up, see Open. **Storage**: tags `Box<[BucketTags]>` (one cache line per bucket), entries `Box<[MaybeUninit<(K,V)>]>` of length `r·K`, drop walks tags to find live slots. **Tag space**: reuses `crate::hash_tag` (255 distinct values via `reduced-hash-asm`); 0x00 = empty sentinel. Tag collisions inside a bucket are resolved by the key compare on hits — they don't break the build. No `Unchecked` variant — single-byte tag collisions ~1/255 inside a bucket of 16 would silently return wrong values. **Bench results (bench-2026-06-04, u64/u64)**: Construction at 1M — bucketed map 59.5 ms vs CHD-MPH 740 ms (**12.4× faster**); bucketed set 19.6 ms (**38× faster**, matches Byte7_128_Tomb). Still 4.5× / 1.5× slower than hashbrown. Miss lookup at 1M — bucketed map 270 M/s vs CHD-MPH 61 M/s (**4.4× faster**); bucketed set 339 M/s **matches/beats hashbrown (327 M/s)** — predicted SIMD-tag-rejection win confirmed. Hit lookup at 1M — bucketed map 43.5 M/s vs CHD-MPH 132 M/s (**3× slower** at scale); set 61 M/s vs hashbrown 80 M/s. The forced λ=4 → 4n slot entries array (~64 MB at 1M for `(u64,u64)`) is cache-hostile; the roadmap's prediction that bucketed would *win* hit-lookup at large N was wrong. **API**: `PerfectMapBucketed<K, V, S=DefaultHashBuilder>` and `PerfectSetBucketed<K, S>` with `from_iter_perfect` / `from_entries` / `from_keys`. `BucketedConfig { lambda }` exposes the λ knob; `BucketedPhf` exposes the algorithm. `Placements { bucket, slot }` returned alongside the PHF for map/set construction. Re-exported at crate root. **Tests**: 24 module tests pass (empty/single/small/medium/large round trips, string keys, drop counting, custom λ, set intern pattern, duplicate-hash rejection, λ-out-of-range panic, SIMD `match_tag_16` correctness, tag-slab alignment sanity). 568/568 lib + 17/17 doctests pass. Bench suite (`benches/perfect.rs`) extended with both variants across all three groups. **Verdict**: ship as the build-cost-sensitive / miss-heavy alternative; CHD-MPH (`PerfectMapUnchecked`) remains the hit-lookup leader. Multi-level extension queued in Open. |
 | Perfect-hash family: dense fast-path + `PerfectSet` | Second ship on `src/perfect/`. **(1) Dense `PerfectMap`.** Previous `PerfectMap` was `Box<[Option<(K, V)>]>` regardless of load factor — wastes the layout niche on small V (`Option<(u64, u64)>` is 24 B vs raw `(u64, u64)` 16 B, a 50 % per-slot overhead pinned in `dense_layout_skips_option_niche`). New `PerfectMap<K, V, P, S>` is dense `Box<[(K, V)]>`, minimal-only (m = n) — drops the `Option` wrapping and the `load_factor` knob since dense ⟺ minimal. Old configurable type renamed to `PerfectMapSparse<K, V, P, S>` and constrained to its actual use case (load factor > 1.0 for faster builds with slack slots). `PerfectMapConfig` stays on `PerfectMapSparse` only. **(2) `PerfectSet<K, P, S>`.** Exact membership without false positives — the niche probabilistic filters (Bloom / Xor / Binary Fuse / Ribbon) don't fit because they have FPR > 0. Storage is `Box<[K]>` of size n. `contains`, `get` (for the intern pattern: query by `&Q`, retrieve `&K`), `iter`, `len`. No `PerfectSetUnchecked` — a set without stored keys can't distinguish in-set from out-of-set queries (would always answer "true"), so it's degenerate. **OptiMap surface:** `make_perfect` returns dense (was sparse), new `make_perfect_sparse(config)` returns Sparse, `make_perfect_unchecked` unchanged. `OptiSet::make_perfect()` returns `PerfectSet`. **Re-exports:** `PerfectMapSparse`, `PerfectSet` added at the crate root alongside the existing perfect-hash names. **Tests**: 544/544 lib + 11/11 integration + 17/17 doctests pass (was 534/534 / 17/17). 9 new perfect-module tests: dense empty / single / small / medium / large / string / iter round-trips, sparse non-minimal + minimal-still-works + `load_factor < 1.0` panic, unchecked unchanged, plus 8 PerfectSet tests (empty, single, small, medium, large, intern pattern, iter, duplicate-key rejection) and the storage-size sanity assertion. Clippy clean. **Design rationale**: see the "Where composition breaks down" / "What's elegant vs what's expedient" discussion — PerfectMap's design axes (algorithm × key-representation × value-layout × build-strategy) are disjoint from the mutable-map axes (Tag × Overflow × GroupOps × indexing × load factor), so `src/perfect/` is grown as a parallel hierarchy with its own composition rules. **Deferred for follow-up**: PTHash / BBHash impls (algorithm axis, plug-in via `PerfectHashFunction` trait); a sibling `src/filter/` module with Binary Fuse / Xor8 filters that compose with `PerfectMapUnchecked` to give bounded-FPR miss-safe value lookup at minimum total bits; parallel multi-seed CHD build. Fingerprint-in-perfect variant explicitly rejected — strictly dominated by filter + Unchecked on space × CPU. |
 | `PerfectMap` / `PerfectMapUnchecked` + `OptiMap::make_perfect`* | New read-only perfect-hash map flavors. **(1) `PerfectHashFunction` trait** in `src/perfect/phf.rs` — algorithm-agnostic interface: `build(hashes, m) -> Result<Self, BuildError>` + `index(hash) -> usize` + `capacity` + `bits_per_key`. Lets future algorithms (PTHash, BBHash) slot in as new impls without touching the user-facing `PerfectMap` type. **(2) `ChdPhf`** in `src/perfect/chd.rs` — CHD construction (Belazzougui-Botelho-Dietzfelbinger 2009). λ=5 buckets, splitmix64 mixer for the derived bucket/slot hash families, **displacement `d` mixed into the slot hash (not added)** so each `d` is an effectively independent hash family — the additive-`d` form fails minimal builds whenever two keys in the same bucket share a slot residue mod m. Counting-sort key→bucket layout (one flat `Vec<u32>`, no per-bucket allocations), dense bitset for occupied slots, up to 32 seed-family retries before reporting `BuildError::Exhausted`. Upfront `O(n log n)` duplicate-hash gate fail-fasts to `BuildError::DuplicateHash` — no PHF can resolve a true u64 collision. Empty-set special case returns 0 from `index` (callers guard their slot array). **(3) `PerfectMap<K, V, P = ChdPhf, S = DefaultHashBuilder>`** — stored keys, miss-safe. Slot array is `Box<[Option<(K, V)>]>` sized to `ceil(n * load_factor)`. `get`/`contains_key`/`iter`/`keys`/`values`/`len`/`capacity` + `phf_bits_per_key` diagnostic. **(4) `PerfectMapUnchecked<K, V, P, S>`** — unstored, minimal-only (m = n). Slot array is `Box<[V]>` of size n. `get_unchecked` returns `&V` directly with no key compare. Contract: caller guarantees membership; out-of-set keys return arbitrary in-set values (no UB — `get_unchecked` uses `slice::get_unchecked` on an always-fully-initialized array, soundness backstop is the minimal invariant). **(5) `PerfectMapConfig { load_factor }`** — default 1.0 (minimal). `OptiMap::make_perfect(self)` defaults; `make_perfect_with(self, hasher, config)` is fallible and configurable; `make_perfect_unchecked(self)` builds the unstored flavor. **Tests**: 17 in the `perfect::*` module pass — empty/single/small/medium/large stored round-trips (n ∈ {0, 1, 256, 10K, 100K}), unchecked round-trips (n ∈ {256, 10K}), non-minimal load_factor 1.5, string keys, iter coverage, duplicate-hash error path, `load_factor < 1.0` panic. 534/534 lib + 16/16 integration + 17/17 doctests pass overall. **Deferred**: PTHash / BBHash impls (trait is ready); dense `Box<[(K, V)]>` storage fast-path for `load_factor = 1.0` stored variant (currently uses `Option<(K, V)>` uniformly, wastes the niche on small V); criterion benches comparing `PerfectMap::get` vs hashbrown/Tomb at fixed key sets. |
 | `Hint` retunes: `ReadHeavy`/`WriteHeavy` → `Tomb`; new `MissHeavy` → `Ipo`; new `LowLatency` → `FlatBTree` | Three coupled changes to `Policy::for_hint`, validated against the 2026-06-02 overnight sweep. **(1) `ReadHeavy`/`WriteHeavy` → `MapType::Tomb` (single-band).** Was: `Ipo` at cache-resident sizes, `Splitsies` past `TOMBSTONE_DRAM_CLIFF` (legacy 2-band shape). Sweep verification: Tomb matches TombWide on lookup_hit at 500K (5.49 vs 5.51 ns, tied), wins at 1M (6.75 vs 8.27 ns, 1.23×), 2M (6.79 vs 8.06, 1.19×), 5M (6.49 vs 6.89, 1.06×), 10M (12.60 vs 14.88, 1.18×). Tomb is also the `Auto` default — `ReadHeavy`/`WriteHeavy` now share its single-band shape. **(2) New `Hint::MissHeavy` → `MapType::Ipo`.** Wider `Byte7_254` tag cuts false-match rate 1/127 → 1/254. Sweep verification at lookup_miss: TombWide beats Tomb at 500K (2.33 vs 2.86 ns, 1.23×), 1M (2.51 vs 2.92, 1.16×), 2M (2.70 vs 3.32, 1.23×), 5M (3.37 vs 4.13, 1.23×), 10M (3.20 vs 4.77, 1.49× — also beats hashbrown's 5.58). Targets caches with low hit rate and hash-join probe sides. **(3) New `Hint::LowLatency` → `MapType::FlatBTree`.** Trade off median speed for predictable per-op latency. Sweep verification on insert across N∈[1K,1M]: max/p50 ratio is FlatBTree 14× vs Tomb 40× / hashbrown 72× / TombWide 80×. Caveat documented on the variant: ~3-10× slower median insert, log-N lookup. Requires `K: Ord + Clone` (same constraint as `Hint::Sorted`). **Cleanup**: `TOMBSTONE_DRAM_CLIFF` const removed — was only consulted by the legacy `ReadHeavy`/`WriteHeavy` 2-band shape, now dead. **Tests**: 517/517 lib pass. New: `hint_constructors` (both OptiMap and OptiSet, all 6 explicit hints), `read_write_heavy_pin_tomb_at_all_caps`, `miss_heavy_pins_ipo`, `low_latency_pins_flat_btree`. Doc-string updated on each `Hint` variant citing the sweep-2026-06-02 numbers. |
@@ -377,112 +378,78 @@ smaller level-1 vector, repeat. Lookup is a few hashes plus bit-rank
 queries (popcount). Different shape from CHD, but the trait keeps the
 user-facing types unchanged.
 
-### Bucketed perfect-hash family (research)
+### Bucketed perfect-hash family — extensions
 
-#### `PerfectMapBucketed` / `PerfectSetBucketed` — Swiss-table layout with build-time bucket-fill guarantee
+The single-shot seed-retry prototype shipped (see Recently Completed
+**bench-2026-06-04 results inline**). It confirmed the build-cost win
+(12.4× vs CHD-MPH at 1M) and miss-lookup win (matches hashbrown), but
+revealed that single-shot construction forces λ ≪ K (default λ = 4)
+because the Poisson tail blows out the seed at K = 16, λ ≥ 8. That
+forced sparsity (4n slot entries array) makes hit-lookup at large N
+**lose** to CHD-MPH — opposite of what the original prediction said.
+The follow-ups below are what's needed to actually beat CHD-MPH on hit
+lookup *and* maintain the build/miss wins.
 
-**Difficulty**: Medium (parallel hierarchy under `src/perfect/bucketed/`, ~400–600 LoC) \
-**Expected impact**: addresses the three biggest red flags from
-bench-2026-06-04 in a single design — build cost, miss-path
-performance, and cache behavior.
+#### Multi-level bucketed PHF (BBHash / PTHash style)
 
-A different algorithmic family from CHD-MPH. Instead of mapping every
-key to a unique slot via per-bucket displacement search, map each key
-to a *bucket* of K slots (K = SIMD group width = 16 with `Layout16`)
-and use SIMD tag scan on lookup. Background: well-studied class
-(FCH 1992, BPZ 2007; BBHash and PTHash both use bucket-level
-perfection internally). The lookup path is essentially a Swiss table
-without the probe loop.
+**Difficulty**: Medium-Hard (~500-800 LoC, recursive algorithmic state)\
+**Expected impact**: drives λ from 4 toward K = 16, dropping the slot
+array from 4n toward 1.33n. Closes the hit-lookup gap at large N
+without giving up the build-cost or miss-path wins.
 
-**Construction sketch:**
+The single-shot version fails any seed where one bucket exceeds K
+keys. Multi-level recovers: keys that don't fit at level 0 get
+"promoted" to a level-1 substructure (smaller, fresh seed). Keep
+recursing until every key fits. Lookup walks the levels in order via
+a bit-rank query (popcount).
 
-1. Pick K = 16 (SIMD group width)
-2. Pick `r = ceil(n / λ)` buckets where `λ < K` (e.g. λ = 12)
-3. Hash each key → bucket via `h(k, seed) mod r`. If max bucket size
-   ≤ K, success; otherwise retry seed.
-4. Within each bucket, keys land in their natural assignment with
-   the remaining slots tagged empty.
+**The two model families:**
 
-Single constraint per build attempt ("max bucket ≤ K") vs CHD's
-per-bucket displacement search — likely O(n) build with a small
-constant.
+- **BBHash** — bitvector-per-level + popcount rank. Roughly 3 bits/key
+  total, simple to implement, slightly slower lookup (rank-cache
+  needed). Construction is bit twiddling and seed retry.
+- **PTHash** — per-bucket displacement-style fix-up at each level.
+  More compact (~2.4 bits/key) but adds a per-bucket displacement
+  table back in (a CHD ingredient). Worth a closer look only if BBHash
+  doesn't close the hit gap.
 
-**Lookup**: hash → bucket index → 1 SIMD `match_byte` over the
-bucket's K tags → key compare on tag hits.
+**What to verify in the prototype:**
 
-**Predicted comparison vs current CHD-based `PerfectMap`** (numbers
-extrapolated from bench-2026-06-04 baselines; need a prototype to
-confirm):
+1. Drives λ from 4 to ≥ 12 (3-4× memory recovery for the entries array).
+2. Hit lookup at 1M reaches or beats `PerfectMapUnchecked` (current
+   CHD-MPH champion at 206 M/s).
+3. Miss path still matches/beats hashbrown (the single-level prototype
+   delivers; verify the levels don't break it).
+4. Build cost stays ≥ 5× faster than CHD-MPH (the prototype shipped
+   12× — some loss is OK if level overhead is real).
+5. Memory < CHD-MPH's `Unchecked` variant in absolute bytes/key.
 
-| Dimension          | CHD-MPH (current)                              | Bucketed (proposed)                                   |
-| ------------------ | ---------------------------------------------- | ----------------------------------------------------- |
-| Build @ 1M         | 750 ms                                         | ~30–80 ms estimated (no displacement search)          |
-| Lookup hit @ 1M    | 115 / 204 M/s (PerfectMap / Unchecked)         | should match or beat — better cache pattern           |
-| Lookup miss @ 1M   | 149 M/s (loses to hashbrown 339)               | should match hashbrown — SIMD tag mismatch rejects    |
-| Memory             | m = n (minimal)                                | m = n · K/λ ≈ 1.33n at λ=12                           |
-| Cache footprint    | 2 sequentially-dependent random accesses       | 1 random access (bucket), all K tags in 1 cache line |
+If multi-level meets (1)-(5), `PerfectMapBucketed` becomes the new
+default — CHD-MPH stays as the minimal-memory `Sparse`-style choice.
 
-**Where it wins (by dimension):**
+#### Unchecked-variant exploration for bucketed
 
-1. **Build cost** — biggest single win, directly addresses
-   bench-2026-06-04's main red flag (30× hashbrown gap). Likely 10×
-   faster build than CHD-MPH.
-2. **Miss-lookup** — SIMD tag scan rejects out-of-set queries without
-   touching the value array. Closes the gap currently in hashbrown's
-   favor, and potentially makes the filter module (below) less
-   urgent.
-3. **Cache** — single bucket access touches one cache line for the
-   tag scan; the value-side access is the only remaining miss.
+Single-byte tag collisions break the unchecked contract (one tag-twin
+inside a bucket of 16 silently returns the wrong value at ~1/255
+per-pair). Two paths if a bucketed `Unchecked` is wanted:
 
-**Where it loses:**
+- **Wider tag (2 bytes)** — drops collision rate to 1/65k inside a
+  bucket. Tag slab becomes 32 bytes per bucket; SIMD scan needs two
+  cache lines or a wider load (`_mm256_*`). 16 bits/key tag overhead.
+- **Drop the variant** — the tag-scanning checked map at λ=4 already
+  runs the entry-data array hot anyway; the `Unchecked` win there is
+  smaller than CHD-MPH's. Probably not worth the complexity.
 
-1. **Memory** — ~33 % slot-array slack at λ=12, K=16. CHD-MPH's m = n
-   minimality is its main selling point in academic settings; for
-   in-memory workloads in 2026, slack is usually a cheap price.
-2. **`Unchecked` variant design** — tag-byte collisions inside a
-   bucket of 16 happen at ~1/256 frequency. With a single-byte tag,
-   the "trust me, key is in the set" contract breaks (you can't
-   distinguish the right slot from a tag twin). Two paths:
-   (a) drop the `Bucketed` Unchecked variant because the tag-scanning
-       checked variant is already near-Unchecked speed;
-   (b) widen the tag to 2 bytes → 1/65k collision rate inside a
-       bucket, restore the unchecked contract probabilistically.
+Hold both pending the multi-level result. If multi-level lands and λ
+gets near 12, tag collisions inside a 12-load bucket are slightly
+worse, and the contract-break gets harder to defend either way.
 
-**Algorithm-trait fit:** doesn't slot into `PerfectHashFunction` —
-the trait's `index(hash) -> usize` returns a single slot, whereas
-bucketed wants `bucket(hash) -> usize` followed by a SIMD scan.
-The right shape is a parallel hierarchy: new `src/perfect/bucketed/`
-module with its own algorithm abstraction, not a `PerfectHashFunction`
-impl.
+#### λ tunability + benchmark sweep
 
-**Things to test in a prototype:**
-
-1. Build cost at N ∈ {100K, 1M, 10M} with λ ∈ {10, 12, 14}. Confirm
-   the seed-retry rate stays low at λ = 12 and that build crosses
-   into hashbrown territory.
-2. Lookup hit / miss vs current `PerfectMap` + `PerfectMapUnchecked`
-   + hashbrown + Tomb at the same N grid. Confirm the cache-pattern
-   advantage shows up.
-3. Worst-case construction at adversarial input (sequential keys,
-   short strings). CHD is robust here; bucketed needs the seed-retry
-   bound stress-tested.
-4. Memory footprint vs CHD-MPH at the same N. Confirm the slack
-   stays in the predicted range.
-
-**If it works:** ship as a sibling family alongside CHD-MPH (current
-`PerfectMap` stays for memory-bound cases; `PerfectMapBucketed`
-becomes the default for build-cost or miss-path-sensitive cases).
-
-**Knock-on effects on the rest of the queue (if bucketed lands):**
-
-- `Parallel multi-seed CHD build` drops in urgency — if the base
-  build is already 10× faster, parallel is dessert not main course.
-- `src/filter/` module drops in urgency — if the perfect map's
-  own miss path is already hashbrown-competitive, the filter
-  composition pattern is less load-bearing.
-- `Reduce key-compare cost in PerfectMap` becomes a different
-  problem — bucketed's tag-scan path is a different attack on the
-  same goal.
+The single λ = 4 default is conservative. Once multi-level lands,
+expose λ as a tunable on `BucketedConfig` and bench at λ ∈ {6, 8, 10,
+12} × N ∈ {100K, 1M, 10M}. Validates the multi-level claim
+empirically and pins the sweet spot for the default.
 
 ### Adjacent
 

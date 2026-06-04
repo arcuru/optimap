@@ -15,9 +15,11 @@
 //!
 //! Variants:
 //!
-//! - `PerfectMap` — dense, stored keys, miss-safe
-//! - `PerfectMapUnchecked` — no key compare, hit-only
-//! - `PerfectSet` — exact membership
+//! - `PerfectMap` — CHD-MPH, dense, stored keys, miss-safe
+//! - `PerfectMapUnchecked` — CHD-MPH, no key compare, hit-only
+//! - `PerfectSet` — CHD-MPH exact membership
+//! - `PerfectMapBucketed` — bucketed PHF, SIMD tag scan, miss-safe
+//! - `PerfectSetBucketed` — bucketed PHF exact membership
 //! - `hashbrown::HashMap` — the reference incumbent
 //! - `Byte7_128_TombMap` — `MapType::Tomb`, OptiMap's `Auto` default
 //!
@@ -29,7 +31,9 @@ use bench_helpers::{make_miss_keys, make_random_keys};
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use optimap::matrix_types::Byte7_128_TombMap;
-use optimap::{PerfectMap, PerfectMapUnchecked, PerfectSet};
+use optimap::{
+    PerfectMap, PerfectMapBucketed, PerfectMapUnchecked, PerfectSet, PerfectSetBucketed,
+};
 
 const SIZES: &[usize] = &[10_000, 100_000, 1_000_000];
 
@@ -77,6 +81,21 @@ fn bench_construction(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("PerfectMapBucketed", n), &entries, |b, e| {
+            b.iter(|| {
+                let m = PerfectMapBucketed::<u64, u64>::from_iter_perfect(e.iter().copied())
+                    .unwrap();
+                black_box(m);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("PerfectSetBucketed", n), &keys, |b, k| {
+            b.iter(|| {
+                let s = PerfectSetBucketed::<u64>::from_iter_perfect(k.iter().copied()).unwrap();
+                black_box(s);
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("hashbrown", n), &entries, |b, e| {
             b.iter(|| {
                 let m: hashbrown::HashMap<u64, u64> = e.iter().copied().collect();
@@ -112,6 +131,9 @@ fn bench_lookup_hit(c: &mut Criterion) {
         let pmu =
             PerfectMapUnchecked::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
         let ps = PerfectSet::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
+        let pmb =
+            PerfectMapBucketed::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
+        let psb = PerfectSetBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
         let hb: hashbrown::HashMap<u64, u64> = entries.iter().copied().collect();
         let mut tomb = Byte7_128_TombMap::<u64, u64>::with_capacity(n);
         for &(k, v) in &entries {
@@ -146,6 +168,28 @@ fn bench_lookup_hit(c: &mut Criterion) {
                 let mut count = 0u64;
                 for &k in ks {
                     if ps.contains(&k) {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("PerfectMapBucketed", n), &keys, |b, ks| {
+            b.iter(|| {
+                let mut sum = 0u64;
+                for &k in ks {
+                    sum = sum.wrapping_add(*pmb.get(&k).unwrap_or(&0));
+                }
+                black_box(sum);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("PerfectSetBucketed", n), &keys, |b, ks| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in ks {
+                    if psb.contains(&k) {
                         count += 1;
                     }
                 }
@@ -189,6 +233,9 @@ fn bench_lookup_miss(c: &mut Criterion) {
 
         let pm = PerfectMap::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
         let ps = PerfectSet::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
+        let pmb =
+            PerfectMapBucketed::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
+        let psb = PerfectSetBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
         let hb: hashbrown::HashMap<u64, u64> = entries.iter().copied().collect();
         let mut tomb = Byte7_128_TombMap::<u64, u64>::with_capacity(n);
         for &(k, v) in &entries {
@@ -215,6 +262,30 @@ fn bench_lookup_miss(c: &mut Criterion) {
                 let mut count = 0u64;
                 for &k in ks {
                     if !ps.contains(&k) {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("PerfectMapBucketed", n), &miss_keys, |b, ks| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in ks {
+                    if pmb.get(&k).is_none() {
+                        count += 1;
+                    }
+                }
+                black_box(count);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("PerfectSetBucketed", n), &miss_keys, |b, ks| {
+            b.iter(|| {
+                let mut count = 0u64;
+                for &k in ks {
+                    if !psb.contains(&k) {
                         count += 1;
                     }
                 }

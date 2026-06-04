@@ -38,10 +38,14 @@
 //! assert_eq!(perfect.get(&999), None);
 //! ```
 
+pub mod bucketed;
 mod chd;
 mod phf;
 mod set;
 
+pub use bucketed::{
+    BucketedConfig, BucketedPhf, PerfectMapBucketed, PerfectSetBucketed,
+};
 pub use chd::ChdPhf;
 pub use phf::{BuildError, PerfectHashFunction};
 pub use set::PerfectSet;
