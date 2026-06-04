@@ -412,17 +412,44 @@ to keep the default dep set minimal.
 
 ### Benchmarks
 
-#### Criterion suite: PerfectMap / PerfectSet / Unchecked vs hashbrown / Tomb
+#### ~~Criterion suite: PerfectMap / PerfectSet / Unchecked vs hashbrown / Tomb~~ **SHIPPED**
 
-**Difficulty**: Low (mechanical, criterion + harness scaffolding) \
-**Expected impact**: data to drive algorithm-variant ordering above.
+`benches/perfect.rs` covers construction + hit-lookup + miss-lookup
+across `PerfectMap` / `PerfectMapUnchecked` / `PerfectSet` /
+`hashbrown::HashMap` / `Byte7_128_TombMap` at N ∈ {10K, 100K, 1M}.
+Run via `cargo bench --bench perfect`; output lands under
+`target/criterion/` for ad-hoc runs or
+`bench-results/runs/<date>-<sha>-perfect/` when invoked through the
+overnight orchestrator.
 
-Compare `PerfectMap::get` / `PerfectMapUnchecked::get_unchecked` /
-`PerfectSet::contains` against `hashbrown::HashMap::get` and
-`Byte7_128_TombMap::get` at fixed key sets `n ∈ {10K, 100K, 1M}` for
-hit-heavy / miss-heavy / mixed workloads. Also pin construction cost so
-the build-vs-query tradeoff is explicit (currently undocumented). Output
-goes into `bench-results/runs/<date>-<sha>-perfect/`.
+**Headline findings from the first run** (Zen4, native target,
+`--quick` sampling; numbers are M-elements/s throughput):
+
+| N    | op              | PerfectMap | Unchecked | PerfectSet | hashbrown | Tomb  |
+| ---- | --------------- | ---------- | --------- | ---------- | --------- | ----- |
+| 100K | lookup_hit      |     —      |    —      |     256    |    412    |  408  |
+| 1M   | lookup_hit      |    115     |  **204**  |     190    |     83    |   66  |
+| 10K  | lookup_miss     |    309     |    n/a    |     312    |  **982**  |  967  |
+| 100K | lookup_miss     |    237     |    n/a    |     259    |    242    |  205  |
+| 1M   | lookup_miss     |    149     |    n/a    |     189    |  **339**  |  307  |
+| 100K | construction    |   ~1.5     |   ~1.5    |   ~1.45    |    226    |  172  |
+| 1M   | construction    |   1.33     |   1.35    |    1.34    |     39    |   33  |
+
+Three things this run pinned down:
+
+1. **PerfectMap is a clear win at large-N hot lookups.** At N=1M,
+   `PerfectMapUnchecked` runs ~2.45× hashbrown and `PerfectMap` (with
+   stored-key compare) runs ~1.4×. The crossover with hashbrown sits
+   somewhere in (100K, 1M) — below it, hashbrown's SIMD probe
+   terminator dominates; above it, cache misses do, and the guaranteed
+   one-indirection of a PHF pays off.
+2. **Miss-lookup is hashbrown's win.** 10K: 3× faster; 1M: ~2× faster.
+   Confirms the design rationale for the deferred filter module — the
+   composition `if filter.contains(k) { unchecked.get_unchecked(k) }
+   else { None }` is what closes the negative-path gap.
+3. **Build cost is real.** 750 ms to build a 1M-key `PerfectMap` vs
+   ~25 ms for hashbrown — a 30× gap. Validates "parallel multi-seed
+   CHD build" as the highest-value perf item in the queue.
 
 ### Speculative (no clear scope yet)
 

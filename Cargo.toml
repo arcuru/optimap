@@ -124,3 +124,7 @@ harness = false
 [[bench]]
 name = "raw_entry"
 harness = false
+
+[[bench]]
+name = "perfect"
+harness = false
