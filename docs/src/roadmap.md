@@ -337,6 +337,102 @@ Implemented as `BitSeparate` overflow strategy composed via `Layout16`. Replaces
 | ~~`range_mut()`~~ | ~~Low-Medium~~ | **Done (May 2026).** |
 | ~~Arena `shrink_to_fit()`~~ | ~~Medium~~ | **Done (May 2026)** via drain + bulk_load rebuild. |
 
+## Open — Perfect-hash Maps
+
+A parallel hierarchy under `src/perfect/`. Composition axes are disjoint
+from the mutable hash-map side (no probe loop, no tombstones, no resize),
+so we grow this on its own axes: algorithm × key-representation × value-
+layout × build-strategy. See the design discussion in the June 2026
+"Recently Completed" rows for the motivation behind keeping it separate.
+
+### Algorithm variants
+
+The `PerfectHashFunction` trait is the slot — each algorithm is a new
+`impl` selected via the `P` type parameter on `PerfectMap` /
+`PerfectMapSparse` / `PerfectMapUnchecked` / `PerfectSet`.
+
+#### PTHash impl of `PerfectHashFunction`
+
+**Difficulty**: Medium \
+**Expected impact**: ~30 % smaller than CHD per bits/key (1.5–2 vs 2–3),
+modest query-time win in published benchmarks.
+
+PTHash (Pibiri-Trani 2021) partitions the key set, runs a CHD-like
+displacement search per partition, then Elias-Fano-encodes the
+displacement table. The encoding is the work — the CHD core inside each
+partition reuses most of the existing `ChdPhf` machinery. Worth doing
+once we have a criterion bench harness in place so the bits/key win can
+be validated against the build-time cost.
+
+#### BBHash impl of `PerfectHashFunction`
+
+**Difficulty**: Medium \
+**Expected impact**: ~3 bits/key, but very fast build at scale —
+specifically targets the billion-key regime where CHD's per-bucket
+displacement search becomes the bottleneck.
+
+Multi-level bit-vector scheme (Limasset-Rizk-Chikhi-Peterlongo 2017).
+Recursive: hash keys into a level-0 bitvector, "promote" collisions to a
+smaller level-1 vector, repeat. Lookup is a few hashes plus bit-rank
+queries (popcount). Different shape from CHD, but the trait keeps the
+user-facing types unchanged.
+
+### Adjacent
+
+#### Sibling `src/filter/` — Binary Fuse / Xor8 read-only filters
+
+**Difficulty**: Medium \
+**Expected impact**: bounded-FPR miss-safe value lookup at minimum
+total bits when composed with `PerfectMapUnchecked`. Useful in its own
+right for cache front-ends, dedup pipelines, hash-join probe sides.
+
+Not perfect-hash, but adjacent enough to live in-crate rather than as a
+separate dep. Binary Fuse (Graf-Lemire 2022) is the modern default:
+~9 bits/key at ~1/256 FPR, fast build, three hashes per query. Xor8 is
+a close second and simpler to implement. Both are build-once read-only,
+so they share the lifecycle model with `src/perfect/` even though they
+answer membership-with-FPR rather than perfect mapping. Composition
+pattern: `if filter.contains(k) { map.get_unchecked(k) } else { None }`
+— the filter rejects negatives before touching the value array, and the
+unchecked map carries zero key-storage overhead.
+
+### Build performance
+
+#### Parallel multi-seed CHD build
+
+**Difficulty**: Low (add rayon dep behind a feature) \
+**Expected impact**: ~Nx speedup at large N where build cost dominates.
+
+CHD's outer loop tries seeds sequentially until one finds a valid
+displacement assignment. With rayon, try `min(threads, MAX_SEED_RETRIES)`
+seeds in parallel and keep the first success (or the smallest
+displacement table). Only matters at N ≳ 1M where the single-threaded
+build crosses single-digit seconds. Behind a `parallel-build` feature
+to keep the default dep set minimal.
+
+### Benchmarks
+
+#### Criterion suite: PerfectMap / PerfectSet / Unchecked vs hashbrown / Tomb
+
+**Difficulty**: Low (mechanical, criterion + harness scaffolding) \
+**Expected impact**: data to drive algorithm-variant ordering above.
+
+Compare `PerfectMap::get` / `PerfectMapUnchecked::get_unchecked` /
+`PerfectSet::contains` against `hashbrown::HashMap::get` and
+`Byte7_128_TombMap::get` at fixed key sets `n ∈ {10K, 100K, 1M}` for
+hit-heavy / miss-heavy / mixed workloads. Also pin construction cost so
+the build-vs-query tradeoff is explicit (currently undocumented). Output
+goes into `bench-results/runs/<date>-<sha>-perfect/`.
+
+### Speculative (no clear scope yet)
+
+| Item | Notes |
+| --- | --- |
+| Read-only `Lookup<K, V>` trait | `get` + `contains_key` + `iter` + `len` implemented by `PerfectMap`, `PerfectMapSparse`, hashbrown, `Tomb`, etc. Strictly for generic bench-harness code — production callers should use the concrete types. Add when the bench suite above wants a single generic body across map types. |
+| Pure PHF wrapper | Just the function, no value storage at all. Useful as a primitive for callers building their own value-layout (e.g. column-stores, parallel-array layouts). The `PerfectHashFunction` trait already exposes this — question is whether a thin `PhfOnly<P, S>` wrapper that pairs the PHF with its hash builder is worth shipping. |
+| Frozen-compressed values | Entropy-code or dictionary-code the value array for low-cardinality `V` (e.g. enum-shaped). Real wins only for specific shapes; probably belongs as a separate type (`PerfectMapCompressed<K, V, ...>`) rather than a value-layout knob on `PerfectMap`. Wait for a workload that asks for it. |
+| Sorted-key range queries on a frozen map | A frozen `BTreeMap`-shape (sorted `Box<[(K, V)]>` + binary search) doesn't need PHF at all — it's just an immutable sorted array. Adjacent enough to mention; would live alongside `src/perfect/` if shipped. |
+
 ## Closed
 
 These have been extensively tested and proven structural. See [Closed Investigations](optimization/closed.md) for full documentation.
