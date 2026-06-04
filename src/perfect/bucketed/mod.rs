@@ -15,7 +15,8 @@ mod multilevel;
 
 pub use algorithm::{BucketedPhf, DEFAULT_LAMBDA, MAX_SEED_RETRIES, Placements, SLOTS_PER_BUCKET};
 pub use multilevel::{
-    DEFAULT_LAMBDA_0, DEFAULT_LAMBDA_1, MultilevelBucketedPhf, MultilevelPlacements,
+    DEFAULT_LAMBDA_0, DEFAULT_LAMBDA_1, MultilevelBucketedConfig, MultilevelBucketedPhf,
+    MultilevelPlacements, PerfectMapMultilevelBucketed, PerfectSetMultilevelBucketed,
 };
 
 use crate::map::DefaultHashBuilder;

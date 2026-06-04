@@ -164,6 +164,31 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
         crate::PerfectSetBucketed::from_keys(self, DefaultHashBuilder::default(), config)
     }
 
+    /// Consume `self` and return a
+    /// [`PerfectSetMultilevelBucketed`](crate::PerfectSetMultilevelBucketed)
+    /// — two-level bucketed perfect set sibling to
+    /// [`Self::make_perfect_bucketed`] with halved slot-array overhead.
+    pub fn make_perfect_multilevel_bucketed(
+        self,
+    ) -> Result<crate::PerfectSetMultilevelBucketed<T>, crate::BuildError> {
+        crate::PerfectSetMultilevelBucketed::from_iter_perfect(self)
+    }
+
+    /// Consume `self` and return a
+    /// [`PerfectSetMultilevelBucketed`](crate::PerfectSetMultilevelBucketed)
+    /// built with the given
+    /// [`MultilevelBucketedConfig`](crate::MultilevelBucketedConfig).
+    pub fn make_perfect_multilevel_bucketed_with(
+        self,
+        config: &crate::MultilevelBucketedConfig,
+    ) -> Result<crate::PerfectSetMultilevelBucketed<T>, crate::BuildError> {
+        crate::PerfectSetMultilevelBucketed::from_keys(
+            self,
+            DefaultHashBuilder::default(),
+            config,
+        )
+    }
+
     /// Create a set pinned to a specific backend type.
     pub fn with_type(map_type: MapType) -> Self {
         OptiSet {
@@ -595,6 +620,37 @@ mod tests {
             .make_perfect_bucketed_with(&config)
             .expect("λ=8 should build for well-mixed input");
         for i in 0..500u64 {
+            assert!(perfect.contains(&i));
+        }
+    }
+
+    #[test]
+    fn make_perfect_multilevel_bucketed_round_trip() {
+        let mut set: OptiSet<u64> = OptiSet::new();
+        for i in 0..1000u64 {
+            set.insert(i);
+        }
+        let perfect = set
+            .make_perfect_multilevel_bucketed()
+            .expect("default (λ₀=8, λ₁=4) should build");
+        assert_eq!(perfect.len(), 1000);
+        for i in 0..1000u64 {
+            assert!(perfect.contains(&i));
+        }
+        assert!(!perfect.contains(&9999));
+    }
+
+    #[test]
+    fn make_perfect_multilevel_bucketed_with_high_lambda() {
+        let mut set: OptiSet<u64> = OptiSet::new();
+        for i in 0..2000u64 {
+            set.insert(i);
+        }
+        let config = crate::MultilevelBucketedConfig::default().with_lambda_0(14.0);
+        let perfect = set
+            .make_perfect_multilevel_bucketed_with(&config)
+            .expect("λ₀=14 should build, with overflow into level 1");
+        for i in 0..2000u64 {
             assert!(perfect.contains(&i));
         }
     }

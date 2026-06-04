@@ -742,6 +742,37 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
             config,
         )
     }
+
+    /// Consume `self` and return a
+    /// [`PerfectMapMultilevelBucketed`](crate::PerfectMapMultilevelBucketed)
+    /// — two-level bucketed perfect hash that pushes level-0 average load
+    /// to ~K/2 to halve the slot-array memory cost, with an independent
+    /// level-1 substructure for the small overflow tail.
+    ///
+    /// Sibling to [`Self::make_perfect_bucketed`] with a lower per-key
+    /// tag/slot overhead at the same lookup performance in the common
+    /// (no-overflow) path.
+    pub fn make_perfect_multilevel_bucketed(
+        self,
+    ) -> Result<crate::PerfectMapMultilevelBucketed<K, V>, crate::BuildError> {
+        crate::PerfectMapMultilevelBucketed::from_iter_perfect(self)
+    }
+
+    /// Consume `self` and return a
+    /// [`PerfectMapMultilevelBucketed`](crate::PerfectMapMultilevelBucketed)
+    /// built with the given
+    /// [`MultilevelBucketedConfig`](crate::MultilevelBucketedConfig). Use
+    /// this to tune `(λ₀, λ₁)`.
+    pub fn make_perfect_multilevel_bucketed_with(
+        self,
+        config: &crate::MultilevelBucketedConfig,
+    ) -> Result<crate::PerfectMapMultilevelBucketed<K, V>, crate::BuildError> {
+        crate::PerfectMapMultilevelBucketed::from_entries(
+            self,
+            crate::map::DefaultHashBuilder::default(),
+            config,
+        )
+    }
 }
 
 fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize) -> Inner<K, V> {
@@ -1542,6 +1573,38 @@ mod tests {
             .make_perfect_bucketed_with(&config)
             .expect("λ=8 should build for well-mixed input");
         for i in 0..500u64 {
+            assert_eq!(perfect.get(&i), Some(&i));
+        }
+    }
+
+    #[test]
+    fn make_perfect_multilevel_bucketed_round_trip() {
+        let mut map: OptiMap<u64, u64> = OptiMap::new();
+        for i in 0..1000u64 {
+            map.insert(i, i.wrapping_mul(31));
+        }
+        let perfect = map
+            .make_perfect_multilevel_bucketed()
+            .expect("default (λ₀=8, λ₁=4) should build");
+        assert_eq!(perfect.len(), 1000);
+        for i in 0..1000u64 {
+            assert_eq!(perfect.get(&i), Some(&i.wrapping_mul(31)));
+        }
+        assert_eq!(perfect.get(&9999), None);
+    }
+
+    #[test]
+    fn make_perfect_multilevel_bucketed_with_high_lambda_uses_level_1() {
+        let mut map: OptiMap<u64, u64> = OptiMap::new();
+        for i in 0..2000u64 {
+            map.insert(i, i);
+        }
+        let config = crate::MultilevelBucketedConfig::default().with_lambda_0(14.0);
+        let perfect = map
+            .make_perfect_multilevel_bucketed_with(&config)
+            .expect("λ₀=14 should build, with overflow into level 1");
+        assert!(perfect.has_level_1(), "λ₀=14 at n=2000 should overflow");
+        for i in 0..2000u64 {
             assert_eq!(perfect.get(&i), Some(&i));
         }
     }

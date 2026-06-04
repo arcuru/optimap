@@ -34,9 +34,15 @@
 //! overflow bitset. Level 1 contributes ~0.2 bits/key tag overhead —
 //! negligible.
 
+use super::BucketTags;
 use super::algorithm::{BucketedPhf, Placements, SLOTS_PER_BUCKET};
+use crate::map::DefaultHashBuilder;
 use crate::perfect::phf::BuildError;
 use crate::perfect::util::{bucket_of, has_duplicate};
+use std::borrow::Borrow;
+use std::fmt;
+use std::hash::{BuildHasher, Hash};
+use std::mem::MaybeUninit;
 
 /// Default average bucket load at level 0. Tuned so that the expected
 /// fraction of keys reaching level 1 is small (~0.6%) while the level-0
@@ -283,6 +289,548 @@ fn patch_level_1(
     }
 }
 
+// ── MultilevelBucketedConfig ──────────────────────────────────────────────
+
+/// Build configuration for the multi-level bucketed family. Exposes the
+/// two average-bucket-load knobs; both default to the values tuned in
+/// the algorithm module ([`DEFAULT_LAMBDA_0`], [`DEFAULT_LAMBDA_1`]).
+#[derive(Debug, Clone)]
+pub struct MultilevelBucketedConfig {
+    /// Average level-0 bucket load. Must be in `(0, SLOTS_PER_BUCKET)`.
+    /// Higher → fewer slots, more overflow into level 1.
+    pub lambda_0: f64,
+    /// Average level-1 bucket load. Must be in `(0, SLOTS_PER_BUCKET)`.
+    /// Level 1 sees only the overflow tail, so this is mostly cosmetic
+    /// at default level-0 settings.
+    pub lambda_1: f64,
+}
+
+impl Default for MultilevelBucketedConfig {
+    fn default() -> Self {
+        Self {
+            lambda_0: DEFAULT_LAMBDA_0,
+            lambda_1: DEFAULT_LAMBDA_1,
+        }
+    }
+}
+
+impl MultilevelBucketedConfig {
+    /// Convenience builder: set the level-0 average bucket load.
+    pub fn with_lambda_0(mut self, lambda_0: f64) -> Self {
+        self.lambda_0 = lambda_0;
+        self
+    }
+
+    /// Convenience builder: set the level-1 average bucket load.
+    pub fn with_lambda_1(mut self, lambda_1: f64) -> Self {
+        self.lambda_1 = lambda_1;
+        self
+    }
+}
+
+// ── PerfectMapMultilevelBucketed ──────────────────────────────────────────
+
+/// Read-only map backed by a multi-level bucketed perfect hash with SIMD
+/// tag scan at each level. Sibling to [`PerfectMapBucketed`](super::PerfectMapBucketed);
+/// pushes the level-0 average load to ~`K/2` to halve the slot-array
+/// memory cost, falling back to an independent level-1 structure for the
+/// small overflow tail.
+///
+/// # Example
+///
+/// ```
+/// use optimap::PerfectMapMultilevelBucketed;
+///
+/// let m: PerfectMapMultilevelBucketed<u64, &'static str> =
+///     PerfectMapMultilevelBucketed::from_iter_perfect(
+///         [(1u64, "one"), (2, "two"), (3, "three")],
+///     )
+///     .unwrap();
+/// assert_eq!(m.get(&2), Some(&"two"));
+/// assert_eq!(m.get(&999), None);
+/// ```
+pub struct PerfectMapMultilevelBucketed<K, V, S = DefaultHashBuilder> {
+    tags_l0: Box<[BucketTags]>,
+    entries_l0: Box<[MaybeUninit<(K, V)>]>,
+    tags_l1: Box<[BucketTags]>,
+    entries_l1: Box<[MaybeUninit<(K, V)>]>,
+    phf: MultilevelBucketedPhf,
+    hash_builder: S,
+    len: usize,
+}
+
+impl<K, V> PerfectMapMultilevelBucketed<K, V, DefaultHashBuilder>
+where
+    K: Hash + Eq,
+{
+    /// Build with the default hash builder and default `(λ₀, λ₁)`.
+    pub fn from_iter_perfect<I>(entries: I) -> Result<Self, BuildError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+    {
+        Self::from_entries(
+            entries,
+            DefaultHashBuilder::default(),
+            &MultilevelBucketedConfig::default(),
+        )
+    }
+}
+
+impl<K, V, S> PerfectMapMultilevelBucketed<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// Build with a custom hash builder and configuration.
+    pub fn from_entries<I>(
+        entries: I,
+        hash_builder: S,
+        config: &MultilevelBucketedConfig,
+    ) -> Result<Self, BuildError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+    {
+        let entries: Vec<(K, V)> = entries.into_iter().collect();
+        let n = entries.len();
+
+        if n == 0 {
+            return Ok(Self {
+                tags_l0: Box::new([]),
+                entries_l0: Box::new([]),
+                tags_l1: Box::new([]),
+                entries_l1: Box::new([]),
+                phf: MultilevelBucketedPhf::build(&[], config.lambda_0, config.lambda_1)?.0,
+                hash_builder,
+                len: 0,
+            });
+        }
+
+        let hashes: Vec<u64> = entries.iter().map(|(k, _)| hash_builder.hash_one(k)).collect();
+        let (phf, placements) =
+            MultilevelBucketedPhf::build(&hashes, config.lambda_0, config.lambda_1)?;
+
+        let r0 = phf.num_buckets_level_0();
+        let r1 = phf.num_buckets_level_1();
+        let slots_l0 = r0 * SLOTS_PER_BUCKET;
+        let slots_l1 = r1 * SLOTS_PER_BUCKET;
+
+        let mut tags_l0 = vec![BucketTags::EMPTY; r0];
+        let mut entries_l0: Vec<MaybeUninit<(K, V)>> =
+            (0..slots_l0).map(|_| MaybeUninit::uninit()).collect();
+        let mut tags_l1 = vec![BucketTags::EMPTY; r1];
+        let mut entries_l1: Vec<MaybeUninit<(K, V)>> =
+            (0..slots_l1).map(|_| MaybeUninit::uninit()).collect();
+
+        for ((k, v), (i, h)) in entries.into_iter().zip(hashes.iter().enumerate()) {
+            let bucket = placements.bucket[i] as usize;
+            let slot = placements.slot[i] as usize;
+            let tag = crate::hash_tag(*h);
+            match placements.level[i] {
+                0 => {
+                    debug_assert_eq!(tags_l0[bucket].0[slot], 0);
+                    tags_l0[bucket].0[slot] = tag;
+                    entries_l0[bucket * SLOTS_PER_BUCKET + slot].write((k, v));
+                }
+                1 => {
+                    debug_assert_eq!(tags_l1[bucket].0[slot], 0);
+                    tags_l1[bucket].0[slot] = tag;
+                    entries_l1[bucket * SLOTS_PER_BUCKET + slot].write((k, v));
+                }
+                other => unreachable!("invalid level marker {other} from PHF placements"),
+            }
+        }
+
+        Ok(Self {
+            tags_l0: tags_l0.into_boxed_slice(),
+            entries_l0: entries_l0.into_boxed_slice(),
+            tags_l1: tags_l1.into_boxed_slice(),
+            entries_l1: entries_l1.into_boxed_slice(),
+            phf,
+            hash_builder,
+            len: n,
+        })
+    }
+
+    /// Look up `key`. Returns `Some(&V)` if `key` was in the construction
+    /// key set, `None` otherwise.
+    #[inline]
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if self.len == 0 {
+            return None;
+        }
+        let hash = self.hash_builder.hash_one(key);
+        let (level, bucket) = self.phf.classify(hash);
+        let tag = crate::hash_tag(hash);
+
+        let (tags, entries) = if level == 0 {
+            (&self.tags_l0, &self.entries_l0)
+        } else {
+            (&self.tags_l1, &self.entries_l1)
+        };
+
+        // SAFETY: classify guarantees bucket < tags.len() in each level
+        // (length matches num_buckets_level_{0,1}).
+        let bucket_tags = unsafe { tags.get_unchecked(bucket) };
+        let mask =
+            unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
+
+        let base = bucket * SLOTS_PER_BUCKET;
+        for slot in mask {
+            // SAFETY: tag != 0 means this slot was initialized at build time.
+            let entry = unsafe { entries.get_unchecked(base + slot).assume_init_ref() };
+            if entry.0.borrow() == key {
+                return Some(&entry.1);
+            }
+        }
+        None
+    }
+
+    /// True iff `key` was in the construction key set.
+    #[inline]
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get(key).is_some()
+    }
+
+    /// Number of entries.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// True iff `len == 0`.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Level-0 bucket count.
+    #[inline]
+    pub fn num_buckets_level_0(&self) -> usize {
+        self.phf.num_buckets_level_0()
+    }
+
+    /// Level-1 bucket count (0 if no overflow).
+    #[inline]
+    pub fn num_buckets_level_1(&self) -> usize {
+        self.phf.num_buckets_level_1()
+    }
+
+    /// True iff at least one bucket overflowed and a level-1 substructure
+    /// was built.
+    #[inline]
+    pub fn has_level_1(&self) -> bool {
+        self.phf.has_level_1()
+    }
+
+    /// Iterate over `(&K, &V)` in (level, slot) order — an implementation-
+    /// defined permutation of insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
+        let l0 = iter_level(&self.tags_l0, &self.entries_l0);
+        let l1 = iter_level(&self.tags_l1, &self.entries_l1);
+        l0.chain(l1)
+    }
+
+    /// Iterate over `&K`.
+    pub fn keys(&self) -> impl Iterator<Item = &K> + '_ {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over `&V`.
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|(_, v)| v)
+    }
+
+    /// Approximate space overhead in bits per key for the PHF data
+    /// structure alone (seed + bucket counts + overflow bitset). Excludes
+    /// tag tables and entries. Diagnostic only.
+    pub fn phf_bits_per_key(&self) -> f64 {
+        self.phf.bits_per_key(self.len)
+    }
+
+    /// Total tag-table bits per key across both levels, including
+    /// empty-slot bytes. At λ₀ = 8, K = 16 this is ~16 bits/key from
+    /// level 0 plus a small (~0.1 bits/key) contribution from level 1.
+    pub fn tag_bits_per_key(&self) -> f64 {
+        if self.len == 0 {
+            return 0.0;
+        }
+        let bits = (self.tags_l0.len() + self.tags_l1.len()) * SLOTS_PER_BUCKET * 8;
+        bits as f64 / self.len as f64
+    }
+
+    /// Access the hash builder used at construction.
+    pub fn hasher(&self) -> &S {
+        &self.hash_builder
+    }
+}
+
+fn iter_level<'a, K, V>(
+    tags: &'a [BucketTags],
+    entries: &'a [MaybeUninit<(K, V)>],
+) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
+    tags.iter().enumerate().flat_map(move |(b, bucket_tags)| {
+        let base = b * SLOTS_PER_BUCKET;
+        bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
+            if tag != 0 {
+                let entry = unsafe { entries.get_unchecked(base + s).assume_init_ref() };
+                Some((&entry.0, &entry.1))
+            } else {
+                None
+            }
+        })
+    })
+}
+
+impl<K, V, S> Drop for PerfectMapMultilevelBucketed<K, V, S> {
+    fn drop(&mut self) {
+        if std::mem::needs_drop::<(K, V)>() {
+            drop_level(&self.tags_l0, &mut self.entries_l0);
+            drop_level(&self.tags_l1, &mut self.entries_l1);
+        }
+    }
+}
+
+fn drop_level<T>(tags: &[BucketTags], entries: &mut [MaybeUninit<T>]) {
+    for (b, bucket_tags) in tags.iter().enumerate() {
+        let base = b * SLOTS_PER_BUCKET;
+        for (s, &tag) in bucket_tags.0.iter().enumerate() {
+            if tag != 0 {
+                // SAFETY: tag != 0 ⇔ this slot was initialized at build
+                // time and has not been moved out of.
+                unsafe {
+                    entries[base + s].assume_init_drop();
+                }
+            }
+        }
+    }
+}
+
+impl<K, V, S> fmt::Debug for PerfectMapMultilevelBucketed<K, V, S>
+where
+    K: Hash + Eq + fmt::Debug,
+    V: fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+// ── PerfectSetMultilevelBucketed ──────────────────────────────────────────
+
+/// Read-only set backed by a multi-level bucketed perfect hash. Sibling
+/// to [`PerfectSetBucketed`](super::PerfectSetBucketed) with the same
+/// memory/speed trade-off as [`PerfectMapMultilevelBucketed`].
+pub struct PerfectSetMultilevelBucketed<K, S = DefaultHashBuilder> {
+    tags_l0: Box<[BucketTags]>,
+    keys_l0: Box<[MaybeUninit<K>]>,
+    tags_l1: Box<[BucketTags]>,
+    keys_l1: Box<[MaybeUninit<K>]>,
+    phf: MultilevelBucketedPhf,
+    hash_builder: S,
+    len: usize,
+}
+
+impl<K> PerfectSetMultilevelBucketed<K, DefaultHashBuilder>
+where
+    K: Hash + Eq,
+{
+    /// Build with the default hash builder and default `(λ₀, λ₁)`.
+    pub fn from_iter_perfect<I>(keys: I) -> Result<Self, BuildError>
+    where
+        I: IntoIterator<Item = K>,
+    {
+        Self::from_keys(
+            keys,
+            DefaultHashBuilder::default(),
+            &MultilevelBucketedConfig::default(),
+        )
+    }
+}
+
+impl<K, S> PerfectSetMultilevelBucketed<K, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    /// Build with a custom hash builder and configuration.
+    pub fn from_keys<I>(
+        keys: I,
+        hash_builder: S,
+        config: &MultilevelBucketedConfig,
+    ) -> Result<Self, BuildError>
+    where
+        I: IntoIterator<Item = K>,
+    {
+        let keys: Vec<K> = keys.into_iter().collect();
+        let n = keys.len();
+
+        if n == 0 {
+            return Ok(Self {
+                tags_l0: Box::new([]),
+                keys_l0: Box::new([]),
+                tags_l1: Box::new([]),
+                keys_l1: Box::new([]),
+                phf: MultilevelBucketedPhf::build(&[], config.lambda_0, config.lambda_1)?.0,
+                hash_builder,
+                len: 0,
+            });
+        }
+
+        let hashes: Vec<u64> = keys.iter().map(|k| hash_builder.hash_one(k)).collect();
+        let (phf, placements) =
+            MultilevelBucketedPhf::build(&hashes, config.lambda_0, config.lambda_1)?;
+
+        let r0 = phf.num_buckets_level_0();
+        let r1 = phf.num_buckets_level_1();
+        let slots_l0 = r0 * SLOTS_PER_BUCKET;
+        let slots_l1 = r1 * SLOTS_PER_BUCKET;
+
+        let mut tags_l0 = vec![BucketTags::EMPTY; r0];
+        let mut keys_l0: Vec<MaybeUninit<K>> =
+            (0..slots_l0).map(|_| MaybeUninit::uninit()).collect();
+        let mut tags_l1 = vec![BucketTags::EMPTY; r1];
+        let mut keys_l1: Vec<MaybeUninit<K>> =
+            (0..slots_l1).map(|_| MaybeUninit::uninit()).collect();
+
+        for (k, (i, h)) in keys.into_iter().zip(hashes.iter().enumerate()) {
+            let bucket = placements.bucket[i] as usize;
+            let slot = placements.slot[i] as usize;
+            let tag = crate::hash_tag(*h);
+            match placements.level[i] {
+                0 => {
+                    debug_assert_eq!(tags_l0[bucket].0[slot], 0);
+                    tags_l0[bucket].0[slot] = tag;
+                    keys_l0[bucket * SLOTS_PER_BUCKET + slot].write(k);
+                }
+                1 => {
+                    debug_assert_eq!(tags_l1[bucket].0[slot], 0);
+                    tags_l1[bucket].0[slot] = tag;
+                    keys_l1[bucket * SLOTS_PER_BUCKET + slot].write(k);
+                }
+                other => unreachable!("invalid level marker {other} from PHF placements"),
+            }
+        }
+
+        Ok(Self {
+            tags_l0: tags_l0.into_boxed_slice(),
+            keys_l0: keys_l0.into_boxed_slice(),
+            tags_l1: tags_l1.into_boxed_slice(),
+            keys_l1: keys_l1.into_boxed_slice(),
+            phf,
+            hash_builder,
+            len: n,
+        })
+    }
+
+    /// True iff `key` was in the construction key set.
+    #[inline]
+    pub fn contains<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.get(key).is_some()
+    }
+
+    /// Borrow the stored key equal to `key`, or `None`. Useful for the
+    /// intern pattern.
+    #[inline]
+    pub fn get<Q>(&self, key: &Q) -> Option<&K>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if self.len == 0 {
+            return None;
+        }
+        let hash = self.hash_builder.hash_one(key);
+        let (level, bucket) = self.phf.classify(hash);
+        let tag = crate::hash_tag(hash);
+
+        let (tags, stored) = if level == 0 {
+            (&self.tags_l0, &self.keys_l0)
+        } else {
+            (&self.tags_l1, &self.keys_l1)
+        };
+
+        let bucket_tags = unsafe { tags.get_unchecked(bucket) };
+        let mask =
+            unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
+
+        let base = bucket * SLOTS_PER_BUCKET;
+        for slot in mask {
+            let entry = unsafe { stored.get_unchecked(base + slot).assume_init_ref() };
+            if entry.borrow() == key {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    /// Number of keys.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// True iff empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Iterate over `&K` in (level, slot) order.
+    pub fn iter(&self) -> impl Iterator<Item = &K> + '_ {
+        let l0 = iter_level_set(&self.tags_l0, &self.keys_l0);
+        let l1 = iter_level_set(&self.tags_l1, &self.keys_l1);
+        l0.chain(l1)
+    }
+}
+
+fn iter_level_set<'a, K>(
+    tags: &'a [BucketTags],
+    stored: &'a [MaybeUninit<K>],
+) -> impl Iterator<Item = &'a K> + 'a {
+    tags.iter().enumerate().flat_map(move |(b, bucket_tags)| {
+        let base = b * SLOTS_PER_BUCKET;
+        bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
+            if tag != 0 {
+                Some(unsafe { stored.get_unchecked(base + s).assume_init_ref() })
+            } else {
+                None
+            }
+        })
+    })
+}
+
+impl<K, S> Drop for PerfectSetMultilevelBucketed<K, S> {
+    fn drop(&mut self) {
+        if std::mem::needs_drop::<K>() {
+            drop_level(&self.tags_l0, &mut self.keys_l0);
+            drop_level(&self.tags_l1, &mut self.keys_l1);
+        }
+    }
+}
+
+impl<K, S> fmt::Debug for PerfectSetMultilevelBucketed<K, S>
+where
+    K: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,5 +973,214 @@ mod tests {
             MultilevelBucketedPhf::build(&hashes, DEFAULT_LAMBDA_0, DEFAULT_LAMBDA_1).unwrap();
         let bpk = phf.bits_per_key(n);
         assert!(bpk > 0.0 && bpk < 1.0, "bits_per_key {bpk} outside (0, 1)");
+    }
+
+    // ── PerfectMapMultilevelBucketed ──────────────────────────────────────
+
+    fn entries_u64(n: u64) -> Vec<(u64, u64)> {
+        (0..n).map(|i| (i, i.wrapping_mul(31))).collect()
+    }
+
+    #[test]
+    fn map_empty_round_trip() {
+        let m =
+            PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(std::iter::empty()).unwrap();
+        assert_eq!(m.len(), 0);
+        assert!(m.is_empty());
+        assert!(!m.has_level_1());
+        assert_eq!(m.get(&0), None);
+    }
+
+    #[test]
+    fn map_single_round_trip() {
+        let m = PerfectMapMultilevelBucketed::<u64, &str>::from_iter_perfect([(42u64, "answer")])
+            .unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get(&42), Some(&"answer"));
+        assert_eq!(m.get(&0), None);
+    }
+
+    #[test]
+    fn map_small_round_trip() {
+        let n = 256u64;
+        let entries = entries_u64(n);
+        let m =
+            PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(entries.clone()).unwrap();
+        for (k, v) in &entries {
+            assert_eq!(m.get(k), Some(v));
+        }
+        for k in n..n + 50 {
+            assert_eq!(m.get(&k), None);
+        }
+    }
+
+    #[test]
+    fn map_medium_round_trip() {
+        let n = 50_000u64;
+        let entries = entries_u64(n);
+        let m =
+            PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(entries.clone()).unwrap();
+        assert_eq!(m.len(), n as usize);
+        for (k, v) in &entries {
+            assert_eq!(m.get(k), Some(v));
+        }
+    }
+
+    #[test]
+    fn map_high_lambda_uses_level_1() {
+        // λ₀=14 forces substantial overflow; verify that lookup goes
+        // through level 1 correctly for the keys placed there.
+        let n = 5_000u64;
+        let entries = entries_u64(n);
+        let config = MultilevelBucketedConfig::default().with_lambda_0(14.0);
+        let m = PerfectMapMultilevelBucketed::<u64, u64>::from_entries(
+            entries.clone(),
+            DefaultHashBuilder::default(),
+            &config,
+        )
+        .unwrap();
+        assert!(m.has_level_1(), "λ₀=14 should produce overflow at n={n}");
+        for (k, v) in &entries {
+            assert_eq!(m.get(k), Some(v), "key={k}");
+        }
+    }
+
+    #[test]
+    fn map_string_keys() {
+        let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+        let entries: Vec<(String, usize)> =
+            words.iter().enumerate().map(|(i, w)| (w.to_string(), i)).collect();
+        let m =
+            PerfectMapMultilevelBucketed::<String, usize>::from_iter_perfect(entries.clone())
+                .unwrap();
+        for (k, v) in &entries {
+            assert_eq!(m.get(k.as_str()), Some(v));
+        }
+        assert_eq!(m.get("missing"), None);
+    }
+
+    #[test]
+    fn map_drops_values_on_drop() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Dropper(u32);
+        impl Drop for Dropper {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        DROPS.store(0, Ordering::Relaxed);
+        {
+            // Use λ₀=14 so the drop path exercises BOTH levels.
+            let entries: Vec<(u64, Dropper)> =
+                (0..500u64).map(|i| (i, Dropper(i as u32))).collect();
+            let config = MultilevelBucketedConfig::default().with_lambda_0(14.0);
+            let _m = PerfectMapMultilevelBucketed::<u64, Dropper>::from_entries(
+                entries,
+                DefaultHashBuilder::default(),
+                &config,
+            )
+            .unwrap();
+        }
+        assert_eq!(DROPS.load(Ordering::Relaxed), 500);
+    }
+
+    #[test]
+    fn map_iter_returns_all_entries() {
+        let entries = entries_u64(200);
+        // High λ₀ to exercise both levels in the iterator.
+        let config = MultilevelBucketedConfig::default().with_lambda_0(14.0);
+        let m = PerfectMapMultilevelBucketed::<u64, u64>::from_entries(
+            entries.clone(),
+            DefaultHashBuilder::default(),
+            &config,
+        )
+        .unwrap();
+        let mut got: Vec<(u64, u64)> = m.iter().map(|(k, v)| (*k, *v)).collect();
+        got.sort();
+        let mut want = entries.clone();
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn map_duplicate_keys_rejected() {
+        let entries = vec![(1u64, 1u64), (2, 2), (1, 3)];
+        let err = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(entries)
+            .unwrap_err();
+        assert_eq!(err, BuildError::DuplicateHash);
+    }
+
+    // ── PerfectSetMultilevelBucketed ──────────────────────────────────────
+
+    #[test]
+    fn set_empty_round_trip() {
+        let s = PerfectSetMultilevelBucketed::<u64>::from_iter_perfect(std::iter::empty()).unwrap();
+        assert_eq!(s.len(), 0);
+        assert!(!s.contains(&0));
+    }
+
+    #[test]
+    fn set_small_round_trip() {
+        let keys: Vec<u64> = (0..256).collect();
+        let s = PerfectSetMultilevelBucketed::<u64>::from_iter_perfect(keys.clone()).unwrap();
+        for k in &keys {
+            assert!(s.contains(k));
+        }
+        for k in 256..300 {
+            assert!(!s.contains(&k));
+        }
+    }
+
+    #[test]
+    fn set_high_lambda_uses_level_1() {
+        let n = 5_000u64;
+        let keys: Vec<u64> = (0..n).collect();
+        let config = MultilevelBucketedConfig::default().with_lambda_0(14.0);
+        let s = PerfectSetMultilevelBucketed::<u64>::from_keys(
+            keys.clone(),
+            DefaultHashBuilder::default(),
+            &config,
+        )
+        .unwrap();
+        for k in &keys {
+            assert!(s.contains(k));
+        }
+        assert!(!s.contains(&(n + 1)));
+    }
+
+    #[test]
+    fn set_intern_pattern() {
+        let words = ["alpha", "beta", "gamma"];
+        let entries: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        let s = PerfectSetMultilevelBucketed::<String>::from_iter_perfect(entries).unwrap();
+        let interned = s.get("beta").expect("beta is in the set");
+        assert_eq!(interned, "beta");
+        assert!(!s.contains("missing"));
+    }
+
+    #[test]
+    fn set_drops_keys_on_drop() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        #[derive(Hash, PartialEq, Eq)]
+        struct K(u32);
+        impl Drop for K {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        DROPS.store(0, Ordering::Relaxed);
+        {
+            let keys: Vec<K> = (0..200u32).map(K).collect();
+            let config = MultilevelBucketedConfig::default().with_lambda_0(14.0);
+            let _s = PerfectSetMultilevelBucketed::<K>::from_keys(
+                keys,
+                DefaultHashBuilder::default(),
+                &config,
+            )
+            .unwrap();
+        }
+        assert_eq!(DROPS.load(Ordering::Relaxed), 200);
     }
 }

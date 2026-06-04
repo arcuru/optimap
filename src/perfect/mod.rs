@@ -45,8 +45,9 @@ mod set;
 mod util;
 
 pub use bucketed::{
-    BucketedConfig, BucketedPhf, MultilevelBucketedPhf, MultilevelPlacements, PerfectMapBucketed,
-    PerfectSetBucketed,
+    BucketedConfig, BucketedPhf, MultilevelBucketedConfig, MultilevelBucketedPhf,
+    MultilevelPlacements, PerfectMapBucketed, PerfectMapMultilevelBucketed, PerfectSetBucketed,
+    PerfectSetMultilevelBucketed,
 };
 pub use chd::ChdPhf;
 pub use phf::{BuildError, PerfectHashFunction};

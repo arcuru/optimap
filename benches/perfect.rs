@@ -20,6 +20,8 @@
 //! - `PerfectSet` — CHD-MPH exact membership
 //! - `PerfectMapBucketed` — bucketed PHF, SIMD tag scan, miss-safe
 //! - `PerfectSetBucketed` — bucketed PHF exact membership
+//! - `PerfectMapMultilevelBucketed` — two-level bucketed, λ₀=8 + λ₁=4
+//! - `PerfectSetMultilevelBucketed` — two-level bucketed set
 //! - `hashbrown::HashMap` — the reference incumbent
 //! - `Byte7_128_TombMap` — `MapType::Tomb`, OptiMap's `Auto` default
 //!
@@ -32,7 +34,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 
 use optimap::matrix_types::Byte7_128_TombMap;
 use optimap::{
-    PerfectMap, PerfectMapBucketed, PerfectMapUnchecked, PerfectSet, PerfectSetBucketed,
+    PerfectMap, PerfectMapBucketed, PerfectMapMultilevelBucketed, PerfectMapUnchecked,
+    PerfectSet, PerfectSetBucketed, PerfectSetMultilevelBucketed,
 };
 
 const SIZES: &[usize] = &[10_000, 100_000, 1_000_000];
@@ -96,6 +99,34 @@ fn bench_construction(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(
+            BenchmarkId::new("PerfectMapMultilevelBucketed", n),
+            &entries,
+            |b, e| {
+                b.iter(|| {
+                    let m = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(
+                        e.iter().copied(),
+                    )
+                    .unwrap();
+                    black_box(m);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("PerfectSetMultilevelBucketed", n),
+            &keys,
+            |b, k| {
+                b.iter(|| {
+                    let s = PerfectSetMultilevelBucketed::<u64>::from_iter_perfect(
+                        k.iter().copied(),
+                    )
+                    .unwrap();
+                    black_box(s);
+                });
+            },
+        );
+
         group.bench_with_input(BenchmarkId::new("hashbrown", n), &entries, |b, e| {
             b.iter(|| {
                 let m: hashbrown::HashMap<u64, u64> = e.iter().copied().collect();
@@ -134,6 +165,12 @@ fn bench_lookup_hit(c: &mut Criterion) {
         let pmb =
             PerfectMapBucketed::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
         let psb = PerfectSetBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
+        let pmml = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(
+            entries.iter().copied(),
+        )
+        .unwrap();
+        let psml =
+            PerfectSetMultilevelBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
         let hb: hashbrown::HashMap<u64, u64> = entries.iter().copied().collect();
         let mut tomb = Byte7_128_TombMap::<u64, u64>::with_capacity(n);
         for &(k, v) in &entries {
@@ -197,6 +234,36 @@ fn bench_lookup_hit(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(
+            BenchmarkId::new("PerfectMapMultilevelBucketed", n),
+            &keys,
+            |b, ks| {
+                b.iter(|| {
+                    let mut sum = 0u64;
+                    for &k in ks {
+                        sum = sum.wrapping_add(*pmml.get(&k).unwrap_or(&0));
+                    }
+                    black_box(sum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("PerfectSetMultilevelBucketed", n),
+            &keys,
+            |b, ks| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for &k in ks {
+                        if psml.contains(&k) {
+                            count += 1;
+                        }
+                    }
+                    black_box(count);
+                });
+            },
+        );
+
         group.bench_with_input(BenchmarkId::new("hashbrown", n), &keys, |b, ks| {
             b.iter(|| {
                 let mut sum = 0u64;
@@ -236,6 +303,12 @@ fn bench_lookup_miss(c: &mut Criterion) {
         let pmb =
             PerfectMapBucketed::<u64, u64>::from_iter_perfect(entries.iter().copied()).unwrap();
         let psb = PerfectSetBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
+        let pmml = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(
+            entries.iter().copied(),
+        )
+        .unwrap();
+        let psml =
+            PerfectSetMultilevelBucketed::<u64>::from_iter_perfect(keys.iter().copied()).unwrap();
         let hb: hashbrown::HashMap<u64, u64> = entries.iter().copied().collect();
         let mut tomb = Byte7_128_TombMap::<u64, u64>::with_capacity(n);
         for &(k, v) in &entries {
@@ -292,6 +365,38 @@ fn bench_lookup_miss(c: &mut Criterion) {
                 black_box(count);
             });
         });
+
+        group.bench_with_input(
+            BenchmarkId::new("PerfectMapMultilevelBucketed", n),
+            &miss_keys,
+            |b, ks| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for &k in ks {
+                        if pmml.get(&k).is_none() {
+                            count += 1;
+                        }
+                    }
+                    black_box(count);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("PerfectSetMultilevelBucketed", n),
+            &miss_keys,
+            |b, ks| {
+                b.iter(|| {
+                    let mut count = 0u64;
+                    for &k in ks {
+                        if !psml.contains(&k) {
+                            count += 1;
+                        }
+                    }
+                    black_box(count);
+                });
+            },
+        );
 
         group.bench_with_input(BenchmarkId::new("hashbrown", n), &miss_keys, |b, ks| {
             b.iter(|| {
