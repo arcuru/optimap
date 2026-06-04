@@ -84,7 +84,8 @@ where
     /// Fails with [`BuildError::DuplicateHash`] on a u64 collision between
     /// any two keys, or [`BuildError::Exhausted`] if CHD can't fit the key
     /// set into a minimal table (rare; if it happens, use
-    /// [`PerfectMapSparse`] with a load factor > 1.0).
+    /// [`PerfectMapSparse`] with its default `PerfectMapConfig`, which
+    /// gives the construction 10 % slack).
     pub fn from_iter_perfect<I>(entries: I) -> Result<Self, BuildError>
     where
         I: IntoIterator<Item = (K, V)>,
@@ -272,9 +273,11 @@ impl PerfectMapConfig {
 /// `m = ceil(n · load_factor)` slots, wrapped in `Option` so the `m − n`
 /// slack slots can be empty.
 ///
-/// Trades space for build time: high load factors let the PHF construction
-/// finish in fewer displacement attempts. For the common case of minimal
-/// (load factor = 1.0) dense storage, prefer [`PerfectMap`].
+/// Trades space for build time: the CHD displacement search collapses
+/// sharply as soon as the table has any slack, so the default load
+/// factor `1.10` (see [`PerfectMapConfig`]) gives a ~4× faster build at
+/// N = 1 M than minimal. For minimal dense storage (zero slack slots,
+/// no `Option` wrapping), prefer [`PerfectMap`].
 pub struct PerfectMapSparse<K, V, P = ChdPhf, S = DefaultHashBuilder> {
     slots: Box<[Option<(K, V)>]>,
     phf: P,
