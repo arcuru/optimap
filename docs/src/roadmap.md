@@ -505,11 +505,39 @@ results from the first run (carbon, default λ=5, SFC64-mixed input):
 | 1M   | 868.96 ms |  16.18 ms |   3.02 ms     |   3.06 ms     | 982 µs     | 845.71 ms (97.3 %) | 212 953 274 |    1064.77 | 1 322 244 |
 
 The displacement search is the cost at every size. Every scaffolding
-phase combined is ≤ 1 %. `max_displacement_used = 1.32 M` at 1M is
-the long-tail signal: a single near-saturation bucket can require
-millions of attempts at minimal load. Decision points the data
-unblocks are in "Parallel multi-seed CHD build" and the new PTHash
-note immediately below.
+phase combined is ≤ 1 %.
+
+The `max_displacement_used = 1.32 M` outlier on a 1 M-key minimal
+build is the textbook CHD-at-minimal-load tail. At m = n, the last
+size-1 bucket placed has only one free slot in m, so its expected
+displacement count under a fresh hash family is ≈ m. The follow-up
+sweep at N = 1 M (same input, varying m / n) confirms the math:
+
+| m / n | total     | total attempts | avg / bucket | max d   |
+| ----- | --------- | -------------- | ------------ | ------- |
+| 1.00  | 878.24 ms | 212 953 274    |     1064.77  | 1322244 |
+| 1.05  | 310.38 ms |  43 525 364    |      217.63  |  14 372 |
+| 1.10  | 216.61 ms |  21 412 082    |      107.06  |   5 105 |
+| 1.15  | 162.48 ms |  13 019 843    |       65.10  |   3 097 |
+| 1.23  | 137.80 ms |   7 365 363    |       36.83  |   1 041 |
+| 1.50  |  68.85 ms |   2 506 367    |       12.53  |     273 |
+
+Adding 5 % slack alone collapses the worst bucket by 92× and the
+total build by 2.8×; the literature default α = n/m ≈ 0.81 (m/n =
+1.23) takes max-d from 1.3 M to ~1 000. The pathology is the
+minimal-perfect constraint, not the implementation. `PerfectMap`
+(dense, m = n) eats this by design — it forces α = 1 to keep the
+slot array niche-free; `PerfectMapSparse` already exposes
+`load_factor` so callers who care about build cost can pay 23 %
+extra slots and get the slack. The data also confirms parallel
+multi-seed is the right next move for the dense path: at α = 1 the
+inner work is dominated by long-tail attempts that race well across
+seeds, not by uniformly-hard buckets. Re-run the sweep via
+`cargo run --release --example profile_chd -- <N> <m/n>` —
+the harness takes both arguments.
+
+Decision points unblocked: see "Parallel multi-seed CHD build" and
+the PTHash note immediately below.
 
 #### Parallel multi-seed CHD build
 

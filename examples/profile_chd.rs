@@ -68,13 +68,23 @@ fn unique_hashes(n: usize, seed: u64) -> Vec<u64> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let sizes = parse_sizes(args.get(1).map(String::as_str));
+    // Second arg: m / n load factor. 1.0 (default) is minimal-perfect; > 1
+    // gives the displacement search slack and slashes the last buckets'
+    // attempt counts (see roadmap "Build-path profiling" section).
+    let m_factor: f64 = args
+        .get(2)
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(1.0);
 
     for &n in &sizes {
+        let m = ((n as f64) * m_factor).ceil() as usize;
         println!();
-        println!("─── ChdPhf::build_with_profile  n = {n} ───");
+        println!(
+            "─── ChdPhf::build_with_profile  n = {n}  m = {m}  (m/n = {m_factor:.3}) ───"
+        );
         let hashes = unique_hashes(n, 0x9E37_79B9_7F4A_7C15);
-        let (phf, p) = ChdPhf::build_with_profile(&hashes, n)
-            .expect("minimal build at the default λ=5 should succeed");
+        let (phf, p) = ChdPhf::build_with_profile(&hashes, m)
+            .expect("build at the default λ=5 should succeed");
         debug_assert!(phf.bits_per_key().is_finite());
 
         // Sum of the per-retry phase Durations. `total` covers everything
