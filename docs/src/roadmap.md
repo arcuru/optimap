@@ -394,19 +394,27 @@ lookup *and* maintain the build/miss wins.
 #### Multi-level bucketed PHF — partial win, see Recently Completed
 
 The 2-level prototype (`PerfectMapMultilevelBucketed`,
-`PerfectSetMultilevelBucketed`) **shipped** at λ₀ = 8 + λ₁ = 4. Outcome
-vs the verification targets above:
+`PerfectSetMultilevelBucketed`) **shipped** at λ₀ = 8 + λ₁ = 4.
+Outcome vs the original verification targets (see the
+`PerfectMapMultilevelBucketed` Recently Completed entry for full
+numbers):
 
-1. ✅ Drives λ₀ from 4 to 8 — slot array halved (4n → 2n).
-2. ❌ Hit lookup at 1M does NOT reach `PerfectMapUnchecked` (200 Melem/s).
-   Map peaks at 46 Melem/s (vs single-level 40), set at 105 Melem/s
-   (vs single-level 53 — **2× win** but still behind CHD-MPH's set at 178).
-3. Partial: miss lookup at 1M is ~10–15 % slower than single-level
-   (the overflow-bitset bit-test adds a memory dependency); still
-   ~2.5× faster than CHD-MPH on miss.
-4. ✅ Construction at 1M is 28 % faster than single-level (less slot-
-   array allocation pressure); still ~16× faster than CHD-MPH.
-5. Not measured yet — needs a memory-footprint bench harness.
+1. **Drive λ from 4 toward K=16**: ✅ partial — λ₀ = 8 (slot array
+   halved, 4n → 2n). Going further (λ → 12) needs a richer
+   overflow scheme like BBHash/PTHash.
+2. **Hit lookup ≥ `PerfectMapUnchecked` (≈ 200 Melem/s at 1M)**: ❌
+   — map peaks at 46 Melem/s (single-level 40), set at 105 Melem/s
+   (single-level 53 — **2× win** but still behind CHD-PerfectSet's
+   178).
+3. **Miss path matches/beats hashbrown**: partial — single-level
+   already beat hashbrown (set 316 vs 329 Melem/s, ~tie); multi-
+   level loses 10–16 % vs single-level (the overflow-bitset bit-
+   test adds a memory dependency) so misses hashbrown by ~20 %.
+   Still ~2.5× faster than CHD-MPH on miss.
+4. **Build ≥ 5× faster than CHD-MPH**: ✅ ~16–40× faster (well
+   within margin).
+5. **Memory < CHD-MPH `Unchecked`**: not yet measured; needs a
+   memory-footprint bench harness.
 
 What's still open for a deeper multi-level run:
 
@@ -434,9 +442,14 @@ per-pair). Two paths if a bucketed `Unchecked` is wanted:
   runs the entry-data array hot anyway; the `Unchecked` win there is
   smaller than CHD-MPH's. Probably not worth the complexity.
 
-Hold both pending the multi-level result. If multi-level lands and λ
-gets near 12, tag collisions inside a 12-load bucket are slightly
-worse, and the contract-break gets harder to defend either way.
+Multi-level shipped at λ₀ = 8 (single-level stayed at λ = 4), so the
+average bucket load that the tag scan inspects is unchanged from the
+single-level case — tag-collision pressure didn't get worse. The
+"is `Unchecked` worth it for bucketed?" question stays open: the
+existing CHD-MPH `PerfectMapUnchecked` is still 4× faster on map hit
+than either bucketed variant at 1M, so a wider-tag bucketed
+`Unchecked` would have to substantially close that gap to justify
+the complexity.
 
 #### λ tunability benchmark sweep
 

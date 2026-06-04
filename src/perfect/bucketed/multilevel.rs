@@ -300,8 +300,11 @@ pub struct MultilevelBucketedConfig {
     /// Higher → fewer slots, more overflow into level 1.
     pub lambda_0: f64,
     /// Average level-1 bucket load. Must be in `(0, SLOTS_PER_BUCKET)`.
-    /// Level 1 sees only the overflow tail, so this is mostly cosmetic
-    /// at default level-0 settings.
+    /// Level 1 sees only the overflow tail — small at the default λ₀ = 8
+    /// (~0.6 % of keys), so this knob has little effect there. As λ₀
+    /// climbs toward `SLOTS_PER_BUCKET`, the overflow fraction grows
+    /// rapidly and λ₁ starts to shape level-1 memory + build reliability
+    /// directly.
     pub lambda_1: f64,
 }
 
@@ -629,6 +632,17 @@ where
 /// Read-only set backed by a multi-level bucketed perfect hash. Sibling
 /// to [`PerfectSetBucketed`](super::PerfectSetBucketed) with the same
 /// memory/speed trade-off as [`PerfectMapMultilevelBucketed`].
+///
+/// # Example
+///
+/// ```
+/// use optimap::PerfectSetMultilevelBucketed;
+///
+/// let s: PerfectSetMultilevelBucketed<&'static str> =
+///     PerfectSetMultilevelBucketed::from_iter_perfect(["alpha", "beta", "gamma"]).unwrap();
+/// assert!(s.contains("beta"));
+/// assert!(!s.contains("delta"));
+/// ```
 pub struct PerfectSetMultilevelBucketed<K, S = DefaultHashBuilder> {
     tags_l0: Box<[BucketTags]>,
     keys_l0: Box<[MaybeUninit<K>]>,
