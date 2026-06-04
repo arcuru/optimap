@@ -74,6 +74,15 @@ pub struct Placements {
 }
 
 impl BucketedPhf {
+    /// Reconstruct a [`BucketedPhf`] from its compact runtime form. Used by
+    /// the multi-level builder, which runs its own level-0 placement loop
+    /// and then stamps the resulting `(seed, num_buckets)` into a
+    /// [`BucketedPhf`] for shared lookup machinery.
+    #[inline]
+    pub(super) fn from_parts(seed: u64, num_buckets: u32) -> Self {
+        Self { seed, num_buckets }
+    }
+
     /// Build a bucketed PHF over `hashes`, with average bucket load
     /// `lambda`. `lambda` must satisfy `0 < lambda < SLOTS_PER_BUCKET as f64`.
     pub fn build(hashes: &[u64], lambda: f64) -> Result<(Self, Placements), BuildError> {

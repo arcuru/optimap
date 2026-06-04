@@ -11,8 +11,12 @@
 //! discussion and predicted comparison vs CHD-MPH.
 
 mod algorithm;
+mod multilevel;
 
 pub use algorithm::{BucketedPhf, DEFAULT_LAMBDA, MAX_SEED_RETRIES, Placements, SLOTS_PER_BUCKET};
+pub use multilevel::{
+    DEFAULT_LAMBDA_0, DEFAULT_LAMBDA_1, MultilevelBucketedPhf, MultilevelPlacements,
+};
 
 use crate::map::DefaultHashBuilder;
 use crate::perfect::phf::BuildError;
