@@ -49,7 +49,7 @@ pub use bucketed::{
     MultilevelPlacements, PerfectMapBucketed, PerfectMapMultilevelBucketed, PerfectSetBucketed,
     PerfectSetMultilevelBucketed,
 };
-pub use chd::ChdPhf;
+pub use chd::{ChdBuildProfile, ChdPhf};
 pub use phf::{BuildError, PerfectHashFunction};
 pub use set::PerfectSet;
 

@@ -19,6 +19,7 @@
 
 use super::phf::{BuildError, PerfectHashFunction};
 use super::util::{bucket_of, has_duplicate};
+use std::time::{Duration, Instant};
 
 /// Default average bucket size. CHD's theoretical lower bound is around
 /// λ ≈ 4 for minimal PHFs; λ = 5 is a common practical default — fewer
@@ -52,6 +53,58 @@ fn slot_of(h: u64, seed: u64, d: u32, m: u64) -> usize {
     (x % m) as usize
 }
 
+/// Per-phase timing + counter breakdown of one CHD construction.
+///
+/// Returned alongside the PHF from [`ChdPhf::build_with_profile`]. All
+/// `Duration` fields under the seed loop (`bucket_assign`, `counting_sort`,
+/// `order_sort`, `displacement_search`) are summed across every retry that
+/// ran, so the parts add up to roughly `total − duplicate_check`. The
+/// `displacement_attempts` counter is incremented once per inner-loop `d`
+/// trial, again summed across retries.
+///
+/// Overhead on the construction path is ~10 `Instant::now` calls per build
+/// plus one `u64 += 1` per displacement attempt — sub-microsecond against
+/// any non-trivial build, so this is always-on; the trait
+/// [`PerfectHashFunction::build`] simply discards the profile.
+#[derive(Debug, Default, Clone)]
+pub struct ChdBuildProfile {
+    /// Wall-clock time from entry to return of `build_with_profile`.
+    pub total: Duration,
+    /// Time spent in the up-front sort-based duplicate-hash check.
+    pub duplicate_check: Duration,
+    /// Time spent assigning each key index to its bucket (first pass over
+    /// the input hash slice each retry).
+    pub bucket_assign: Duration,
+    /// Time spent building the flat bucket-major key layout via counting
+    /// sort (prefix sums + scatter).
+    pub counting_sort: Duration,
+    /// Time spent ordering buckets by descending size (and computing
+    /// `max_bucket_size`).
+    pub order_sort: Duration,
+    /// Time spent inside the per-bucket displacement search — the loop
+    /// that tries `d = 0, 1, 2, …` until every key in a bucket lands on a
+    /// distinct empty slot.
+    pub displacement_search: Duration,
+    /// Number of independent seed families that actually ran (1 on the
+    /// usual happy path; up to `MAX_SEED_RETRIES` when CHD has to back off
+    /// after a stuck bucket).
+    pub seed_retries: u32,
+    /// Number of buckets `r = ceil(n / λ)` the algorithm partitioned the
+    /// key set into.
+    pub bucket_count: usize,
+    /// Largest bucket observed across the retries that ran. CHD's
+    /// per-bucket cost grows steeply in `sz`, so this dominates the worst
+    /// inner loops.
+    pub max_bucket_size: u32,
+    /// Total displacement values tried across every retry. Divide by
+    /// `bucket_count` to get an effective average; large values usually
+    /// indicate a near-saturated table.
+    pub displacement_attempts: u64,
+    /// Largest `d` actually accepted for a bucket. A useful sanity probe
+    /// against `MAX_DISPLACEMENT` and a hint at the hardest bucket.
+    pub max_displacement_used: u32,
+}
+
 /// CHD perfect hash function. Compact runtime form: one seed + one
 /// displacement table.
 #[derive(Debug, Clone)]
@@ -63,8 +116,14 @@ pub struct ChdPhf {
     m: u32,
 }
 
-impl PerfectHashFunction for ChdPhf {
-    fn build(hashes: &[u64], m: usize) -> Result<Self, BuildError> {
+impl ChdPhf {
+    /// Build the PHF and return a per-phase timing + counter breakdown
+    /// alongside it. The trait-level [`PerfectHashFunction::build`] is a
+    /// thin wrapper that calls this and drops the profile.
+    pub fn build_with_profile(
+        hashes: &[u64],
+        m: usize,
+    ) -> Result<(Self, ChdBuildProfile), BuildError> {
         let n = hashes.len();
         assert!(
             m >= n,
@@ -75,36 +134,58 @@ impl PerfectHashFunction for ChdPhf {
             "PerfectMap does not support tables larger than u32::MAX slots"
         );
 
+        let t_total = Instant::now();
+        let mut profile = ChdBuildProfile::default();
+
         if n == 0 {
-            return Ok(ChdPhf {
-                seed: 0,
-                displacements: Box::new([]),
-                m: m as u32,
-            });
+            profile.total = t_total.elapsed();
+            return Ok((
+                ChdPhf {
+                    seed: 0,
+                    displacements: Box::new([]),
+                    m: m as u32,
+                },
+                profile,
+            ));
         }
 
-        if has_duplicate(hashes) {
+        let t_dup = Instant::now();
+        let dup = has_duplicate(hashes);
+        profile.duplicate_check = t_dup.elapsed();
+        if dup {
             return Err(BuildError::DuplicateHash);
         }
 
         // r = ceil(n / λ), at least 1.
         let r = ((n + DEFAULT_LAMBDA - 1) / DEFAULT_LAMBDA).max(1);
+        profile.bucket_count = r;
 
         for seed_try in 0..MAX_SEED_RETRIES {
+            profile.seed_retries = seed_try + 1;
             let seed = SEED_BASE.wrapping_add(seed_try as u64);
-            match try_build_seed(hashes, m, r, seed) {
+            match try_build_seed(hashes, m, r, seed, &mut profile) {
                 Ok(disp) => {
-                    return Ok(ChdPhf {
-                        seed,
-                        displacements: disp.into_boxed_slice(),
-                        m: m as u32,
-                    });
+                    profile.total = t_total.elapsed();
+                    return Ok((
+                        ChdPhf {
+                            seed,
+                            displacements: disp.into_boxed_slice(),
+                            m: m as u32,
+                        },
+                        profile,
+                    ));
                 }
                 Err(BuildError::DuplicateHash) => return Err(BuildError::DuplicateHash),
                 Err(BuildError::Exhausted) => continue,
             }
         }
         Err(BuildError::Exhausted)
+    }
+}
+
+impl PerfectHashFunction for ChdPhf {
+    fn build(hashes: &[u64], m: usize) -> Result<Self, BuildError> {
+        Self::build_with_profile(hashes, m).map(|(phf, _)| phf)
     }
 
     #[inline]
@@ -148,12 +229,14 @@ fn try_build_seed(
     m: usize,
     r: usize,
     seed: u64,
+    profile: &mut ChdBuildProfile,
 ) -> Result<Vec<u32>, BuildError> {
     let n = hashes.len();
     let r_u64 = r as u64;
     let m_u64 = m as u64;
 
-    // Assign each key index to its bucket.
+    // Phase 1: assign each key index to its bucket.
+    let t_assign = Instant::now();
     let mut bucket_of_key: Vec<u32> = Vec::with_capacity(n);
     let mut bucket_sizes: Vec<u32> = vec![0u32; r];
     for &h in hashes {
@@ -161,9 +244,11 @@ fn try_build_seed(
         bucket_of_key.push(b as u32);
         bucket_sizes[b] += 1;
     }
+    profile.bucket_assign += t_assign.elapsed();
 
-    // Build a flat (bucket-major) list of key indices via counting-sort:
+    // Phase 2: flat (bucket-major) list of key indices via counting-sort.
     // bucket_start[b..b+1] delimits the slice of keys in bucket b.
+    let t_cs = Instant::now();
     let mut bucket_start: Vec<u32> = Vec::with_capacity(r + 1);
     let mut acc: u32 = 0;
     for &sz in &bucket_sizes {
@@ -179,15 +264,24 @@ fn try_build_seed(
         bucket_keys[pos] = i as u32;
         cursor[b as usize] += 1;
     }
+    profile.counting_sort += t_cs.elapsed();
 
-    // Process buckets in descending size order. Ties broken by bucket id
-    // for determinism.
+    // Phase 3: process buckets in descending size order. Ties broken by
+    // bucket id for determinism.
+    let t_order = Instant::now();
     let mut order: Vec<u32> = (0..r as u32).collect();
     order.sort_unstable_by(|&a, &b| bucket_sizes[b as usize].cmp(&bucket_sizes[a as usize]));
+    let max_bucket_this_retry = bucket_sizes.iter().copied().max().unwrap_or(0);
+    if max_bucket_this_retry > profile.max_bucket_size {
+        profile.max_bucket_size = max_bucket_this_retry;
+    }
+    profile.order_sort += t_order.elapsed();
 
-    // `occupied` is a dense bitset over `m` slots — cheap to set/test in the
-    // inner loop, and lets us reset between bucket attempts by re-zeroing
-    // the tentative slots we wrote.
+    // Phase 4: per-bucket displacement search. `occupied` is a dense
+    // bitset over `m` slots — cheap to set/test in the inner loop, and
+    // lets us reset between bucket attempts by re-zeroing the tentative
+    // slots we wrote.
+    let t_disp = Instant::now();
     let mut occupied: Vec<u64> = vec![0u64; m.div_ceil(64)];
     let mut tentative: Vec<u32> = Vec::with_capacity(16);
     let mut displacements: Vec<u32> = vec![0u32; r];
@@ -206,8 +300,10 @@ fn try_build_seed(
         let mut d: u32 = 0;
         loop {
             if d > MAX_DISPLACEMENT {
+                profile.displacement_search += t_disp.elapsed();
                 return Err(BuildError::Exhausted);
             }
+            profile.displacement_attempts += 1;
             tentative.clear();
             let mut ok = true;
             for &ki in keys_in_bucket {
@@ -229,11 +325,15 @@ fn try_build_seed(
                     bitset_set(&mut occupied, s as usize);
                 }
                 displacements[b_us] = d;
+                if d > profile.max_displacement_used {
+                    profile.max_displacement_used = d;
+                }
                 break;
             }
             d = d.wrapping_add(1);
         }
     }
+    profile.displacement_search += t_disp.elapsed();
 
     Ok(displacements)
 }
@@ -325,5 +425,40 @@ mod tests {
         let hashes = vec![1, 2, 3, 4, 1];
         let err = ChdPhf::build(&hashes, 5).unwrap_err();
         assert_eq!(err, BuildError::DuplicateHash);
+    }
+
+    #[test]
+    fn build_with_profile_populates_phases() {
+        let n = 10_000;
+        let hashes = make_hashes(n);
+        let (_phf, profile) =
+            ChdPhf::build_with_profile(&hashes, n).expect("minimal build at N=10K");
+
+        // Bucket count = ceil(n/λ) = ceil(10000/5) = 2000.
+        assert_eq!(profile.bucket_count, 2_000);
+        // At λ=5 with well-mixed input the first seed almost always works.
+        assert!(profile.seed_retries >= 1);
+        // Every phase under the seed loop ran at least once.
+        assert!(profile.bucket_assign > Duration::ZERO);
+        assert!(profile.counting_sort > Duration::ZERO);
+        assert!(profile.order_sort > Duration::ZERO);
+        assert!(profile.displacement_search > Duration::ZERO);
+        // total covers everything else; should dominate each component.
+        assert!(profile.total >= profile.displacement_search);
+        // At least r attempts (one per non-empty bucket); usually many more.
+        assert!(profile.displacement_attempts >= profile.bucket_count as u64);
+        // Largest bucket can't exceed n.
+        assert!(profile.max_bucket_size > 0 && profile.max_bucket_size as usize <= n);
+    }
+
+    #[test]
+    fn build_with_profile_duplicate_reported_with_phase_data() {
+        let hashes = vec![1u64, 2, 3, 4, 1];
+        let (_dup_check_ran, err) = match ChdPhf::build_with_profile(&hashes, 5) {
+            Ok(_) => panic!("duplicate must fail"),
+            Err(e) => (true, e),
+        };
+        assert_eq!(err, BuildError::DuplicateHash);
+        assert!(_dup_check_ran);
     }
 }

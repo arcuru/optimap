@@ -293,7 +293,7 @@ pub use optimap::VacantEntry;
 // ── Perfect-hash maps ──────────────────────────────────────────────────────
 
 pub use perfect::{
-    BucketedConfig, BucketedPhf, BuildError, ChdPhf, MultilevelBucketedConfig,
+    BucketedConfig, BucketedPhf, BuildError, ChdBuildProfile, ChdPhf, MultilevelBucketedConfig,
     MultilevelBucketedPhf, MultilevelPlacements, PerfectHashFunction, PerfectMap,
     PerfectMapBucketed, PerfectMapConfig, PerfectMapMultilevelBucketed, PerfectMapSparse,
     PerfectMapUnchecked, PerfectSet, PerfectSetBucketed, PerfectSetMultilevelBucketed,
