@@ -232,13 +232,19 @@ pub struct PerfectMapConfig {
     /// slack (faster build) at the cost of `(load_factor − 1) · n` empty
     /// slots in the slot array.
     ///
-    /// Default: `1.0` (degenerate — prefer [`PerfectMap`] at this point).
+    /// Default: `1.10`. The CHD displacement search collapses sharply as
+    /// soon as the table has any slack at all: at N = 1 M, going from
+    /// `load_factor = 1.0` to `1.10` shrinks total displacement attempts
+    /// ~10× and total build time ~4× (`bench/profile_chd.rs` sweep,
+    /// 2026-06-04), for 10 % extra empty slots in the slot array.
+    /// Diminishing returns past ~1.10 — see the roadmap "Build-path
+    /// profiling" entry for the full m/n curve.
     pub load_factor: f64,
 }
 
 impl Default for PerfectMapConfig {
     fn default() -> Self {
-        Self { load_factor: 1.0 }
+        Self { load_factor: 1.10 }
     }
 }
 
@@ -655,7 +661,7 @@ mod tests {
     fn sparse_minimal_still_works() {
         let n = 1000u64;
         let entries = entries_u64(n);
-        let config = PerfectMapConfig::default();
+        let config = PerfectMapConfig::default().with_load_factor(1.0);
         let m = PerfectMapSparse::<u64, u64>::from_entries_with(
             entries.clone(),
             DefaultHashBuilder::default(),
@@ -663,6 +669,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(m.capacity(), n as usize);
+        assert_eq!(m.len(), n as usize);
+        for (k, v) in &entries {
+            assert_eq!(m.get(k), Some(v));
+        }
+    }
+
+    #[test]
+    fn sparse_default_load_factor_is_non_minimal() {
+        let n = 1000u64;
+        let entries = entries_u64(n);
+        let config = PerfectMapConfig::default();
+        let m = PerfectMapSparse::<u64, u64>::from_entries_with(
+            entries.clone(),
+            DefaultHashBuilder::default(),
+            &config,
+        )
+        .unwrap();
+        // Default load_factor is 1.10 — capacity should be 10 % over n.
+        assert_eq!(m.capacity(), (n as f64 * 1.10).ceil() as usize);
         assert_eq!(m.len(), n as usize);
         for (k, v) in &entries {
             assert_eq!(m.get(k), Some(v));
