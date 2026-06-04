@@ -398,17 +398,76 @@ unchecked map carries zero key-storage overhead.
 
 ### Build performance
 
+The bench-2026-06-04 data made this the single highest-value area
+in the perfect-hash queue: a 1M-key `PerfectMap` build is ~30× the
+cost of a hashbrown `from_iter` of the same data (750 ms vs 25 ms).
+Three angles to attack it, roughly independent.
+
+#### Build-path profiling (precondition)
+
+**Difficulty**: Low \
+**Expected impact**: identifies the actual hot spot before any
+optimization effort.
+
+We know the build is slow but not where the time goes. `perf record`
+on `examples/perfect_build_profile.rs` (new) at N=1M, breaking out:
+hash computation, bucket counting-sort, displacement search per
+bucket-size class, slot-array fill. Likely culprit is the per-bucket
+displacement search at the tail of the order list (last few buckets
+need many attempts at minimal load), but worth confirming before
+sinking parallel-build effort into the wrong stage.
+
 #### Parallel multi-seed CHD build
 
 **Difficulty**: Low (add rayon dep behind a feature) \
-**Expected impact**: ~Nx speedup at large N where build cost dominates.
+**Expected impact**: 4–8× build speedup at large N — the bench
+data makes this the queue's highest-value perf item.
 
 CHD's outer loop tries seeds sequentially until one finds a valid
 displacement assignment. With rayon, try `min(threads, MAX_SEED_RETRIES)`
 seeds in parallel and keep the first success (or the smallest
-displacement table). Only matters at N ≳ 1M where the single-threaded
-build crosses single-digit seconds. Behind a `parallel-build` feature
-to keep the default dep set minimal.
+displacement table). Behind a `parallel-build` feature to keep the
+default dep set minimal. The 750 ms / 1M number measured 2026-06-04
+puts this in the "real user-visible latency" regime.
+
+#### Tunable `λ` (avg bucket size)
+
+**Difficulty**: Low \
+**Expected impact**: speed-vs-space tradeoff at build time.
+
+`DEFAULT_LAMBDA = 5` is hardcoded in `src/perfect/chd.rs`. Lower λ
+means smaller buckets and an easier displacement search (faster
+build), at the cost of a larger displacement table (more bits/key).
+Higher λ does the opposite. Expose as a build-time const or a
+`ChdConfig` so callers building large maps can trade space for build
+time. Likely interacts with the parallel-build work — pick after
+profiling shows which stage is actually bottlenecked.
+
+### Hot-path optimization
+
+#### Reduce key-compare cost in `PerfectMap`
+
+**Difficulty**: Medium \
+**Expected impact**: close some of the 1.4× → 2.45× gap between
+`PerfectMap` and `PerfectMapUnchecked` at large N.
+
+Bench-2026-06-04 at N=1M lookup_hit: `PerfectMapUnchecked` 204 M/s,
+`PerfectMap` 115 M/s. The 89 M/s delta is the stored-key compare
+cost — ~45 % of unchecked's throughput. Approaches worth trying:
+
+1. **Inline tag byte.** Store the top byte of the hash inline with
+   the slot. Compare it first (one byte, one branch). Skip the full
+   key compare ~99 % of the time. Costs 1 byte/slot; doesn't make
+   miss-safety probabilistic because the full compare still runs on
+   tag match.
+2. **Prefetch the key as part of `phf.index`.** The slot is computed
+   from the hash; we can issue a prefetch for `slots[slot]` before
+   the displacement-table read returns.
+3. **SIMD key compare for fixed-size `K`.** For `K: Copy + size_of ≤
+   16`, `vpcmpeqq` is one cycle. Probably a small win.
+
+Approach 1 is the most promising; it's essentially a tag-byte gate
+before the key compare, same idea hashbrown uses on the probe path.
 
 ### Benchmarks
 
@@ -450,6 +509,46 @@ Three things this run pinned down:
 3. **Build cost is real.** 750 ms to build a 1M-key `PerfectMap` vs
    ~25 ms for hashbrown — a 30× gap. Validates "parallel multi-seed
    CHD build" as the highest-value perf item in the queue.
+
+#### Pin the hashbrown crossover
+
+**Difficulty**: Low (mechanical bench extension) \
+**Expected impact**: real user-facing guidance — "use `PerfectMap`
+when N ≥ X".
+
+The current bench has a hole between 100K and 1M where the hit-
+lookup winner switches. Add intermediate sample points (200K, 300K,
+500K, 700K, 1.5M, 2M, 5M) so the crossover N is pinned to ~100K
+resolution, and the user-doc note can say "above this size,
+`PerfectMap` wins hot reads by R" rather than "somewhere in
+(100K, 1M)."
+
+#### Larger key types
+
+**Difficulty**: Low \
+**Expected impact**: data on where `PerfectMap`'s key-compare cost
+becomes dominant.
+
+u64-only is a best case for hashbrown's probe loop (cheap to compare,
+fits in a register). With `K = String` / `[u8; 32]` / a moderate
+struct, every probe-step compare gets expensive — and `PerfectMap`'s
+one-key-compare-guaranteed shape should win by more. Conversely,
+`PerfectMapUnchecked` becomes more compelling because the zero-key-
+compare saves grow with `sizeof(K)`. Extend `benches/perfect.rs` to
+add at least one `K = String` row at the same N grid.
+
+#### Memory footprint comparison
+
+**Difficulty**: Low \
+**Expected impact**: pins the bits/key cost alongside the
+time/throughput numbers — the whole motivation for PHF in the first
+place was compact storage.
+
+Measure live bytes (slot array + PHF data) per entry for each variant
++ each baseline at the same N grid. Snapshot via the allocator-stress
+harness (`tests/alloc_stress.rs`) reused as a bench, or count
+explicitly via `phf_bits_per_key` + slot-array `size_of`. Currently
+we benchmark time but never report space, which is half the story.
 
 ### Speculative (no clear scope yet)
 
