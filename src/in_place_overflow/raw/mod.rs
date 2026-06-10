@@ -1285,7 +1285,7 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raw::tag_strategy::{Byte2_254, Byte7_128};
+    use crate::raw::tag_strategy::Byte7_128;
     use std::hash::RandomState;
 
     // Generic test helpers — parameterized by TombstoneTag
@@ -1371,28 +1371,6 @@ mod tests {
     #[test]
     fn b7_254_iter() {
         test_iter::<Byte7_254>();
-    }
-
-    // Byte2_254 (pre-fix default; correlated with AND mask above 2^16 groups)
-    #[test]
-    fn b2_254_basic() {
-        test_basic::<Byte2_254>();
-    }
-    #[test]
-    fn b2_254_grow() {
-        test_grow::<Byte2_254>();
-    }
-    #[test]
-    fn b2_254_clone() {
-        test_clone::<Byte2_254>();
-    }
-    #[test]
-    fn b2_254_remove_cycle() {
-        test_remove_cycle::<Byte2_254>();
-    }
-    #[test]
-    fn b2_254_iter() {
-        test_iter::<Byte2_254>();
     }
 
     // Byte7_128 (consolidated alternative — TopTag128 + HighByte128 + TopByte128)

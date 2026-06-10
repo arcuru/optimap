@@ -2,8 +2,8 @@
 //!
 //! This is a type alias for `GenericMap` with the IPO64 raw table.
 //! The default tag strategy is `Byte0_254` (254 distinct values from
-//! bits 0-7 — safe for shift-based group indexing at any size, one shift
-//! cheaper than `Byte2_254`). Alternative strategies are available as
+//! bits 0-7 — safe for shift-based group indexing at any size, and the
+//! cheapest tombstone tag). Alternative strategies are available as
 //! matrix types in `matrix_types`.
 
 use super::raw::RawTable;

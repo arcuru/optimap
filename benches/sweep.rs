@@ -560,7 +560,6 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, Byte7_255Ch_EmbAnd64Map<u64,u64>, "Byte7_255Ch_EmbAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_255Ch_EmbP2And64Map<u64,u64>, "Byte7_255Ch_EmbP2And64", Cluster::Overflow, Width::W64 $(, $arg)*);
         // ── Tombstone variants ──────────────────────────────────────────────
-        for_each_design!(@run $config, $callback, Byte2_254_TombMap<u64,u64>, "Byte2_254_Tomb", Cluster::Tomb, Width::W16 $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_128_TombMap<u64,u64>, "Tomb", Cluster::Tomb, Width::W16 $(, $arg)*);
         for_each_design!(@run $config, $callback, Byte7_254_Tomb64Map<u64,u64>, "Byte7_254_Tomb64", Cluster::Tomb, Width::W64 $(, $arg)*);
         // ── SoA variants ────────────────────────────────────────────────────

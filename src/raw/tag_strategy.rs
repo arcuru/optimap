@@ -225,7 +225,7 @@ pub trait TombstoneTag: 'static + Copy {
 /// Tag from byte 0 (bits 0-7), 254 distinct values (range [2, 255]).
 ///
 /// Uses the low byte of the hash, mapping values 0→2 and 1→3 to avoid
-/// EMPTY (0x00) and TOMBSTONE (0x01). One shift cheaper than `Byte2_254`.
+/// EMPTY (0x00) and TOMBSTONE (0x01). The cheapest tombstone tag — no shift.
 ///
 /// **Safety constraints:**
 /// - With shift indexing (IPO64): safe at any size — bits 0-7 are
@@ -240,31 +240,6 @@ impl TombstoneTag for Byte0_254 {
     #[inline(always)]
     fn reduced_hash(h: u64) -> u8 {
         let b = h as u8;
-        if b < 2 { b + 2 } else { b }
-    }
-}
-
-// ── Byte2_254 ─────────────────────────────────────────────────────────────
-
-/// Tag from byte 2 (bits 16-23), 254 distinct values (range [2, 255]).
-///
-/// Uses bits 16-23 of the hash, mapping values 0→2 and 1→3 to avoid
-/// EMPTY (0x00) and TOMBSTONE (0x01). Kept as a labelled benchmark
-/// variant for the IPO collision A/B test (`Byte2_254_TombMap`).
-///
-/// **Safety constraints:**
-/// - With shift indexing (IPO64): safe at any size — bits 16-23 are
-///   never reached by `h >> shift`. Prefer `Byte0_254` (one shift cheaper).
-/// - With AND indexing (IPO): safe only while `num_groups ≤ 2¹⁶`. Above
-///   that, the AND mask reaches into bits 16+, correlating tag bits with
-///   group-index bits and degrading SIMD discrimination.
-#[derive(Clone, Copy)]
-pub struct Byte2_254;
-
-impl TombstoneTag for Byte2_254 {
-    #[inline(always)]
-    fn reduced_hash(h: u64) -> u8 {
-        let b = ((h >> 16) & 0xFF) as u8;
         if b < 2 { b + 2 } else { b }
     }
 }

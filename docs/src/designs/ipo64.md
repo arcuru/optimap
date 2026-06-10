@@ -12,7 +12,7 @@ Buckets:  [slot0 slot1 ... slot63] × num_groups
 ## Key Properties
 
 - **Group size**: 64 slots (one full cache line of metadata)
-- **Hash values**: 254 (default, `Byte2_254` — bits 16-23, safe with shift indexing). An alternate `Byte7_254` strategy is registered as `Byte7_254_Tomb64Map` but is intentionally collision-prone on IPO64 (byte 7 is the group-index source under shift indexing) — exposed only for collision-claim verification.
+- **Hash values**: 254 (default, `Byte0_254` — bits 0-7, safe with shift indexing). An alternate `Byte7_254` strategy is registered as `Byte7_254_Tomb64Map` but is intentionally collision-prone on IPO64 (byte 7 is the group-index source under shift indexing) — exposed only for collision-claim verification.
 - **Tag strategy**: Parameterized via `TombstoneTag` trait (same as IPO16)
 - **Deletion**: Tombstone-based
 - **SIMD**: AVX-512 (single 64-byte load), AVX2 fallback, SSE2 fallback (4×16-byte loads)
@@ -24,7 +24,7 @@ Like IPO16, IPO64's `RawTable` is parameterized by `TombstoneTag`:
 
 | Type | Tag | Strategy | Values |
 | --- | --- | --- | --- |
-| `IPO64` (default) | `Byte2_254` | bits 16-23, 0/1→2/3 remap | 254 |
+| `IPO64` (default) | `Byte0_254` | bits 0-7, 0/1→2/3 remap | 254 |
 | `Byte7_254_Tomb64Map` | `Byte7_254` | bits 56-63, 0/1→2/3 remap (intentionally bad on IPO64) | 254 |
 
 `Byte7_254_Tomb64Map` is correctness-tested via the `proptest_hashmap` suite; it is not benchmarked as a serious contender.

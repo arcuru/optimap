@@ -110,7 +110,6 @@ macro_rules! matrix_maps {
         $helper::<Byte7_128_8bitAnd64Map<u64, u64>>($group, "Byte7_128_8bitAnd64", $($args),*);
         $helper::<Byte7_255_8bitAnd64Map<u64, u64>>($group, "Byte7_255_8bitAnd64", $($args),*);
         // Tombstone variants
-        $helper::<Byte2_254_TombMap<u64, u64>>($group, "Byte2_254_Tomb", $($args),*);
         $helper::<Byte7_128_TombMap<u64, u64>>($group, "Byte7_128_Tomb", $($args),*);
         // IPO64 tombstone variants
         $helper::<Byte7_254_Tomb64Map<u64, u64>>($group, "Byte7_254_Tomb64", $($args),*);

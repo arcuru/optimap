@@ -101,10 +101,10 @@ Realistic mixed scenarios: equilibrium churn, read-heavy (95/5), write-heavy (50
 
 Regression guard for the IPO/IPO64 tag/group-index collision fix (commit 8992137 + IPO64 default flip in 7815e8e). Two A/B comparisons:
 
-- **IPO** (16-slot, AND-indexed): default `Byte7_254` vs the pre-fix `Byte2_254` (collides above 2¹⁶ groups, ~735K entries) and the always-collides `Byte0_254` (full byte-0/AND-mask overlap at any size). Sized at 100K (below threshold), 1M (at threshold), 4M (clearly above).
+- **IPO** (16-slot, AND-indexed): default `Byte7_254` vs the always-collides `Byte0_254` (full byte-0/AND-mask overlap at any size). Sized at 100K, 1M, and 4M to show the absolute gap widening with table size.
 - **IPO64** (64-slot, shift-indexed): default `Byte0_254` vs the collision-prone `Byte7_254` (top byte = group index → immediate collision).
 
-Expected signal at 4M for IPO: `Byte2_254` ≈ 2x slower on miss; `Byte0_254` ≈ 20x slower. Validates that the tag bytes stay disjoint from the group-index bits.
+Expected signal at 4M for IPO: `Byte0_254` ≈ 20x slower on miss. Validates that the tag bytes stay disjoint from the group-index bits.
 
 ### dispatch.rs
 

@@ -14,8 +14,6 @@
 //!
 //! - `IPO`              — default, uses `Byte7_254` (bits 56-63). Safe at any
 //!   size: the AND mask never reaches the top byte for realistic capacities.
-//! - `IPO_Byte2_254`    — pre-fix default. Uses bits 16-23. Collides once
-//!   `num_groups > 2^16` (≈ 1.05M slots / ~735K entries at 70% load).
 //! - `IPO_Byte0_254`    — maximally collision-prone. Uses bits 0-7. Collides
 //!   at any non-trivial size (the AND mask covers byte 0 once num_groups ≥ 2^1).
 //!
@@ -31,19 +29,19 @@
 //!
 //! ## Sizes
 //!
-//! - `100K`  — below IPO collision threshold; both IPO variants should match.
-//!   IPO64 collision is already active.
-//! - `1M`    — IPO `Byte2_254` enters partial collision (num_groups ≈ 2^17,
-//!   1 bit of overlap). `Byte0_254` is fully collided.
-//! - `4M`    — IPO `Byte2_254` collision is significant (num_groups ≈ 2^19,
-//!   3 bits of overlap). The default `Byte7_254` should clearly win.
+//! - `100K`  — `Byte0_254` is already fully collided (AND mask covers byte 0
+//!   at any non-trivial size); IPO64 collision is also active.
+//! - `1M`    — the absolute gap between the always-collided `Byte0_254` and
+//!   the safe default `Byte7_254` widens with table size.
+//! - `4M`    — `Byte0_254` collision is severe; the default `Byte7_254`
+//!   should clearly win.
 
 mod bench_helpers;
 
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::matrix_types::{Byte0_254_TombMap, Byte2_254_TombMap, Byte7_254_Tomb64Map};
+use optimap::matrix_types::{Byte0_254_TombMap, Byte7_254_Tomb64Map};
 use optimap::{IPO64, InPlaceOverflow};
 
 // ── Sizes ──────────────────────────────────────────────────────────────────
@@ -106,7 +104,6 @@ fn ipo64_sizes() -> Vec<TestSize> {
 macro_rules! ipo_variants {
     ($helper:ident, $group:expr, $($args:expr),*) => {
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO_Byte7_254_default", $($args),*);
-        $helper::<Byte2_254_TombMap<u64, u64>>($group, "IPO_Byte2_254_prefix", $($args),*);
         $helper::<Byte0_254_TombMap<u64, u64>>($group, "IPO_Byte0_254_always", $($args),*);
     };
 }

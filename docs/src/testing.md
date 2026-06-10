@@ -83,7 +83,7 @@ PROPTEST_CASES=5000 cargo test --test proptest_hashmap
 | `fuzz_hashmap_ufm` | UnorderedFlatMap vs HashMap | `u16` |
 | `fuzz_hashmap_splitsies` | Splitsies vs HashMap | `u16` |
 | `fuzz_hashmap_ipo` | InPlaceOverflow vs HashMap | `u16` |
-| `fuzz_hashmap_ipo64` | IPO64 (`Byte2_254`, default) vs HashMap | `u16` |
+| `fuzz_hashmap_ipo64` | IPO64 (`Byte0_254`, default) vs HashMap | `u16` |
 | `fuzz_hashmap_ipo64_byte7` | IPO64 (`Byte7_254`, alternate) vs HashMap | `u16` |
 | `fuzz_hashmap_gaps` | Gaps vs HashMap | `u16` |
 | `fuzz_btree` | FlatBTree vs BTreeMap | `u8` |

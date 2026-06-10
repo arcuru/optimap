@@ -116,7 +116,7 @@ Designs are not hand-coded — they're composed from traits:
 
 | Axis | Trait | Implementations |
 | --- | --- | --- |
-| Tag extraction | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte2_254`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` |
+| Tag extraction | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` |
 | Overflow storage | `OverflowStrategy` | `ByteSeparate` (8-channel), `BitSeparate` (1-bit), `UfmEmbedded` (byte 15) |
 | Group indexing | `GroupLayout::AND_INDEX` | Shift-based (`h >> shift`, default) or AND-based (`h & mask`) |
 | Group width | `GroupOps` | 15-slot, 16-slot, 32-slot, 64-slot |

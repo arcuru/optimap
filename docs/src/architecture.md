@@ -91,7 +91,7 @@ Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose
 | `Byte0_255` (0-7) | Splitsies (baseline) | `Byte0_1bit` | — |
 | `Byte0_128` (0-7) | `Byte0_128_8bit` | `Byte0_128_1bit` | — |
 | `Byte1_255` (8-15) | `Byte1_8bit` | `Byte1_1bit` | — |
-| `Byte2_254` (16-23) | — | — | IPO64 (default) / `Byte2_254_TombMap` |
+| `Byte0_254` (0-7) | — | — | IPO64 (default) / `Byte0_254_TombMap` |
 | `Byte7_128` (56-63) (AND) | — | `Byte7_128_1bitAnd` | `Byte7_128_TombMap` |
 | `Byte7_255` (56-63) (AND) | — | `Byte7_255_1bitAnd` | — |
 | `Byte7_254` (56-63) (AND) | — | — | IPO (default) / `Byte7_254_Tomb64Map` (collision-prone on IPO64) |
@@ -104,9 +104,9 @@ AND-indexed variants use `Layout16And` which sets `AND_INDEX = true`. See the "G
 
 Hash tables map a hash value to a group index. Two strategies:
 
-**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits. Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`, `Byte2_254`) since they're decorrelated. Costs 2 instructions (variable shift + AND).
+**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits. Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`) since they're decorrelated. Costs 2 instructions (variable shift + AND).
 
-**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction (just AND), but tags must come from top hash bits (`Byte7_*`) to avoid correlation. Note that `Byte2_254` (bits 16-23) is _not_ safe under AND indexing once `num_groups > 2¹⁶` — at that point the mask reaches into bits 16+ and tag bits become correlated with the group index. IPO uses `Byte7_254` (bits 56-63) as its default to escape this trap; IPO64 keeps `Byte2_254` (shift indexing → top bits are the group index, so the middle of the hash is the right safe region).
+**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction (just AND), but tags must come from top hash bits (`Byte7_*`) to avoid correlation. Low-byte tags (`Byte0_*`, bits 0-7) are _not_ safe under AND indexing — the mask reaches into byte 0 at any non-trivial size, correlating tag bits with the group index. IPO uses `Byte7_254` (bits 56-63) as its default to escape this; IPO64 (shift-indexed → top bits are the group index) uses `Byte0_254` (bits 0-7), where the bottom of the hash is the safe region.
 
 Additionally, 8-bit overflow channels use `1 << (h & 7)` which also uses low bits — every key in the same group would get the same channel, making 8-channel overflow useless. **AND indexing is only safe with 1-bit overflow (BitSeparate) or tombstone designs (no overflow channels).**
 
@@ -173,7 +173,7 @@ The metadata byte is one of three encodings depending on which `TagStrategy` the
   EMPTY:     0xFF            ← top bit = 1
   tag extraction:  shr h, 57; and reg, 0x7F            → 2 instructions
 
-254 values (TombWide IPO, IPO64 — Byte7_254, Byte2_254):
+254 values (TombWide IPO, IPO64 — Byte7_254, Byte0_254):
   FILLED:    0x01..0xFE      ← 254 distinct tags
   EMPTY:     0x00
   TOMBSTONE: 0xFF
