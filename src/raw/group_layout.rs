@@ -334,6 +334,16 @@ use super::tag_strategy::LowTag255;
 /// Splitsies: 16-slot, separate byte overflow, low-byte tag.
 pub type SplitsiesLayout = Layout16<LowTag255, ByteSeparate>;
 
+/// `LowTag255_8bit`: the byte-0, 255-value, 8-bit-channel layout — structurally
+/// identical to [`SplitsiesLayout`], named here so the tag↔channel
+/// decorrelation A/B reads cleanly. It is the **clean control** for that A/B:
+/// against `LowTag255ChSafe_8bit` it holds the value count (255) and the 8-bit
+/// channel constant, differing only in tag location (bits 0-7, correlated with
+/// the channel, vs `LowTag255ChSafe`'s bits 8-15). The matrix already benches
+/// both (Splitsies + `LowTag255ChSafe_8bit`), so no separate matrix entry is
+/// added — that would be a duplicate `RawTableApi` impl on the same type.
+pub type LowTag255_8bit = SplitsiesLayout;
+
 // UfmLayout / GapsLayout / Ufm{32,64}Layout / Gaps{32,64}Layout are now
 // type aliases over the generic embedded-overflow layouts defined below
 // (after the EmbeddedOverflow strategy). Placed after the generics to avoid

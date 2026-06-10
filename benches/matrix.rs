@@ -57,7 +57,12 @@ macro_rules! matrix_maps {
         $helper::<HighTag255ChSafe_EmbAndMap<u64, u64>>($group, "HighTag255ChSafe_EmbAnd", $($args),*);
         $helper::<HighTag255ChSafe_EmbP2AndMap<u64, u64>>($group, "HighTag255ChSafe_EmbP2And", $($args),*);
         $helper::<InPlaceOverflow<u64, u64>>($group, "Tombstone", $($args),*);
-        // 8-bit overflow variants
+        // 8-bit overflow variants.
+        // tag↔channel decorrelation A/B (255 values + 8-bit channel held
+        // constant, only tag location differs): the byte-0 control is the
+        // `Splitsies` baseline above (= `LowTag255_8bit`, tag bits 0-7,
+        // correlated with the channel) vs `LowTag255ChSafe_8bit` (tag bits 8-15,
+        // decorrelated). Run `cargo bench --bench matrix` and diff the two.
         $helper::<LowTag255ChSafe_8bitMap<u64, u64>>($group, "LowTag255ChSafe_8bit", $($args),*);
         $helper::<LowTag128_8bitMap<u64, u64>>($group, "LowTag128_8bit", $($args),*);
         // 1-bit overflow variants
