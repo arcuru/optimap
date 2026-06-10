@@ -9,9 +9,15 @@ license = "AGPL-3.0-or-later"
 foldhash = "0.1"
 ahash = { version = "0.8", optional = true }
 hashbrown = "0.15"
+rayon = { version = "1", optional = true }
 
 [features]
 default = ["reduced-hash-asm"]
+# Build CHD perfect hash functions with parallel seed exploration (rayon).
+# At N ≥ 1M the displacement search dominates (~97 % of build time); running
+# independent seed attempts concurrently delivers wall-clock speedup above
+# 1/num_threads thanks to long-tail variance in displacement counts.
+parallel-build = ["dep:rayon"]
 # reduced_hash implementation selection (mutually exclusive, last wins):
 # - reduced-hash-asm (default): inline asm `cmp 0xFF; adc 0` — 2 instructions, 255 values (x86_64 only, falls back to pure Rust)
 # - reduced-hash-128: `low | 1` — 1 instruction, 128 values (higher collision rate)

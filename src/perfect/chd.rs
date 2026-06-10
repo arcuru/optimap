@@ -151,32 +151,90 @@ impl ChdPhf {
 
         let t_dup = Instant::now();
         let dup = has_duplicate(hashes);
-        profile.duplicate_check = t_dup.elapsed();
+        let dup_elapsed = t_dup.elapsed();
         if dup {
             return Err(BuildError::DuplicateHash);
         }
 
         // r = ceil(n / λ), at least 1.
         let r = ((n + DEFAULT_LAMBDA - 1) / DEFAULT_LAMBDA).max(1);
-        profile.bucket_count = r;
 
-        for seed_try in 0..MAX_SEED_RETRIES {
-            profile.seed_retries = seed_try + 1;
-            let seed = SEED_BASE.wrapping_add(seed_try as u64);
-            match try_build_seed(hashes, m, r, seed, &mut profile) {
-                Ok(disp) => {
-                    profile.total = t_total.elapsed();
-                    return Ok((
-                        ChdPhf {
-                            seed,
-                            displacements: disp.into_boxed_slice(),
-                            m: m as u32,
-                        },
-                        profile,
-                    ));
+        #[cfg(feature = "parallel-build")]
+        {
+            use rayon::prelude::*;
+            use std::sync::atomic::{AtomicBool, Ordering};
+
+            let cancelled = AtomicBool::new(false);
+            let duplicate = AtomicBool::new(false);
+
+            let result: Option<(ChdPhf, ChdBuildProfile)> =
+                (0..MAX_SEED_RETRIES)
+                    .into_par_iter()
+                    .find_map_any(|seed_try| {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                        let seed = SEED_BASE.wrapping_add(seed_try as u64);
+                        let mut local_profile = ChdBuildProfile {
+                            duplicate_check: dup_elapsed,
+                            bucket_count: r,
+                            ..Default::default()
+                        };
+
+                        match try_build_seed(hashes, m, r, seed, &mut local_profile, Some(&cancelled))
+                        {
+                            Ok(disp) => {
+                                cancelled.store(true, Ordering::Release);
+                                local_profile.seed_retries = seed_try + 1;
+                                local_profile.total = t_total.elapsed();
+                                Some((
+                                    ChdPhf {
+                                        seed,
+                                        displacements: disp.into_boxed_slice(),
+                                        m: m as u32,
+                                    },
+                                    local_profile,
+                                ))
+                            }
+                            Err(BuildError::DuplicateHash) => {
+                                duplicate.store(true, Ordering::Release);
+                                cancelled.store(true, Ordering::Release);
+                                None
+                            }
+                            Err(BuildError::Exhausted) => None,
+                        }
+                    });
+
+            if duplicate.load(Ordering::Acquire) {
+                return Err(BuildError::DuplicateHash);
+            }
+            if let Some((phf, prof)) = result {
+                return Ok((phf, prof));
+            }
+        }
+
+        #[cfg(not(feature = "parallel-build"))]
+        {
+            profile.duplicate_check = dup_elapsed;
+            profile.bucket_count = r;
+            for seed_try in 0..MAX_SEED_RETRIES {
+                profile.seed_retries = seed_try + 1;
+                let seed = SEED_BASE.wrapping_add(seed_try as u64);
+                match try_build_seed(hashes, m, r, seed, &mut profile, None) {
+                    Ok(disp) => {
+                        profile.total = t_total.elapsed();
+                        return Ok((
+                            ChdPhf {
+                                seed,
+                                displacements: disp.into_boxed_slice(),
+                                m: m as u32,
+                            },
+                            profile,
+                        ));
+                    }
+                    Err(BuildError::DuplicateHash) => return Err(BuildError::DuplicateHash),
+                    Err(BuildError::Exhausted) => continue,
                 }
-                Err(BuildError::DuplicateHash) => return Err(BuildError::DuplicateHash),
-                Err(BuildError::Exhausted) => continue,
             }
         }
         Err(BuildError::Exhausted)
@@ -230,6 +288,7 @@ fn try_build_seed(
     r: usize,
     seed: u64,
     profile: &mut ChdBuildProfile,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<u32>, BuildError> {
     let n = hashes.len();
     let r_u64 = r as u64;
@@ -300,6 +359,16 @@ fn try_build_seed(
         let mut d: u32 = 0;
         loop {
             if d > MAX_DISPLACEMENT {
+                profile.displacement_search += t_disp.elapsed();
+                return Err(BuildError::Exhausted);
+            }
+            // Cooperative cancellation: check whether another seed attempt
+            // already succeeded. Sampled every 64 `d` ticks to keep the
+            // check overhead negligible (one relaxed atomic load ≈ 0).
+            if d & 63 == 0
+                && let Some(cancelled) = cancelled
+                && cancelled.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 profile.displacement_search += t_disp.elapsed();
                 return Err(BuildError::Exhausted);
             }
