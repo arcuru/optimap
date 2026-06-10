@@ -45,12 +45,12 @@
 //! | `HighTag255` | TagStrategy | 56-63 | 255 | 0-2 |
 //! | `HighTag128` | TagStrategy + TombstoneTag | 56-63, `\|0x80` | 128 | 0-2 |
 //! | `HighTomb` | TombstoneTag | 56-63 | 254 | — |
-//! | `HighTag255ChSafe` | TagStrategy | 56-63 | 255 | 45-47 |
-//! | `HighTag128ChSafe` | TagStrategy | 56-63, `\|0x80` | 128 | 45-47 |
+//! | `HighTag255ChSafe` | TagStrategy | 56-63 | 255 | 48-50 |
+//! | `HighTag128ChSafe` | TagStrategy | 56-63, `\|0x80` | 128 | 48-50 |
 //! | `LowTag255Pure` | TagStrategy | 0-7 | 255 | 0-2 |
 //! | `LowTag255ChSafePure` | TagStrategy | 8-15 | 255 | 0-2 |
 //! | `HighTag255Pure` | TagStrategy | 56-63 | 255 | 0-2 |
-//! | `HighTag255ChSafePure` | TagStrategy | 56-63 | 255 | 45-47 |
+//! | `HighTag255ChSafePure` | TagStrategy | 56-63 | 255 | 48-50 |
 //!
 //! The non-ChSafe low strategies stay channel-correlated **by design** — they
 //! are the cheap arm of an open A/B (does tag↔channel correlation cost
@@ -196,7 +196,7 @@ impl TagStrategy for HighTag255 {
 
 // ── High strategies with shifted channels (AND index + 8-bit overflow) ────
 
-/// Tag from byte 7 | 0x80, channel from `1 << ((h >> 45) & 7)`.
+/// Tag from byte 7 | 0x80, channel from `1 << ((h >> 48) & 7)`.
 ///
 /// Both tag and channel use upper hash bits — fully decorrelated from
 /// AND-based group indexing (low bits). This is the first strategy that
@@ -204,7 +204,7 @@ impl TagStrategy for HighTag255 {
 /// strategies use `1 << (h & 7)` for channels, which correlates with the
 /// AND group index.
 ///
-/// Channel uses bits 45-47, tag uses bits 56-62 with bit 7 forced.
+/// Channel uses bits 48-50, tag uses bits 56-62 with bit 7 forced.
 #[derive(Clone, Copy)]
 pub struct HighTag128ChSafe;
 
@@ -216,14 +216,14 @@ impl TagStrategy for HighTag128ChSafe {
 
     #[inline(always)]
     fn overflow_channel(h: u64) -> u8 {
-        1u8 << ((h >> 45) & 7)
+        1u8 << ((h >> 48) & 7)
     }
 }
 
-/// Tag from byte 7 (bits 56-63, 255 values), channel from bits 45-47.
+/// Tag from byte 7 (bits 56-63, 255 values), channel from bits 48-50.
 ///
 /// Maximum tag discrimination + shifted channel. Both decorrelated from
-/// AND group index. Channel uses bits 45-47 to avoid overlap with the
+/// AND group index. Channel uses bits 48-50 to avoid overlap with the
 /// tag bits (56-63).
 #[derive(Clone, Copy)]
 pub struct HighTag255ChSafe;
@@ -236,7 +236,7 @@ impl TagStrategy for HighTag255ChSafe {
 
     #[inline(always)]
     fn overflow_channel(h: u64) -> u8 {
-        1u8 << ((h >> 45) & 7)
+        1u8 << ((h >> 48) & 7)
     }
 }
 
@@ -405,6 +405,6 @@ impl TagStrategy for HighTag255ChSafePure {
     }
     #[inline(always)]
     fn overflow_channel(h: u64) -> u8 {
-        1u8 << ((h >> 45) & 7)
+        1u8 << ((h >> 48) & 7)
     }
 }
