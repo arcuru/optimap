@@ -10,8 +10,8 @@ A Rust library (`optimap`) providing multiple SIMD-accelerated hash map implemen
 | --- | --- | --- |
 | **UnorderedFlatMap** | 15-slot groups, overflow byte | High-load miss, churn |
 | **Splitsies** | 16-slot, separate overflow array | Balanced (miss + insert), tombstone-free |
-| **InPlaceOverflow** | 16-slot Swiss-table, 254-value tag (`Byte7_254`) | Lookup hit, insert; miss at large N (wider tag) |
-| **Byte7_128_TombMap** (`MapType::Tomb`) | 16-slot Swiss-table, 128-value tag (hashbrown-equivalent) | `Policy::auto` default; wins hit + remove at most sizes (sweep-2026-05-13) |
+| **InPlaceOverflow** | 16-slot Swiss-table, 254-value tag (`HighTomb`) | Lookup hit, insert; miss at large N (wider tag) |
+| **HighTag128_TombMap** (`MapType::Tomb`) | 16-slot Swiss-table, 128-value tag (hashbrown-equivalent) | `Policy::auto` default; wins hit + remove at most sizes (sweep-2026-05-13) |
 | **IPO64** | 64-slot cache-line, AVX-512 | Specialty: high-load resilience |
 | **Gaps** | 15-slot + power-of-2 buckets | Iteration |
 | **SoaMap** | Separate key/value arrays (SoA) | Large-value workloads |
@@ -43,7 +43,7 @@ Hash map designs split into two families based on deletion strategy:
 - Deletion clears the slot and adjusts max_load — no tombstones
 - Generic `RawTable<K,V,L: GroupLayout>` in `src/raw/overflow_table.rs`
 
-**Tombstone family**: InPlaceOverflow (IPO), IPO64, `Byte0_254_TombMap`, `Byte7_128_TombMap`, `Byte7_254_Tomb64Map`
+**Tombstone family**: InPlaceOverflow (IPO), IPO64, `LowTomb_TombMap`, `HighTag128_TombMap`, `HighTomb_Tomb64Map`
 
 - Tombstones for deletion, EMPTY-based probe termination (like hashbrown)
 - IPO's `RawTable<K,V,T: TombstoneTag>` in `src/in_place_overflow/raw/mod.rs`
@@ -57,7 +57,7 @@ The design space is parameterized by composable traits:
 
 | Axis | Trait | Implementations |
 | --- | --- | --- |
-| **Tag extraction** | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` (named `ByteN_VVV`: byte index + distinct-value count) |
+| **Tag extraction** | `TagStrategy` / `TombstoneTag` | `LowTag255`, `LowTag128`, `LowTomb`, `LowTag255ChSafe`, `HighTag128`, `HighTag255`, `HighTomb`, `HighTag128ChSafe`, `HighTag255ChSafe` (named `<Region><Kind><Width>[ChSafe]`: hash region + tag/tomb + value count; `ChSafe` = tag ⊥ channel ⊥ group index) |
 | **Overflow storage** | `OverflowStrategy` | ByteSeparate (8-channel), BitSeparate (1-bit), UfmEmbedded (byte 15) |
 | **Group indexing** | `GroupLayout::GROUP_INDEX_REGION` | `HashRegion::High` = shift-based (`h >> shift`, default) or `HashRegion::Low` = AND-based (`h & mask`) |
 | **Group ops** | `GroupOps` / `Group<SLOT_MASK>` | 15-slot (0x7FFF) or 16-slot (0xFFFF) |
@@ -65,7 +65,7 @@ The design space is parameterized by composable traits:
 
 New design variants are ~30 lines: a type alias composing these traits. The `matrix_types` module in `src/lib.rs` has experimental combinations.
 
-**AND-based indexing constraint**: uses low hash bits for group index, so tags must come from top bits (`Byte7_*`). `Byte0_254` is _not_ safe under AND indexing — bits 0–7 overlap with the AND mask. IPO uses `Byte7_254` (top byte) as default; IPO64 (shift-indexed) uses `Byte0_254` (bottom byte, the cheapest tombstone tag). For 8-bit overflow channels under AND indexing, use shifted channel strategies (`Byte7_128Ch`, `Byte7_255Ch`) that source channels from top bits too. Standard channel strategies (`1 << (h & 7)`) correlate with the AND group index.
+**AND-based indexing constraint**: uses low hash bits for group index, so tags must come from top bits (`HighTag*`). `LowTomb` is _not_ safe under AND indexing — bits 0–7 overlap with the AND mask. IPO uses `HighTomb` (top byte) as default; IPO64 (shift-indexed) uses `LowTomb` (bottom byte, the cheapest tombstone tag). For 8-bit overflow channels under AND indexing, use shifted channel strategies (`HighTag128ChSafe`, `HighTag255ChSafe`) that source channels from top bits too. Standard channel strategies (`1 << (h & 7)`) correlate with the AND group index.
 
 ## Project Structure
 
@@ -124,7 +124,7 @@ New design variants are ~30 lines: a type alias composing these traits. The `mat
 
 All designs have been through extensive optimization passes. See `docs/src/optimization/` (mdbook) for detailed logs and `docs/src/roadmap.md` for current open/closed work.
 
-Key results (107K entries, `Byte7_128_Tomb` (formerly `Hi128_Tomb`) vs hashbrown):
+Key results (107K entries, `HighTag128_Tomb` (formerly `Hi128_Tomb`) vs hashbrown):
 
 - Lookup hit: 4.07 vs 4.25 ns (4% faster)
 - Insert: 503 vs 603 µs (17% faster)

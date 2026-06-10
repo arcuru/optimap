@@ -1,7 +1,7 @@
 //! Tag/group-index collision regression bench.
 //!
 //! Validates the IPO/IPO64 tag/group-index collision fix from commit 8992137
-//! (and the IPO64 default flip to Byte0_254 in 7815e8e).
+//! (and the IPO64 default flip to LowTomb in 7815e8e).
 //!
 //! Two A/B comparisons are run:
 //!
@@ -12,7 +12,7 @@
 //! degrades SIMD `match_byte` discrimination (more false positives → more
 //! wasted key compares per probe).
 //!
-//! - `IPO`              — default, uses `Byte7_254` (bits 56-63). Safe at any
+//! - `IPO`              — default, uses `HighTomb` (bits 56-63). Safe at any
 //!   size: the AND mask never reaches the top byte for realistic capacities.
 //! - `IPO_Byte0_254`    — maximally collision-prone. Uses bits 0-7. Collides
 //!   at any non-trivial size (the AND mask covers byte 0 once num_groups ≥ 2^1).
@@ -22,18 +22,18 @@
 //! IPO64 uses `h >> shift` where `shift = 64 - log2(num_groups)`. The group
 //! index uses TOP bits, so any tag from the top byte correlates immediately.
 //!
-//! - `IPO64`              — default, uses `Byte0_254` (bits 0-7). Safe: the
+//! - `IPO64`              — default, uses `LowTomb` (bits 0-7). Safe: the
 //!   shift never reaches the bottom byte.
 //! - `IPO64_Byte7_254`    — uses bits 56-63 = top byte = group index bits.
 //!   Collides at any non-trivial size (shift always uses bits in byte 7).
 //!
 //! ## Sizes
 //!
-//! - `100K`  — `Byte0_254` is already fully collided (AND mask covers byte 0
+//! - `100K`  — `LowTomb` is already fully collided (AND mask covers byte 0
 //!   at any non-trivial size); IPO64 collision is also active.
-//! - `1M`    — the absolute gap between the always-collided `Byte0_254` and
-//!   the safe default `Byte7_254` widens with table size.
-//! - `4M`    — `Byte0_254` collision is severe; the default `Byte7_254`
+//! - `1M`    — the absolute gap between the always-collided `LowTomb` and
+//!   the safe default `HighTomb` widens with table size.
+//! - `4M`    — `LowTomb` collision is severe; the default `HighTomb`
 //!   should clearly win.
 
 mod bench_helpers;
@@ -41,7 +41,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::matrix_types::{Byte0_254_TombMap, Byte7_254_Tomb64Map};
+use optimap::matrix_types::{HighTomb_Tomb64Map, LowTomb_TombMap};
 use optimap::{IPO64, InPlaceOverflow};
 
 // ── Sizes ──────────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ fn ipo64_sizes() -> Vec<TestSize> {
 macro_rules! ipo_variants {
     ($helper:ident, $group:expr, $($args:expr),*) => {
         $helper::<InPlaceOverflow<u64, u64>>($group, "IPO_Byte7_254_default", $($args),*);
-        $helper::<Byte0_254_TombMap<u64, u64>>($group, "IPO_Byte0_254_always", $($args),*);
+        $helper::<LowTomb_TombMap<u64, u64>>($group, "IPO_Byte0_254_always", $($args),*);
     };
 }
 
@@ -168,7 +168,7 @@ fn bench_ipo_remove(c: &mut Criterion) {
 macro_rules! ipo64_variants {
     ($helper:ident, $group:expr, $($args:expr),*) => {
         $helper::<IPO64<u64, u64>>($group, "IPO64_Byte0_254_default", $($args),*);
-        $helper::<Byte7_254_Tomb64Map<u64, u64>>($group, "IPO64_Byte7_254_collide", $($args),*);
+        $helper::<HighTomb_Tomb64Map<u64, u64>>($group, "IPO64_Byte7_254_collide", $($args),*);
     };
 }
 

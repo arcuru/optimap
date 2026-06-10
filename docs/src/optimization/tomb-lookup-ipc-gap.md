@@ -160,7 +160,7 @@ The fix was tried, but the result didn't follow the doc's predictions exactly. T
 ### Shipped configuration
 
 - `Tomb` (IPO, 16-slot, EMPTY-terminated): K/V prefetch dropped by default. `tomb-prefetch-kv` feature flag restores legacy behavior.
-- `InPlaceOverflow`, `TombSoa`, `Byte7_254_TombMap` and the other matrix `Byte*_TombMap` variants all share `in_place_overflow::raw::RawTable`, so they all pick up the change automatically.
+- `InPlaceOverflow`, `TombSoa`, `HighTomb_TombMap` and the other matrix `*_TombMap` variants all share `in_place_overflow::raw::RawTable`, so they all pick up the change automatically.
 - UFM, Splitsies, Gaps, all `overflow_table`-backed designs: K/V prefetch dropped by default. `overflow-table-prefetch-kv` flag restores. (See methodology revision below — the initial perf_isolate measurement that suggested overflow_table regressed was contaminated by single-N noise; the proper sweep showed it's a clear win.)
 - IPO64: K/V prefetch dropped by default. `ipo64-prefetch-kv` flag restores. The sweep evidence for IPO64 specifically was inconclusive (system noise during the all-families-dropped batches dominated), but the change was applied for consistency with the rest of the family.
 - `tomb-byte-offset-probe`: available as an opt-in flag for future codegen experiments (e.g., paired with disabling K/V prefetch the saved `gi*16` materialization could compound), but not net-positive on its own.
@@ -179,8 +179,8 @@ Sentinel check (hashbrown delta between the two binaries that informed defaults)
 
 | design | mean baseline | mean new default | Δmean |
 |---|---:|---:|---:|
-| Tomb (IPO Byte7_128) | 10.41 ns | 8.99 ns | **-13.6%** ¹ |
-| TombWide (IPO Byte7_254) | 10.58 ns | 9.83 ns | **-7.1%** |
+| Tomb (IPO HighTag128) | 10.41 ns | 8.99 ns | **-13.6%** ¹ |
+| TombWide (IPO HighTomb) | 10.58 ns | 9.83 ns | **-7.1%** |
 | TombSoa | 13.52 ns | 12.09 ns | **-10.5%** |
 | OptiMap (auto policy = Tomb) | 10.89 ns | 10.23 ns | **-6.1%** |
 | Splitsies (overflow_table, separate overflow) | 12.58 ns | 10.63 ns | **-15.5%** ² |
@@ -322,7 +322,7 @@ Move Tomb to hashbrown's byte-offset representation:
     - 3-run sweep with the new flag, `scripts/cv-compare.py` — confirm CV ≤ 30% in 1M–10M band
     - `cargo bench --bench load_factor` — confirm no regression at pinned 1M-cap
 
-5. **Cluster effect:** the `in_place_overflow` engine is shared by `Tomb` (Byte7_128), `TombWide` (Byte7_254 / IPO), and `TombSoa` via the trait parameterization. All three pick up the change automatically. The `overflow_table` engine (UFM, Splitsies, Gaps and friends) is structurally similar but separate — applying the same refactor there is a follow-up if numbers are good on the tomb family.
+5. **Cluster effect:** the `in_place_overflow` engine is shared by `Tomb` (HighTag128), `TombWide` (HighTomb / IPO), and `TombSoa` via the trait parameterization. All three pick up the change automatically. The `overflow_table` engine (UFM, Splitsies, Gaps and friends) is structurally similar but separate — applying the same refactor there is a follow-up if numbers are good on the tomb family.
 
 6. **If numbers are clean, ship it** as the new default (remove the feature gate). If not, document why and fall back to one of:
     - A `Policy::auto()` rework that pins lookup-hit-heavy workloads at large N to UFM instead of Tomb.
@@ -401,7 +401,7 @@ d6e2fc6 docs(roadmap): record perf-stat IPC diagnosis of the lookup_hit resize t
 33ca426 bench(spike): I-cache warmup A/B (warmup doesn't accelerate Tomb's recovery)
 5e7ae34 bench(spike): direct N=920K post-resize warmup repro
 08ba22b perf(investigation): tomb-branch-hints flag; record UFM>hashbrown finding
-194a074 bench(load_factor): include Tomb (Byte7_128_TombMap) in 1M-capacity row
+194a074 bench(load_factor): include Tomb (HighTag128_TombMap) in 1M-capacity row
 0e7f964 perf(investigation): hasher-ahash + no-probe-prefetch flags; rule out hasher and prefetch
 9afc441 tools(bench): cv-compare.py for sweep CSV analysis
 ```

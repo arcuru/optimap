@@ -8,7 +8,7 @@ use std::ptr;
 use crate::raw::bitmask;
 use crate::raw::hash;
 use crate::raw::kv_storage::{AoS, KvStorage};
-use crate::raw::tag_strategy::{Byte7_254, TombstoneTag};
+use crate::raw::tag_strategy::{HighTomb, TombstoneTag};
 use group::{EMPTY, GROUP_SIZE, Group, META_GROUP_BYTES, TOMBSTONE};
 
 /// Static sentinel for empty tables: 16-byte-aligned zeros.
@@ -73,7 +73,7 @@ fn max_load_for_capacity(capacity: usize) -> usize {
 /// (Splitsies, UFM, matrix variants) have a third region (overflow bytes)
 /// between metadata and buckets — no single pointer can serve all three
 /// without adding offset computations for the third region.
-pub struct RawTable<K, V, T: TombstoneTag = Byte7_254, S: KvStorage<K, V> = AoS> {
+pub struct RawTable<K, V, T: TombstoneTag = HighTomb, S: KvStorage<K, V> = AoS> {
     /// num_groups - 1. Used for probe wraparound: `gi & mask`.
     pub(crate) mask: usize,
     /// Points to the boundary between buckets (backward) and metadata (forward).
@@ -943,7 +943,7 @@ impl<K: Clone, V: Clone, T: TombstoneTag, S: KvStorage<K, V>> Clone for RawTable
 }
 
 /// SIMD-accelerated iterator over occupied slot positions.
-pub struct SlotIter<'a, K, V, T: TombstoneTag = Byte7_254, S: KvStorage<K, V> = AoS> {
+pub struct SlotIter<'a, K, V, T: TombstoneTag = HighTomb, S: KvStorage<K, V> = AoS> {
     pub(crate) table: &'a RawTable<K, V, T, S>,
     group: usize,
     current_mask: bitmask::BitMask,
@@ -973,7 +973,7 @@ impl<'a, K, V, T: TombstoneTag, S: KvStorage<K, V>> Iterator for SlotIter<'a, K,
 
 // ── IntoIter ───────────────────────────────────────────────────────────────
 
-pub struct IntoIter<K, V, T: TombstoneTag = Byte7_254, S: KvStorage<K, V> = AoS> {
+pub struct IntoIter<K, V, T: TombstoneTag = HighTomb, S: KvStorage<K, V> = AoS> {
     table: RawTable<K, V, T, S>,
     group: usize,
     current_mask: bitmask::BitMask,
@@ -1285,7 +1285,7 @@ impl<K, V, T: TombstoneTag, S: KvStorage<K, V>> RawTableApi<K, V> for RawTable<K
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raw::tag_strategy::Byte7_128;
+    use crate::raw::tag_strategy::HighTag128;
     use std::hash::RandomState;
 
     // Generic test helpers — parameterized by TombstoneTag
@@ -1351,48 +1351,48 @@ mod tests {
         assert_eq!(table.iter_slots().count(), 50);
     }
 
-    // Byte7_254 (current IPO default — top-byte, decorrelated from AND group index)
+    // HighTomb (current IPO default — top-byte, decorrelated from AND group index)
     #[test]
     fn b7_254_basic() {
-        test_basic::<Byte7_254>();
+        test_basic::<HighTomb>();
     }
     #[test]
     fn b7_254_grow() {
-        test_grow::<Byte7_254>();
+        test_grow::<HighTomb>();
     }
     #[test]
     fn b7_254_clone() {
-        test_clone::<Byte7_254>();
+        test_clone::<HighTomb>();
     }
     #[test]
     fn b7_254_remove_cycle() {
-        test_remove_cycle::<Byte7_254>();
+        test_remove_cycle::<HighTomb>();
     }
     #[test]
     fn b7_254_iter() {
-        test_iter::<Byte7_254>();
+        test_iter::<HighTomb>();
     }
 
-    // Byte7_128 (consolidated alternative — TopTag128 + HighByte128 + TopByte128)
+    // HighTag128 (consolidated alternative — TopTag128 + HighByte128 + TopByte128)
     #[test]
     fn b7_128_basic() {
-        test_basic::<Byte7_128>();
+        test_basic::<HighTag128>();
     }
     #[test]
     fn b7_128_grow() {
-        test_grow::<Byte7_128>();
+        test_grow::<HighTag128>();
     }
     #[test]
     fn b7_128_clone() {
-        test_clone::<Byte7_128>();
+        test_clone::<HighTag128>();
     }
     #[test]
     fn b7_128_remove_cycle() {
-        test_remove_cycle::<Byte7_128>();
+        test_remove_cycle::<HighTag128>();
     }
     #[test]
     fn b7_128_iter() {
-        test_iter::<Byte7_128>();
+        test_iter::<HighTag128>();
     }
 
     // Extra: string keys (verifies Drop + non-Copy types)

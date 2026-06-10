@@ -1,4 +1,4 @@
-use optimap::matrix_types::{Byte0_254_TombMap, Byte7_254_Tomb64Map};
+use optimap::matrix_types::{HighTomb_Tomb64Map, LowTomb_TombMap};
 use optimap::{
     Gaps, HashedMap, IPO64, InPlaceOverflow, OccupiedError, Splitsies, UnorderedFlatMap,
 };
@@ -205,20 +205,20 @@ proptest! {
         run_differential::<Gaps<u16, u16>>(&ops);
     }
 
-    // Differential test for the alternate IPO64 tag strategy. Byte7_254 is
+    // Differential test for the alternate IPO64 tag strategy. HighTomb is
     // intentionally collision-prone on IPO64 (shift indexing puts byte 7
     // directly under the group index), but it still must be correct.
     #[test]
     fn ipo64_byte7_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
-        run_differential::<Byte7_254_Tomb64Map<u16, u16>>(&ops);
+        run_differential::<HighTomb_Tomb64Map<u16, u16>>(&ops);
     }
 
     // Differential test for the IPO collision-prone tag variant. It is
-    // intentionally unsafe on IPO (AND indexing): Byte0_254 collides at any
+    // intentionally unsafe on IPO (AND indexing): LowTomb collides at any
     // non-trivial size. Correctness must hold even when SIMD discrimination
     // is degraded.
     #[test]
     fn ipo_byte0_vs_hashmap(ops in proptest::collection::vec(op_strategy(), 0..500)) {
-        run_differential::<Byte0_254_TombMap<u16, u16>>(&ops);
+        run_differential::<LowTomb_TombMap<u16, u16>>(&ops);
     }
 }

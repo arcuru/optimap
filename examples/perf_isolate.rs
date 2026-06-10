@@ -2,7 +2,7 @@
 //! then do N lookup passes. Per-pass timings printed to stderr so perf stat
 //! captures total over all passes.
 
-use optimap::matrix_types::Byte7_128_TombMap;
+use optimap::matrix_types::HighTag128_TombMap;
 use optimap::{IPO64, InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 use std::time::Instant;
 
@@ -13,24 +13,15 @@ use bench_helpers::Sfc64;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let kind = args.get(1).map(|s| s.as_str()).unwrap_or("tomb");
-    let n: usize = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(920_000);
-    let lookups: usize = args
-        .get(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(50_000);
-    let passes: usize = args
-        .get(4)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
+    let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(920_000);
+    let lookups: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(50_000);
+    let passes: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let mut rng = Sfc64::new(42);
     let keys: Vec<u64> = (0..(n.max(lookups))).map(|_| rng.next_u64()).collect();
 
     match kind {
-        "tomb" => run::<Byte7_128_TombMap<u64, u64>>(&keys, n, lookups, passes),
+        "tomb" => run::<HighTag128_TombMap<u64, u64>>(&keys, n, lookups, passes),
         "hb" => run::<hashbrown::HashMap<u64, u64>>(&keys, n, lookups, passes),
         "ufm" => run::<UnorderedFlatMap<u64, u64>>(&keys, n, lookups, passes),
         "ipo" => run::<InPlaceOverflow<u64, u64>>(&keys, n, lookups, passes),
@@ -58,7 +49,10 @@ fn run<M: Map<u64, u64>>(keys: &[u64], n: usize, lookups: usize, passes: usize) 
     for i in 0..n {
         map.insert(keys[i], i as u64);
     }
-    eprintln!("inserted {} keys; running {} passes of {} lookups", n, passes, lookups);
+    eprintln!(
+        "inserted {} keys; running {} passes of {} lookups",
+        n, passes, lookups
+    );
     // Force do_lookups to remain a separate symbol by routing through a
     // function pointer that LLVM cannot statically resolve.
     let lookup_fn: fn(&M, &[u64], usize) -> u64 =

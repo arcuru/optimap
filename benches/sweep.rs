@@ -212,13 +212,13 @@ fn design_active(name: &str, cluster: Cluster, width: Width, config: &Config) ->
 /// names (UFM, IPO, etc. are still the brand types in `src/`).
 ///
 /// The Tomb cluster gets **two** representatives because the top two designs
-/// across the project (`Byte7_128_Tomb` and `IPO`) differ only in tag strategy
+/// across the project (`HighTag128_Tomb` and `IPO`) differ only in tag strategy
 /// — 128 vs 254 distinct tag values — and both routinely top the benchmarks
 /// at cache-resident sizes. Tomb (128) is hashbrown-tag-equivalent; TombWide
 /// (254) has one more bit of tag entropy. Other clusters use a single rep.
 const CURATED_NAMES: &[&str] = &[
     // Tomb cluster (16-slot tombstone, 4 reps)
-    "Tomb",     // was Byte7_128_Tomb — 128-value tag (hashbrown-equivalent)
+    "Tomb",     // was HighTag128_Tomb — 128-value tag (hashbrown-equivalent)
     "TombWide", // was IPO           — 254-value tag (wider, more entropy)
     "Tomb64",   // was IPO64         — 64-slot AVX-512 tomb
     "TombSoa",  // was SoaIpo        — SoA flavor of Tomb
@@ -490,90 +490,90 @@ macro_rules! for_each_design {
         for_each_design!(@run $config, $callback, FlatBTree<u64,u64>, "FlatBTree", Cluster::Sorted, Width::NA $(, $arg)*);
         for_each_design!(@run $config, $callback, std::collections::BTreeMap<u64,u64>, "std::BTreeMap", Cluster::Sorted, Width::NA $(, $arg)*);
         // ── 16-slot matrix variants (overflow-bit, separate) ────────────────
-        for_each_design!(@run $config, $callback, Byte1_8bitMap<u64,u64>, "Byte1_8bit", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_8bitMap<u64,u64>, "Byte0_128_8bit", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_1bitMap<u64,u64>, "Byte0_1bit", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_1bitMap<u64,u64>, "Byte0_128_1bit", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_8bitMap<u64,u64>, "LowTag255ChSafe_8bit", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_8bitMap<u64,u64>, "LowTag128_8bit", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255_1bitMap<u64,u64>, "LowTag255_1bit", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_1bitMap<u64,u64>, "LowTag128_1bit", Cluster::Overflow, Width::W16 $(, $arg)*);
         // ── 16-slot AND-indexed (overflow) ──────────────────────────────────
-        for_each_design!(@run $config, $callback, Byte7_128_1bitAndMap<u64,u64>, "Byte7_128_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128_8bitAndMap<u64,u64>, "Byte7_128_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_1bitAndMap<u64,u64>, "Byte7_255_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_8bitAndMap<u64,u64>, "Byte7_255_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_1bitAndMap<u64,u64>, "HighTag128_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_8bitAndMap<u64,u64>, "HighTag128_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_1bitAndMap<u64,u64>, "HighTag255_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_8bitAndMap<u64,u64>, "HighTag255_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
         // ── 16-slot Pure-Rust tag variants (overflow) ───────────────────────
-        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAndMap<u64,u64>, "Byte7_255Pure_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAndMap<u64,u64>, "Byte7_255Pure_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_255PureLayoutMap<u64,u64>, "Byte0_255Pure", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_255PureLayoutMap<u64,u64>, "Byte1_255Pure", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_1bitAndMap<u64,u64>, "HighTag255Pure_1bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_8bitAndMap<u64,u64>, "HighTag255Pure_8bitAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255PureLayoutMap<u64,u64>, "LowTag255Pure", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafePureLayoutMap<u64,u64>, "LowTag255ChSafePure", Cluster::Overflow, Width::W16 $(, $arg)*);
         // ── 16-slot embedded-overflow (overflow) ────────────────────────────
-        for_each_design!(@run $config, $callback, Byte1_EmbMap<u64,u64>, "Byte1_Emb", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_EmbP2Map<u64,u64>, "Byte1_EmbP2", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_EmbMap<u64,u64>, "Byte0_128_Emb", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_EmbP2Map<u64,u64>, "Byte0_128_EmbP2", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbAndMap<u64,u64>, "Byte7_128Ch_EmbAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbP2AndMap<u64,u64>, "Byte7_128Ch_EmbP2And", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbAndMap<u64,u64>, "Byte7_255Ch_EmbAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbP2AndMap<u64,u64>, "Byte7_255Ch_EmbP2And", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_EmbMap<u64,u64>, "LowTag255ChSafe_Emb", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_EmbP2Map<u64,u64>, "LowTag255ChSafe_EmbP2", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_EmbMap<u64,u64>, "LowTag128_Emb", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_EmbP2Map<u64,u64>, "LowTag128_EmbP2", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbAndMap<u64,u64>, "HighTag128ChSafe_EmbAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbP2AndMap<u64,u64>, "HighTag128ChSafe_EmbP2And", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbAndMap<u64,u64>, "HighTag255ChSafe_EmbAnd", Cluster::Overflow, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbP2AndMap<u64,u64>, "HighTag255ChSafe_EmbP2And", Cluster::Overflow, Width::W16 $(, $arg)*);
         // ── 32-slot separate-overflow (AVX2) ────────────────────────────────
         for_each_design!(@run $config, $callback, Splitsies32Map<u64,u64>, "Splitsies32", Cluster::Overflow, Width::W32 $(, $arg)*);
         for_each_design!(@run $config, $callback, Splitsies32_1bitMap<u64,u64>, "Splitsies32_1bit", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_8bit32Map<u64,u64>, "Byte1_8bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_1bit32Map<u64,u64>, "Byte0_128_1bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_8bit32Map<u64,u64>, "Byte0_128_8bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128_1bitAnd32Map<u64,u64>, "Byte7_128_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_1bitAnd32Map<u64,u64>, "Byte7_255_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128_8bitAnd32Map<u64,u64>, "Byte7_128_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_8bitAnd32Map<u64,u64>, "Byte7_255_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAnd32Map<u64,u64>, "Byte7_255Pure_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAnd32Map<u64,u64>, "Byte7_255Pure_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_8bit32Map<u64,u64>, "LowTag255ChSafe_8bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_1bit32Map<u64,u64>, "LowTag128_1bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_8bit32Map<u64,u64>, "LowTag128_8bit32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_1bitAnd32Map<u64,u64>, "HighTag128_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_1bitAnd32Map<u64,u64>, "HighTag255_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_8bitAnd32Map<u64,u64>, "HighTag128_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_8bitAnd32Map<u64,u64>, "HighTag255_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_1bitAnd32Map<u64,u64>, "HighTag255Pure_1bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_8bitAnd32Map<u64,u64>, "HighTag255Pure_8bitAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
         // ── 32-slot embedded-overflow ───────────────────────────────────────
         for_each_design!(@run $config, $callback, Ufm32Map<u64,u64>, "OvInline32", Cluster::Overflow, Width::W32 $(, $arg)*);
         for_each_design!(@run $config, $callback, Gaps32Map<u64,u64>, "Gaps32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_Emb32Map<u64,u64>, "Byte1_Emb32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_EmbP232Map<u64,u64>, "Byte1_EmbP232", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_Emb32Map<u64,u64>, "Byte0_128_Emb32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_EmbP232Map<u64,u64>, "Byte0_128_EmbP232", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbAnd32Map<u64,u64>, "Byte7_128Ch_EmbAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbP2And32Map<u64,u64>, "Byte7_128Ch_EmbP2And32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbAnd32Map<u64,u64>, "Byte7_255Ch_EmbAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbP2And32Map<u64,u64>, "Byte7_255Ch_EmbP2And32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_Emb32Map<u64,u64>, "LowTag255ChSafe_Emb32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_EmbP232Map<u64,u64>, "LowTag255ChSafe_EmbP232", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_Emb32Map<u64,u64>, "LowTag128_Emb32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_EmbP232Map<u64,u64>, "LowTag128_EmbP232", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbAnd32Map<u64,u64>, "HighTag128ChSafe_EmbAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbP2And32Map<u64,u64>, "HighTag128ChSafe_EmbP2And32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbAnd32Map<u64,u64>, "HighTag255ChSafe_EmbAnd32", Cluster::Overflow, Width::W32 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbP2And32Map<u64,u64>, "HighTag255ChSafe_EmbP2And32", Cluster::Overflow, Width::W32 $(, $arg)*);
         // ── 64-slot separate-overflow (AVX-512) ─────────────────────────────
         for_each_design!(@run $config, $callback, Splitsies64Map<u64,u64>, "Splitsies64", Cluster::Overflow, Width::W64 $(, $arg)*);
         for_each_design!(@run $config, $callback, Splitsies64_1bitMap<u64,u64>, "Splitsies64_1bit", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_8bit64Map<u64,u64>, "Byte1_8bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_1bit64Map<u64,u64>, "Byte0_128_1bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_8bit64Map<u64,u64>, "Byte0_128_8bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128_1bitAnd64Map<u64,u64>, "Byte7_128_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_1bitAnd64Map<u64,u64>, "Byte7_255_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128_8bitAnd64Map<u64,u64>, "Byte7_128_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255_8bitAnd64Map<u64,u64>, "Byte7_255_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Pure_1bitAnd64Map<u64,u64>, "Byte7_255Pure_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Pure_8bitAnd64Map<u64,u64>, "Byte7_255Pure_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_8bit64Map<u64,u64>, "LowTag255ChSafe_8bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_1bit64Map<u64,u64>, "LowTag128_1bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_8bit64Map<u64,u64>, "LowTag128_8bit64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_1bitAnd64Map<u64,u64>, "HighTag128_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_1bitAnd64Map<u64,u64>, "HighTag255_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_8bitAnd64Map<u64,u64>, "HighTag128_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255_8bitAnd64Map<u64,u64>, "HighTag255_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_1bitAnd64Map<u64,u64>, "HighTag255Pure_1bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255Pure_8bitAnd64Map<u64,u64>, "HighTag255Pure_8bitAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
         // ── 64-slot embedded-overflow ───────────────────────────────────────
         for_each_design!(@run $config, $callback, Ufm64Map<u64,u64>, "Ufm64", Cluster::Overflow, Width::W64 $(, $arg)*);
         for_each_design!(@run $config, $callback, Gaps64Map<u64,u64>, "Gaps64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_Emb64Map<u64,u64>, "Byte1_Emb64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte1_EmbP264Map<u64,u64>, "Byte1_EmbP264", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_Emb64Map<u64,u64>, "Byte0_128_Emb64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte0_128_EmbP264Map<u64,u64>, "Byte0_128_EmbP264", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbAnd64Map<u64,u64>, "Byte7_128Ch_EmbAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_128Ch_EmbP2And64Map<u64,u64>, "Byte7_128Ch_EmbP2And64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbAnd64Map<u64,u64>, "Byte7_255Ch_EmbAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_255Ch_EmbP2And64Map<u64,u64>, "Byte7_255Ch_EmbP2And64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_Emb64Map<u64,u64>, "LowTag255ChSafe_Emb64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag255ChSafe_EmbP264Map<u64,u64>, "LowTag255ChSafe_EmbP264", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_Emb64Map<u64,u64>, "LowTag128_Emb64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, LowTag128_EmbP264Map<u64,u64>, "LowTag128_EmbP264", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbAnd64Map<u64,u64>, "HighTag128ChSafe_EmbAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128ChSafe_EmbP2And64Map<u64,u64>, "HighTag128ChSafe_EmbP2And64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbAnd64Map<u64,u64>, "HighTag255ChSafe_EmbAnd64", Cluster::Overflow, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag255ChSafe_EmbP2And64Map<u64,u64>, "HighTag255ChSafe_EmbP2And64", Cluster::Overflow, Width::W64 $(, $arg)*);
         // ── Tombstone variants ──────────────────────────────────────────────
-        for_each_design!(@run $config, $callback, Byte7_128_TombMap<u64,u64>, "Tomb", Cluster::Tomb, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, Byte7_254_Tomb64Map<u64,u64>, "Byte7_254_Tomb64", Cluster::Tomb, Width::W64 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTag128_TombMap<u64,u64>, "Tomb", Cluster::Tomb, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, HighTomb_Tomb64Map<u64,u64>, "HighTomb_Tomb64", Cluster::Tomb, Width::W64 $(, $arg)*);
         // ── SoA variants ────────────────────────────────────────────────────
         for_each_design!(@run $config, $callback, optimap::SoaMap<u64,u64>, "SoaMap", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_128<u64,u64>, "SoaByte0_128", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte1<u64,u64>, "SoaByte1", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_1bit<u64,u64>, "SoaByte0_1bit", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte0_128_1bit<u64,u64>, "SoaByte0_128_1bit", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLowTag128<u64,u64>, "SoaLowTag128", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLowTag255ChSafe<u64,u64>, "SoaLowTag255ChSafe", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLowTag255_1bit<u64,u64>, "SoaLowTag255_1bit", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaLowTag128_1bit<u64,u64>, "SoaLowTag128_1bit", Cluster::Soa, Width::W16 $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_128And<u64,u64>, "SoaByte7_128And", Cluster::Soa, Width::W16 $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_255And<u64,u64>, "SoaByte7_255And", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_128_8bitAnd<u64,u64>, "SoaByte7_128_8bitAnd", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_255_8bitAnd<u64,u64>, "SoaByte7_255_8bitAnd", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHighTag128_8bitAnd<u64,u64>, "SoaHighTag128_8bitAnd", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHighTag255_8bitAnd<u64,u64>, "SoaHighTag255_8bitAnd", Cluster::Soa, Width::W16 $(, $arg)*);
         for_each_design!(@run $config, $callback, optimap::soa::SoaIpo<u64,u64>, "TombSoa", Cluster::Soa, Width::W16 $(, $arg)*);
-        for_each_design!(@run $config, $callback, optimap::soa::SoaByte7_128_Tomb<u64,u64>, "SoaByte7_128_Tomb", Cluster::Soa, Width::W16 $(, $arg)*);
+        for_each_design!(@run $config, $callback, optimap::soa::SoaHighTag128_Tomb<u64,u64>, "SoaHighTag128_Tomb", Cluster::Soa, Width::W16 $(, $arg)*);
     };
     (@run $config:expr, $callback:ident, $ty:ty, $name:expr, $cluster:expr, $width:expr $(, $arg:expr)*) => {
         if design_active($name, $cluster, $width, &$config) {

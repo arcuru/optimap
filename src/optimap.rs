@@ -10,24 +10,24 @@ use std::iter::FusedIterator;
 use std::mem;
 
 use crate::map::DefaultHashBuilder;
-use crate::matrix_types::Byte7_128_TombMap;
+use crate::matrix_types::HighTag128_TombMap;
 use crate::{FlatBTree, Gaps, IPO64, InPlaceOverflow, Splitsies, UnorderedFlatMap};
 
 // ── Tomb backend type aliases ─────────────────────────────────────────────
 //
 // `Tomb` is the 16-slot tombstone design with the 128-value tag strategy
-// (`Byte7_128`) — same RawTable family as `InPlaceOverflow` but a different
+// (`HighTag128`) — same RawTable family as `InPlaceOverflow` but a different
 // tag instantiation. We give it a peer variant in every enum below so users
 // can target it directly, and so the Auto policy can pick it without
 // requiring the IPO type itself to change tags.
 mod tomb_types {
     use crate::generic_map;
     use crate::in_place_overflow::raw;
-    use crate::raw::tag_strategy::Byte7_128;
-    pub type RawTable<K, V> = raw::RawTable<K, V, Byte7_128>;
+    use crate::raw::tag_strategy::HighTag128;
+    pub type RawTable<K, V> = raw::RawTable<K, V, HighTag128>;
     pub type Iter<'a, K, V> = generic_map::Iter<'a, K, V, RawTable<K, V>>;
     pub type IterMut<'a, K, V> = generic_map::IterMut<'a, K, V, RawTable<K, V>>;
-    pub type IntoIter<K, V> = raw::IntoIter<K, V, Byte7_128>;
+    pub type IntoIter<K, V> = raw::IntoIter<K, V, HighTag128>;
     pub type Entry<'a, K, V, S> = generic_map::Entry<'a, K, V, S, RawTable<K, V>>;
     pub type OccupiedEntry<'a, K, V> = generic_map::OccupiedEntry<'a, K, V>;
     pub type VacantEntry<'a, K, V, S> = generic_map::VacantEntry<'a, K, V, S, RawTable<K, V>>;
@@ -313,10 +313,10 @@ impl<'a, K: Hash + Eq + Ord + Clone, V> VacantEntry<'a, K, V> {
 pub enum MapType {
     Ufm,
     Splitsies,
-    /// 16-slot tombstone backend with 254-value tag (`Byte7_254`) —
+    /// 16-slot tombstone backend with 254-value tag (`HighTomb`) —
     /// historical `InPlaceOverflow`. Wider tag, fewer false matches on miss.
     Ipo,
-    /// 16-slot tombstone backend with 128-value tag (`Byte7_128`) —
+    /// 16-slot tombstone backend with 128-value tag (`HighTag128`) —
     /// hashbrown-equivalent tag layout. Default for `Policy::auto`; wins
     /// lookup_hit + remove at most sizes per sweep-2026-05-13 data.
     Tomb,
@@ -343,7 +343,7 @@ pub enum Hint {
     WriteHeavy,
     /// Miss-heavy: optimise for lookup miss (caches with low hit rate,
     /// hash-join probe sides). Routes to [`MapType::Ipo`] — the wider
-    /// `Byte7_254` tag cuts the false-match rate from 1/127 to 1/254, and
+    /// `HighTomb` tag cuts the false-match rate from 1/127 to 1/254, and
     /// per sweep-2026-06-02 wins lookup_miss at 500K–10M by 1.16–1.49× over
     /// Tomb.
     MissHeavy,
@@ -511,7 +511,7 @@ enum Inner<K, V, S = DefaultHashBuilder> {
     Ufm(UnorderedFlatMap<K, V, S>),
     Splitsies(Splitsies<K, V, S>),
     Ipo(InPlaceOverflow<K, V, S>),
-    Tomb(Byte7_128_TombMap<K, V, S>),
+    Tomb(HighTag128_TombMap<K, V, S>),
     Gaps(Gaps<K, V, S>),
     Ipo64(IPO64<K, V, S>),
     FlatBTree(FlatBTree<K, V, S>),
@@ -600,13 +600,13 @@ impl<K: Hash + Eq + Ord + Clone, V> OptiMap<K, V> {
     }
 
     /// Create a map pinned to the `InPlaceOverflow` backend (16-slot tomb,
-    /// `Byte7_254` tag — wider tag, lower miss false-match rate).
+    /// `HighTomb` tag — wider tag, lower miss false-match rate).
     pub fn ipo() -> Self {
         Self::pinned(MapType::Ipo, 0)
     }
 
     /// Create a map pinned to the `Tomb` backend (16-slot tomb,
-    /// `Byte7_128` tag — hashbrown-equivalent layout, the [`Policy::auto`]
+    /// `HighTag128` tag — hashbrown-equivalent layout, the [`Policy::auto`]
     /// default). Wins lookup_hit + remove at most sizes per sweep data.
     pub fn tomb() -> Self {
         Self::pinned(MapType::Tomb, 0)
@@ -780,7 +780,7 @@ fn build_inner<K: Hash + Eq + Ord + Clone, V>(map_type: MapType, capacity: usize
         MapType::Ufm => Inner::Ufm(UnorderedFlatMap::with_capacity(capacity)),
         MapType::Splitsies => Inner::Splitsies(Splitsies::with_capacity(capacity)),
         MapType::Ipo => Inner::Ipo(InPlaceOverflow::with_capacity(capacity)),
-        MapType::Tomb => Inner::Tomb(Byte7_128_TombMap::with_capacity(capacity)),
+        MapType::Tomb => Inner::Tomb(HighTag128_TombMap::with_capacity(capacity)),
         MapType::Gaps => Inner::Gaps(Gaps::with_capacity(capacity)),
         MapType::Ipo64 => Inner::Ipo64(IPO64::with_capacity(capacity)),
         MapType::FlatBTree => Inner::FlatBTree(FlatBTree::with_capacity(capacity)),
@@ -1775,7 +1775,7 @@ mod tests {
 
     #[test]
     fn miss_heavy_pins_ipo() {
-        // MissHeavy → Ipo (TombWide, Byte7_254). Per sweep-2026-06-02, wins
+        // MissHeavy → Ipo (TombWide, HighTomb). Per sweep-2026-06-02, wins
         // lookup_miss vs Tomb at 500K–10M by 1.16–1.49×.
         for cap in [0, 10_000, 5_000_000] {
             let m = OptiMap::<u64, u64>::with_capacity_and_hint(cap, Hint::MissHeavy);

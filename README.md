@@ -26,7 +26,7 @@ Ufm | Splitsies | Ipo | Tomb | Gaps | Ipo64 | FlatBTree
 
 Every operation dispatches through a `match` — this is the only overhead vs using a raw type directly. The dispatch is ~1–2 ns (a single predicted branch after the inner method inlines). The `OptiMapBench*` wrappers in the benchmark harness measure pinned backends through this dispatch so the overhead is visible in benchmarks.
 
-**Policy engine**: `OptiMap::new()` uses `Policy::auto()`, which picks `MapType::Tomb` (Byte7_128_TombMap) as a single-band default — currently the best all-rounder per sweep-2026-05-13 data. Users can configure multi-band policies that transition backends on resize:
+**Policy engine**: `OptiMap::new()` uses `Policy::auto()`, which picks `MapType::Tomb` (HighTag128_TombMap) as a single-band default — currently the best all-rounder per sweep-2026-05-13 data. Users can configure multi-band policies that transition backends on resize:
 
 ```rust
 use optimap::{OptiMap, Policy, MapType};
@@ -46,14 +46,14 @@ The `HashedMap` trait covers the full `std::HashMap` interface for all hash back
 ```rust
 use optimap::{OptiMap, HashedMap};
 
-// Let the policy choose (defaults to Byte7_128_TombMap)
+// Let the policy choose (defaults to HighTag128_TombMap)
 let mut map = OptiMap::new();
 map.insert("key", 42);
 assert_eq!(map.get(&"key"), Some(&42));
 
 // Pin a specific backend
 let mut map = OptiMap::ipo();       // InPlaceOverflow (254-value tag)
-let mut map = OptiMap::tomb();      // Byte7_128_TombMap (128-value tag)
+let mut map = OptiMap::tomb();      // HighTag128_TombMap (128-value tag)
 let mut map = OptiMap::splitsies(); // Splitsies
 let mut map = OptiMap::flat_btree();// FlatBTree (sorted)
 
@@ -73,11 +73,11 @@ These are the "brand" types exported at the crate root. They are representative 
 
 Yes the naming is a mess, I'm sorry.
 
-**Byte7_128_TombMap** tends to be the best overall performing and is used by default under the name "Tomb". It is the exact same design as hashbrown/swisstables.
+**HighTag128_TombMap** tends to be the best overall performing and is used by default under the name "Tomb". It is the exact same design as hashbrown/swisstables.
 
 | Design | Family | Groups | Deletion | Best at |
 | --- | --- | --- | --- | --- |
-| **Byte7_128_TombMap** | Tombstone | 16-slot | Tombstone (128-value tag) | Hit + remove (default) |
+| **HighTag128_TombMap** | Tombstone | 16-slot | Tombstone (128-value tag) | Hit + remove (default) |
 | **InPlaceOverflow** | Tombstone | 16-slot | Tombstone (254-value tag) | Lookup hit, insert |
 | **UnorderedFlatMap** | Overflow-bit | 15-slot | Tombstone-free (embedded) | High-load miss, churn |
 | **Splitsies** | Overflow-bit | 16-slot | Tombstone-free (separate) | Balanced miss+insert |
@@ -90,7 +90,7 @@ Yes the naming is a mess, I'm sorry.
 
 Names encode the parameterization:
 
-- **ByteN_VVV** — tag sourced from byte `N` (0 = low byte, 7 = high byte) with `VVV` distinct values. `Byte7_254` = top byte, 254 values (1/254 false-match rate). `Byte7_128` = top byte, 128 values (hashbrown-equivalent; 1/128 rate but a one-instruction tag extraction). `Byte0_254` = bottom byte, 254 values (used by IPO64 with shift indexing).
+- **`<Region><Kind><Width>`** — `Region` is `Low` (tag from the bottom of the hash) or `High` (from the top); `Kind` is `Tag` (overflow-bit family) or `Tomb` (tombstone family, implied 254 values); `Width` is the distinct-tag-value count. `HighTomb` = top byte, 254 values (1/254 false-match rate). `HighTag128` = top byte, 128 values (hashbrown-equivalent; 1/128 rate but a one-instruction tag extraction). `LowTomb` = bottom byte, 254 values (used by IPO64 with shift indexing).
 
 - **Overflow strategy** — how displaced entries are tracked:
   - `_8bit` = 8 independent overflow channels (`ByteSeparate`)
@@ -100,13 +100,13 @@ Names encode the parameterization:
 
 - **Indexing** — how the hash maps to a group:
   - _(no suffix)_ = shift-based (`h >> shift`), uses top hash bits
-  - `And` suffix = AND-based (`h & mask`), uses bottom hash bits — 1 instruction vs 2; requires tags from top bits (`Byte7_*`)
+  - `And` suffix = AND-based (`h & mask`), uses bottom hash bits — 1 instruction vs 2; requires tags from top bits (`HighTag*`)
 
 - **Width** — SIMD group slot count:
   - _(no suffix)_ = 16-slot (SSE2)
   - `32` suffix = 32-slot (AVX2), `64` suffix = 64-slot (AVX-512)
 
-- **Ch** suffix (e.g. `Byte7_128Ch`) = shifted channel strategy — overflow channels sourced from bits disjoint from the AND index bits, needed for 8-bit overflow under AND indexing.
+- **ChSafe** suffix (e.g. `HighTag128ChSafe`) = tag ⊥ channel ⊥ group index — overflow channels sourced from bits disjoint from both the tag and the AND index, needed for 8-bit overflow under AND indexing (and, on the low side, for tag↔channel decorrelation under shift indexing).
 
 - **Tomb** suffix = tombstone-family table (IPO/IPO64 family, `TombstoneTag` trait instead of the overflow-bit `TagStrategy`).
 
@@ -116,7 +116,7 @@ Designs are not hand-coded — they're composed from traits:
 
 | Axis | Trait | Implementations |
 | --- | --- | --- |
-| Tag extraction | `TagStrategy` / `TombstoneTag` | `Byte0_255`, `Byte0_128`, `Byte0_254`, `Byte1_255`, `Byte7_128`, `Byte7_255`, `Byte7_254`, `Byte7_128Ch`, `Byte7_255Ch` |
+| Tag extraction | `TagStrategy` / `TombstoneTag` | `LowTag255`, `LowTag128`, `LowTomb`, `LowTag255ChSafe`, `HighTag128`, `HighTag255`, `HighTomb`, `HighTag128ChSafe`, `HighTag255ChSafe` |
 | Overflow storage | `OverflowStrategy` | `ByteSeparate` (8-channel), `BitSeparate` (1-bit), `UfmEmbedded` (byte 15) |
 | Group indexing | `GroupLayout::GROUP_INDEX_REGION` | `HashRegion::High` = shift-based (`h >> shift`, default) or `HashRegion::Low` = AND-based (`h & mask`) |
 | Group width | `GroupOps` | 15-slot, 16-slot, 32-slot, 64-slot |

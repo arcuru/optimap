@@ -314,24 +314,26 @@ pub use generic_set::{FlatBTreeSet, GapsSet, GenericSet, Ipo64Set, IpoSet, Split
 pub mod matrix_types {
     use crate::generic_map::{DefaultHashBuilder, GenericMap};
     use crate::raw::group_layout::{
-        Byte0_1bit, Byte0_128_1bit, Byte0_128_1bit32, Byte0_128_1bit64, Byte0_128_8bit,
-        Byte0_128_8bit32, Byte0_128_8bit64, Byte0_128_Emb, Byte0_128_Emb32, Byte0_128_Emb64,
-        Byte0_128_EmbP2, Byte0_128_EmbP232, Byte0_128_EmbP264, Byte0_255PureLayout, Byte1_8bit,
-        Byte1_8bit32, Byte1_8bit64, Byte1_255PureLayout, Byte1_Emb, Byte1_Emb32, Byte1_Emb64,
-        Byte1_EmbP2, Byte1_EmbP232, Byte1_EmbP264, Byte7_128_1bitAnd, Byte7_128_1bitAnd32,
-        Byte7_128_1bitAnd64, Byte7_128_8bitAnd, Byte7_128_8bitAnd32, Byte7_128_8bitAnd64,
-        Byte7_128Ch_EmbAnd, Byte7_128Ch_EmbAnd32, Byte7_128Ch_EmbAnd64, Byte7_128Ch_EmbP2And,
-        Byte7_128Ch_EmbP2And32, Byte7_128Ch_EmbP2And64, Byte7_255_1bitAnd, Byte7_255_1bitAnd32,
-        Byte7_255_1bitAnd64, Byte7_255_8bitAnd, Byte7_255_8bitAnd32, Byte7_255_8bitAnd64,
-        Byte7_255Ch_EmbAnd, Byte7_255Ch_EmbAnd32, Byte7_255Ch_EmbAnd64, Byte7_255Ch_EmbP2And,
-        Byte7_255Ch_EmbP2And32, Byte7_255Ch_EmbP2And64, Byte7_255Pure_1bitAnd,
-        Byte7_255Pure_1bitAnd32, Byte7_255Pure_1bitAnd64, Byte7_255Pure_8bitAnd,
-        Byte7_255Pure_8bitAnd32, Byte7_255Pure_8bitAnd64, Gaps32Layout, Gaps64Layout,
-        Splitsies32_1bit, Splitsies32Layout, Splitsies64_1bit, Splitsies64Layout, Ufm32Layout,
-        Ufm64Layout,
+        Gaps32Layout, Gaps64Layout, HighTag128_1bitAnd, HighTag128_1bitAnd32, HighTag128_1bitAnd64,
+        HighTag128_8bitAnd, HighTag128_8bitAnd32, HighTag128_8bitAnd64, HighTag128ChSafe_EmbAnd,
+        HighTag128ChSafe_EmbAnd32, HighTag128ChSafe_EmbAnd64, HighTag128ChSafe_EmbP2And,
+        HighTag128ChSafe_EmbP2And32, HighTag128ChSafe_EmbP2And64, HighTag255_1bitAnd,
+        HighTag255_1bitAnd32, HighTag255_1bitAnd64, HighTag255_8bitAnd, HighTag255_8bitAnd32,
+        HighTag255_8bitAnd64, HighTag255ChSafe_EmbAnd, HighTag255ChSafe_EmbAnd32,
+        HighTag255ChSafe_EmbAnd64, HighTag255ChSafe_EmbP2And, HighTag255ChSafe_EmbP2And32,
+        HighTag255ChSafe_EmbP2And64, HighTag255Pure_1bitAnd, HighTag255Pure_1bitAnd32,
+        HighTag255Pure_1bitAnd64, HighTag255Pure_8bitAnd, HighTag255Pure_8bitAnd32,
+        HighTag255Pure_8bitAnd64, LowTag128_1bit, LowTag128_1bit32, LowTag128_1bit64,
+        LowTag128_8bit, LowTag128_8bit32, LowTag128_8bit64, LowTag128_Emb, LowTag128_Emb32,
+        LowTag128_Emb64, LowTag128_EmbP2, LowTag128_EmbP232, LowTag128_EmbP264, LowTag255_1bit,
+        LowTag255ChSafe_8bit, LowTag255ChSafe_8bit32, LowTag255ChSafe_8bit64, LowTag255ChSafe_Emb,
+        LowTag255ChSafe_Emb32, LowTag255ChSafe_Emb64, LowTag255ChSafe_EmbP2,
+        LowTag255ChSafe_EmbP232, LowTag255ChSafe_EmbP264, LowTag255ChSafePureLayout,
+        LowTag255PureLayout, Splitsies32_1bit, Splitsies32Layout, Splitsies64_1bit,
+        Splitsies64Layout, Ufm32Layout, Ufm64Layout,
     };
     use crate::raw::overflow_table::RawTable;
-    use crate::raw::tag_strategy::{Byte0_254, Byte7_128, Byte7_254};
+    use crate::raw::tag_strategy::{HighTag128, HighTomb, LowTomb};
 
     /// Define a map type alias over `overflow_table::RawTable<K, V, $layout>` and
     /// impl the `HashedMap` trait for it in one go. Keeps matrix entries to one line.
@@ -362,48 +364,48 @@ pub mod matrix_types {
     }
 
     // Separate-overflow at 16-slot (shift indexed)
-    matrix_map!(Byte1_8bitMap, Byte1_8bit);
-    matrix_map!(Byte0_128_8bitMap, Byte0_128_8bit);
-    matrix_map!(Byte0_1bitMap, Byte0_1bit);
-    matrix_map!(Byte0_128_1bitMap, Byte0_128_1bit);
+    matrix_map!(LowTag255ChSafe_8bitMap, LowTag255ChSafe_8bit);
+    matrix_map!(LowTag128_8bitMap, LowTag128_8bit);
+    matrix_map!(LowTag255_1bitMap, LowTag255_1bit);
+    matrix_map!(LowTag128_1bitMap, LowTag128_1bit);
 
     // Separate-overflow at 16-slot (AND indexed)
-    matrix_map!(Byte7_128_1bitAndMap, Byte7_128_1bitAnd);
-    matrix_map!(Byte7_255_1bitAndMap, Byte7_255_1bitAnd);
-    matrix_map!(Byte7_128_8bitAndMap, Byte7_128_8bitAnd);
-    matrix_map!(Byte7_255_8bitAndMap, Byte7_255_8bitAnd);
+    matrix_map!(HighTag128_1bitAndMap, HighTag128_1bitAnd);
+    matrix_map!(HighTag255_1bitAndMap, HighTag255_1bitAnd);
+    matrix_map!(HighTag128_8bitAndMap, HighTag128_8bitAnd);
+    matrix_map!(HighTag255_8bitAndMap, HighTag255_8bitAnd);
 
     // Separate-overflow at 32-slot (AVX2)
     matrix_map!(Splitsies32Map, Splitsies32Layout);
     matrix_map!(Splitsies32_1bitMap, Splitsies32_1bit);
-    matrix_map!(Byte1_8bit32Map, Byte1_8bit32);
-    matrix_map!(Byte0_128_8bit32Map, Byte0_128_8bit32);
-    matrix_map!(Byte0_128_1bit32Map, Byte0_128_1bit32);
-    matrix_map!(Byte7_128_1bitAnd32Map, Byte7_128_1bitAnd32);
-    matrix_map!(Byte7_255_1bitAnd32Map, Byte7_255_1bitAnd32);
-    matrix_map!(Byte7_128_8bitAnd32Map, Byte7_128_8bitAnd32);
-    matrix_map!(Byte7_255_8bitAnd32Map, Byte7_255_8bitAnd32);
+    matrix_map!(LowTag255ChSafe_8bit32Map, LowTag255ChSafe_8bit32);
+    matrix_map!(LowTag128_8bit32Map, LowTag128_8bit32);
+    matrix_map!(LowTag128_1bit32Map, LowTag128_1bit32);
+    matrix_map!(HighTag128_1bitAnd32Map, HighTag128_1bitAnd32);
+    matrix_map!(HighTag255_1bitAnd32Map, HighTag255_1bitAnd32);
+    matrix_map!(HighTag128_8bitAnd32Map, HighTag128_8bitAnd32);
+    matrix_map!(HighTag255_8bitAnd32Map, HighTag255_8bitAnd32);
 
     // Separate-overflow at 64-slot (AVX-512 / tiered fallback)
     matrix_map!(Splitsies64Map, Splitsies64Layout);
     matrix_map!(Splitsies64_1bitMap, Splitsies64_1bit);
-    matrix_map!(Byte1_8bit64Map, Byte1_8bit64);
-    matrix_map!(Byte0_128_8bit64Map, Byte0_128_8bit64);
-    matrix_map!(Byte0_128_1bit64Map, Byte0_128_1bit64);
-    matrix_map!(Byte7_128_1bitAnd64Map, Byte7_128_1bitAnd64);
-    matrix_map!(Byte7_255_1bitAnd64Map, Byte7_255_1bitAnd64);
-    matrix_map!(Byte7_128_8bitAnd64Map, Byte7_128_8bitAnd64);
-    matrix_map!(Byte7_255_8bitAnd64Map, Byte7_255_8bitAnd64);
+    matrix_map!(LowTag255ChSafe_8bit64Map, LowTag255ChSafe_8bit64);
+    matrix_map!(LowTag128_8bit64Map, LowTag128_8bit64);
+    matrix_map!(LowTag128_1bit64Map, LowTag128_1bit64);
+    matrix_map!(HighTag128_1bitAnd64Map, HighTag128_1bitAnd64);
+    matrix_map!(HighTag255_1bitAnd64Map, HighTag255_1bitAnd64);
+    matrix_map!(HighTag128_8bitAnd64Map, HighTag128_8bitAnd64);
+    matrix_map!(HighTag255_8bitAnd64Map, HighTag255_8bitAnd64);
 
     // Pure Rust tag variants (always pure, independent of cfg features)
-    matrix_map!(Byte7_255Pure_1bitAndMap, Byte7_255Pure_1bitAnd);
-    matrix_map!(Byte7_255Pure_8bitAndMap, Byte7_255Pure_8bitAnd);
-    matrix_map!(Byte7_255Pure_1bitAnd32Map, Byte7_255Pure_1bitAnd32);
-    matrix_map!(Byte7_255Pure_8bitAnd32Map, Byte7_255Pure_8bitAnd32);
-    matrix_map!(Byte7_255Pure_1bitAnd64Map, Byte7_255Pure_1bitAnd64);
-    matrix_map!(Byte7_255Pure_8bitAnd64Map, Byte7_255Pure_8bitAnd64);
-    matrix_map!(Byte0_255PureLayoutMap, Byte0_255PureLayout);
-    matrix_map!(Byte1_255PureLayoutMap, Byte1_255PureLayout);
+    matrix_map!(HighTag255Pure_1bitAndMap, HighTag255Pure_1bitAnd);
+    matrix_map!(HighTag255Pure_8bitAndMap, HighTag255Pure_8bitAnd);
+    matrix_map!(HighTag255Pure_1bitAnd32Map, HighTag255Pure_1bitAnd32);
+    matrix_map!(HighTag255Pure_8bitAnd32Map, HighTag255Pure_8bitAnd32);
+    matrix_map!(HighTag255Pure_1bitAnd64Map, HighTag255Pure_1bitAnd64);
+    matrix_map!(HighTag255Pure_8bitAnd64Map, HighTag255Pure_8bitAnd64);
+    matrix_map!(LowTag255PureLayoutMap, LowTag255PureLayout);
+    matrix_map!(LowTag255ChSafePureLayoutMap, LowTag255ChSafePureLayout);
 
     // Embedded-overflow (UFM/Gaps-style) — byte-0 tag, all three widths
     matrix_map!(Ufm32Map, Ufm32Layout);
@@ -411,53 +413,53 @@ pub mod matrix_types {
     matrix_map!(Ufm64Map, Ufm64Layout);
     matrix_map!(Gaps64Map, Gaps64Layout);
 
-    // Embedded-overflow — Byte1 (decorrelated 255 tag, shift indexing)
-    matrix_map!(Byte1_EmbMap, Byte1_Emb);
-    matrix_map!(Byte1_EmbP2Map, Byte1_EmbP2);
-    matrix_map!(Byte1_Emb32Map, Byte1_Emb32);
-    matrix_map!(Byte1_EmbP232Map, Byte1_EmbP232);
-    matrix_map!(Byte1_Emb64Map, Byte1_Emb64);
-    matrix_map!(Byte1_EmbP264Map, Byte1_EmbP264);
+    // Embedded-overflow — LowTag255ChSafe (decorrelated 255 tag, shift indexing)
+    matrix_map!(LowTag255ChSafe_EmbMap, LowTag255ChSafe_Emb);
+    matrix_map!(LowTag255ChSafe_EmbP2Map, LowTag255ChSafe_EmbP2);
+    matrix_map!(LowTag255ChSafe_Emb32Map, LowTag255ChSafe_Emb32);
+    matrix_map!(LowTag255ChSafe_EmbP232Map, LowTag255ChSafe_EmbP232);
+    matrix_map!(LowTag255ChSafe_Emb64Map, LowTag255ChSafe_Emb64);
+    matrix_map!(LowTag255ChSafe_EmbP264Map, LowTag255ChSafe_EmbP264);
 
-    // Embedded-overflow — Byte0_128 (128-value low tag, faster hash_tag, shift)
-    matrix_map!(Byte0_128_EmbMap, Byte0_128_Emb);
-    matrix_map!(Byte0_128_EmbP2Map, Byte0_128_EmbP2);
-    matrix_map!(Byte0_128_Emb32Map, Byte0_128_Emb32);
-    matrix_map!(Byte0_128_EmbP232Map, Byte0_128_EmbP232);
-    matrix_map!(Byte0_128_Emb64Map, Byte0_128_Emb64);
-    matrix_map!(Byte0_128_EmbP264Map, Byte0_128_EmbP264);
+    // Embedded-overflow — LowTag128 (128-value low tag, faster hash_tag, shift)
+    matrix_map!(LowTag128_EmbMap, LowTag128_Emb);
+    matrix_map!(LowTag128_EmbP2Map, LowTag128_EmbP2);
+    matrix_map!(LowTag128_Emb32Map, LowTag128_Emb32);
+    matrix_map!(LowTag128_EmbP232Map, LowTag128_EmbP232);
+    matrix_map!(LowTag128_Emb64Map, LowTag128_Emb64);
+    matrix_map!(LowTag128_EmbP264Map, LowTag128_EmbP264);
 
-    // Embedded-overflow — Byte7_128Ch + AND indexing (first AND-indexed embedded)
-    matrix_map!(Byte7_128Ch_EmbAndMap, Byte7_128Ch_EmbAnd);
-    matrix_map!(Byte7_128Ch_EmbP2AndMap, Byte7_128Ch_EmbP2And);
-    matrix_map!(Byte7_128Ch_EmbAnd32Map, Byte7_128Ch_EmbAnd32);
-    matrix_map!(Byte7_128Ch_EmbP2And32Map, Byte7_128Ch_EmbP2And32);
-    matrix_map!(Byte7_128Ch_EmbAnd64Map, Byte7_128Ch_EmbAnd64);
-    matrix_map!(Byte7_128Ch_EmbP2And64Map, Byte7_128Ch_EmbP2And64);
+    // Embedded-overflow — HighTag128ChSafe + AND indexing (first AND-indexed embedded)
+    matrix_map!(HighTag128ChSafe_EmbAndMap, HighTag128ChSafe_EmbAnd);
+    matrix_map!(HighTag128ChSafe_EmbP2AndMap, HighTag128ChSafe_EmbP2And);
+    matrix_map!(HighTag128ChSafe_EmbAnd32Map, HighTag128ChSafe_EmbAnd32);
+    matrix_map!(HighTag128ChSafe_EmbP2And32Map, HighTag128ChSafe_EmbP2And32);
+    matrix_map!(HighTag128ChSafe_EmbAnd64Map, HighTag128ChSafe_EmbAnd64);
+    matrix_map!(HighTag128ChSafe_EmbP2And64Map, HighTag128ChSafe_EmbP2And64);
 
-    // Embedded-overflow — Byte7_255Ch + AND indexing
-    matrix_map!(Byte7_255Ch_EmbAndMap, Byte7_255Ch_EmbAnd);
-    matrix_map!(Byte7_255Ch_EmbP2AndMap, Byte7_255Ch_EmbP2And);
-    matrix_map!(Byte7_255Ch_EmbAnd32Map, Byte7_255Ch_EmbAnd32);
-    matrix_map!(Byte7_255Ch_EmbP2And32Map, Byte7_255Ch_EmbP2And32);
-    matrix_map!(Byte7_255Ch_EmbAnd64Map, Byte7_255Ch_EmbAnd64);
-    matrix_map!(Byte7_255Ch_EmbP2And64Map, Byte7_255Ch_EmbP2And64);
+    // Embedded-overflow — HighTag255ChSafe + AND indexing
+    matrix_map!(HighTag255ChSafe_EmbAndMap, HighTag255ChSafe_EmbAnd);
+    matrix_map!(HighTag255ChSafe_EmbP2AndMap, HighTag255ChSafe_EmbP2And);
+    matrix_map!(HighTag255ChSafe_EmbAnd32Map, HighTag255ChSafe_EmbAnd32);
+    matrix_map!(HighTag255ChSafe_EmbP2And32Map, HighTag255ChSafe_EmbP2And32);
+    matrix_map!(HighTag255ChSafe_EmbAnd64Map, HighTag255ChSafe_EmbAnd64);
+    matrix_map!(HighTag255ChSafe_EmbP2And64Map, HighTag255ChSafe_EmbP2And64);
 
     // Tombstone variants — IPO/IPO64 take TombstoneTag instead of a layout.
     //
     // The IPO entries form an A/B test for the tag/group-index collision fix:
-    //   - InPlaceOverflow = current default (Byte7_254, top byte; safe with AND
+    //   - InPlaceOverflow = current default (HighTomb, top byte; safe with AND
     //     indexing at any size). Already exported above; not re-aliased here.
-    //   - Byte0_254_TombMap = bottom byte; correlates with the AND mask at
+    //   - LowTomb_TombMap = bottom byte; correlates with the AND mask at
     //     any non-trivial size → maximally collision-prone (full-byte overlap
     //     once num_groups ≥ 2^8). Used as the "always-collides" regression case.
-    //   - Byte7_128_TombMap = consolidated 128-value top-byte alternative.
+    //   - HighTag128_TombMap = consolidated 128-value top-byte alternative.
     //
-    // Byte7_254_Tomb64Map is intentionally unsafe — IPO64 uses shift indexing,
+    // HighTomb_Tomb64Map is intentionally unsafe — IPO64 uses shift indexing,
     // so byte 7 IS the group index. Used to verify the symmetric collision claim.
-    ipo_map!(Byte0_254_TombMap, Byte0_254);
-    ipo_map!(Byte7_128_TombMap, Byte7_128);
-    ipo64_map!(Byte7_254_Tomb64Map, Byte7_254);
+    ipo_map!(LowTomb_TombMap, LowTomb);
+    ipo_map!(HighTag128_TombMap, HighTag128);
+    ipo64_map!(HighTomb_Tomb64Map, HighTomb);
 }
 
 // ── Traits ──────────────────────────────────────────────────────────────────

@@ -88,15 +88,15 @@ Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose
 
 | Tag (bits) \ Overflow | 8-bit (ByteSeparate) | 1-bit (BitSeparate) | Tombstone (IPO) |
 | --- | --- | --- | --- |
-| `Byte0_255` (0-7) | Splitsies (baseline) | `Byte0_1bit` | — |
-| `Byte0_128` (0-7) | `Byte0_128_8bit` | `Byte0_128_1bit` | — |
-| `Byte1_255` (8-15) | `Byte1_8bit` | `Byte1_1bit` | — |
-| `Byte0_254` (0-7) | — | — | IPO64 (default) / `Byte0_254_TombMap` |
-| `Byte7_128` (56-63) (AND) | — | `Byte7_128_1bitAnd` | `Byte7_128_TombMap` |
-| `Byte7_255` (56-63) (AND) | — | `Byte7_255_1bitAnd` | — |
-| `Byte7_254` (56-63) (AND) | — | — | IPO (default) / `Byte7_254_Tomb64Map` (collision-prone on IPO64) |
+| `LowTag255` (0-7) | Splitsies (baseline) | `LowTag255_1bit` | — |
+| `LowTag128` (0-7) | `LowTag128_8bit` | `LowTag128_1bit` | — |
+| `LowTag255ChSafe` (8-15) | `LowTag255ChSafe_8bit` | `LowTag255ChSafe_1bit` | — |
+| `LowTomb` (0-7) | — | — | IPO64 (default) / `LowTomb_TombMap` |
+| `HighTag128` (56-63) (AND) | — | `HighTag128_1bitAnd` | `HighTag128_TombMap` |
+| `HighTag255` (56-63) (AND) | — | `HighTag255_1bitAnd` | — |
+| `HighTomb` (56-63) (AND) | — | — | IPO (default) / `HighTomb_Tomb64Map` (collision-prone on IPO64) |
 
-Strategy names follow `ByteN_VVV`: `N` is the byte index in the 64-bit hash (0=lowest, 7=highest), `VVV` is the count of distinct tag values.
+Strategy names follow `<Region><Kind><Width>[ChSafe][Pure]`: `Region` is `Low` (bottom of the hash) or `High` (top), `Kind` is `Tag` or `Tomb`, `Width` is the count of distinct tag values. The region word is the legibility cue — a safe pairing reads as opposite words (a `High` group index with a `LowTag`), a broken one as matching words.
 
 AND-indexed variants use `Layout16And` which sets `GROUP_INDEX_REGION = HashRegion::Low`. See the "Group indexing" section below.
 
@@ -104,9 +104,9 @@ AND-indexed variants use `Layout16And` which sets `GROUP_INDEX_REGION = HashRegi
 
 Hash tables map a hash value to a group index. Two strategies:
 
-**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits. Tags can safely use low or middle bits (`Byte0_*`, `Byte1_*`) since they're decorrelated. Costs 2 instructions (variable shift + AND).
+**Shift-based** (default): `gi = (h >> shift) & mask` — uses high hash bits. Tags can safely use low or middle bits (`LowTag*`) since they're decorrelated. Costs 2 instructions (variable shift + AND).
 
-**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction (just AND), but tags must come from top hash bits (`Byte7_*`) to avoid correlation. Low-byte tags (`Byte0_*`, bits 0-7) are _not_ safe under AND indexing — the mask reaches into byte 0 at any non-trivial size, correlating tag bits with the group index. IPO uses `Byte7_254` (bits 56-63) as its default to escape this; IPO64 (shift-indexed → top bits are the group index) uses `Byte0_254` (bits 0-7), where the bottom of the hash is the safe region.
+**AND-based**: `gi = h & mask` — uses low hash bits. Saves 1 instruction (just AND), but tags must come from top hash bits (`HighTag*`) to avoid correlation. Low-region tags (`LowTag*`, bits 0-7) are _not_ safe under AND indexing — the mask reaches into byte 0 at any non-trivial size, correlating tag bits with the group index. IPO uses `HighTomb` (bits 56-63) as its default to escape this; IPO64 (shift-indexed → top bits are the group index) uses `LowTomb` (bits 0-7), where the bottom of the hash is the safe region.
 
 Additionally, 8-bit overflow channels use `1 << (h & 7)` which also uses low bits — every key in the same group would get the same channel, making 8-channel overflow useless. **AND indexing is only safe with 1-bit overflow (BitSeparate) or tombstone designs (no overflow channels).**
 
@@ -167,19 +167,19 @@ The probe terminates either when a key matches, or when the group contains an EM
 The metadata byte is one of three encodings depending on which `TagStrategy` the layout uses:
 
 ```text
-128 values (hashbrown, Tomb — Byte7_128, Byte0_128):
+128 values (hashbrown, Tomb — HighTag128, LowTag128):
   FILLED:    0xxxxxxx        ← top bit = 0, low 7 bits = tag
   TOMBSTONE: 0x80            ← top bit = 1
   EMPTY:     0xFF            ← top bit = 1
   tag extraction:  shr h, 57; and reg, 0x7F            → 2 instructions
 
-254 values (TombWide IPO, IPO64 — Byte7_254, Byte0_254):
+254 values (TombWide IPO, IPO64 — HighTomb, LowTomb):
   FILLED:    0x01..0xFE      ← 254 distinct tags
   EMPTY:     0x00
   TOMBSTONE: 0xFF
   tag extraction:  shr h, N; cmp 0xFF; adc reg, 0      → 3 instructions
 
-255 values (overflow-bit family — UFM, Splitsies, Gaps — Byte0_255 etc.):
+255 values (overflow-bit family — UFM, Splitsies, Gaps — LowTag255 etc.):
   FILLED:    0x01..0xFF      ← 255 distinct tags
   EMPTY:     0x00            ← only sentinel (no tombstone needed)
   tag extraction:  inline asm: cmp 0xFF; adc reg, 0    → 2 instructions
@@ -199,7 +199,7 @@ Each probe step loads `GROUP_SIZE` metadata bytes into a SIMD register and runs 
 
 Wider groups → fewer probe steps before terminating. At 64 slots most probes resolve in step 0 even at high load factor.
 
-Hidden cost: a wider SIMD compare is also a wider net for false-positive tag matches. At 128 tag values and 64 slots, the false-match rate hits ~50% — half of all misses pay a wasted bucket dereference inside the group. This is why all wide-group designs in the matrix pair with `Byte*_254` or `Byte*_255` tags rather than `Byte*_128`. See [32/64-slot investigation](optimization/32-64-slot-investigation.md) for the measured tradeoff.
+Hidden cost: a wider SIMD compare is also a wider net for false-positive tag matches. At 128 tag values and 64 slots, the false-match rate hits ~50% — half of all misses pay a wasted bucket dereference inside the group. This is why all wide-group designs in the matrix pair with 254- or 255-value tags (`*Tomb`, `*Tag255`) rather than 128-value tags (`*Tag128`). See [32/64-slot investigation](optimization/32-64-slot-investigation.md) for the measured tradeoff.
 
 ### Overflow tracking — three layouts compared
 
@@ -276,14 +276,14 @@ Tag strategies come in two families:
 
 | Strategy        | Byte     | Values | Reduction            | Indexing |
 | --------------- | -------- | ------ | -------------------- | -------- |
-| `Byte0_255`     | 0 (low)  | 255    | crate `hash_tag()`   | Shift    |
-| `Byte0_128`     | 0 (low)  | 128    | `b \| 1` (inline)    | Shift    |
-| `Byte0_255Pure` | 0 (low)  | 255    | `b \| (b==0) as u8`  | Shift    |
-| `Byte1_255`     | 1        | 255    | crate `hash_tag()`   | Shift    |
-| `Byte7_128`     | 7 (high) | 128    | `b \| 0x80` (inline) | AND      |
-| `Byte7_255`     | 7 (high) | 255    | crate `hash_tag()`   | AND      |
-| `Byte7_255Pure` | 7 (high) | 255    | `b \| (b==0) as u8`  | AND      |
+| `LowTag255`     | 0 (low)  | 255    | crate `hash_tag()`   | Shift    |
+| `LowTag128`     | 0 (low)  | 128    | `b \| 1` (inline)    | Shift    |
+| `LowTag255Pure` | 0 (low)  | 255    | `b \| (b==0) as u8`  | Shift    |
+| `LowTag255ChSafe`     | 1        | 255    | crate `hash_tag()`   | Shift    |
+| `HighTag128`     | 7 (high) | 128    | `b \| 0x80` (inline) | AND      |
+| `HighTag255`     | 7 (high) | 255    | crate `hash_tag()`   | AND      |
+| `HighTag255Pure` | 7 (high) | 255    | `b \| (b==0) as u8`  | AND      |
 
-The `Pure` variants always use a pure-Rust hash reduction (3 instructions: `test; sete; or`), independent of the crate's `reduced-hash-asm` feature. The non-Pure variants route through `crate::hash_tag()` which selects the asm idiom (`cmp; adc`) on x86_64 or the pure-Rust fallback elsewhere. `Byte0_128` and `Byte7_128` inline their own 1-instruction reduction and never call `crate::hash_tag()`.
+The `Pure` variants always use a pure-Rust hash reduction (3 instructions: `test; sete; or`), independent of the crate's `reduced-hash-asm` feature. The non-Pure variants route through `crate::hash_tag()` which selects the asm idiom (`cmp; adc`) on x86_64 or the pure-Rust fallback elsewhere. `LowTag128` and `HighTag128` inline their own 1-instruction reduction and never call `crate::hash_tag()`.
 
 This per-strategy control lets different backends choose different hash reduction strategies, decoupling from the global feature flag.

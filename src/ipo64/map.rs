@@ -1,7 +1,7 @@
 //! IPO64 — tombstone-based Swiss-table design with 64-slot groups.
 //!
 //! This is a type alias for `GenericMap` with the IPO64 raw table.
-//! The default tag strategy is `Byte0_254` (254 distinct values from
+//! The default tag strategy is `LowTomb` (254 distinct values from
 //! bits 0-7 — safe for shift-based group indexing at any size, and the
 //! cheapest tombstone tag). Alternative strategies are available as
 //! matrix types in `matrix_types`.

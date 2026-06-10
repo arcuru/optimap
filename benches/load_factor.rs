@@ -12,7 +12,7 @@ mod bench_helpers;
 use bench_helpers::*;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use optimap::matrix_types::Byte7_128_TombMap;
+use optimap::matrix_types::HighTag128_TombMap;
 use optimap::{InPlaceOverflow, Map, Splitsies, UnorderedFlatMap};
 
 // ── Load factor helpers ─────────────────────────────────────────────────────
@@ -403,7 +403,7 @@ fn bench_load_factor_1m(c: &mut Criterion) {
             ops,
             42,
         );
-        bench_lf_hit_for::<Byte7_128_TombMap<u64, u64>>(
+        bench_lf_hit_for::<HighTag128_TombMap<u64, u64>>(
             &mut group,
             "Tomb_hit",
             &label,
