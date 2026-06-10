@@ -152,6 +152,23 @@ impl<const M: u64> GroupOps for Group64<M> {
     }
 }
 
+/// Which region of the 64-bit hash a value is read from.
+///
+/// The group index and the tag MUST read opposite regions: if they overlap,
+/// every key in a group shares the overlapping bits and SIMD tag matches lose
+/// discrimination. `High` ⟹ shift indexing (`h >> shift`, reads the top bits)
+/// ⟹ pair with a low-region tag (`LowTag*`). `Low` ⟹ AND indexing
+/// (`h & mask`, reads the bottom bits) ⟹ pair with a high-region tag
+/// (`HighTag*`). The pairing is convention, not enforced — naming makes a safe
+/// pairing read as opposite words and a broken one as matching words.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HashRegion {
+    /// Bottom of the hash (low bits).
+    Low,
+    /// Top of the hash (high bits).
+    High,
+}
+
 /// Layout configuration for overflow-bit hash table designs.
 pub trait GroupLayout: 'static + Copy {
     /// The SIMD group type for this layout.
@@ -176,13 +193,15 @@ pub trait GroupLayout: 'static + Copy {
     /// Whether overflow is in a separate array (controls extra prefetch).
     const SEPARATE_OVERFLOW: bool;
 
-    /// Use AND-based group indexing (`h & mask`) instead of shift-based (`h >> shift`).
+    /// Which region of the 64-bit hash the group index reads.
     ///
-    /// AND-based is 1 instruction faster (eliminates variable shift) but requires
-    /// tags from the top hash bits (57+) to avoid correlation with the group index.
-    /// Only safe with non-channeled overflow (BitSeparate) — 8-bit overflow channels
-    /// use low bits which would correlate with the AND group index.
-    const AND_INDEX: bool = false;
+    /// `High` = shift indexing (`h >> shift`, the default); `Low` = AND indexing
+    /// (`h & mask`). AND indexing is 1 instruction faster (eliminates the variable
+    /// shift) but requires tags from the top hash bits (`HighTag*`) to avoid
+    /// correlation with the group index, and is only safe with non-channeled
+    /// overflow (BitSeparate) or shifted-channel tags — a default `1 << (h & 7)`
+    /// channel uses low bits which would correlate with the AND group index.
+    const GROUP_INDEX_REGION: HashRegion = HashRegion::High;
 
     /// Load factor numerator. Table grows when `len >= capacity * NUM / DEN`.
     /// Default: 7/8 = 87.5%. Lower values waste memory but reduce collisions.
@@ -236,7 +255,7 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout16And<T, O> {
     const GROUP_SIZE: usize = 16;
     const BUCKET_STRIDE: usize = 16;
     const SEPARATE_OVERFLOW: bool = true;
-    const AND_INDEX: bool = true;
+    const GROUP_INDEX_REGION: HashRegion = HashRegion::Low;
 }
 
 // ── Layout32: generic 32-slot layout (AVX2) ────────────────────────────────
@@ -271,7 +290,7 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout32And<T, O> {
     const BUCKET_STRIDE: usize = 32;
     const META_STRIDE: usize = 32;
     const SEPARATE_OVERFLOW: bool = true;
-    const AND_INDEX: bool = true;
+    const GROUP_INDEX_REGION: HashRegion = HashRegion::Low;
 }
 
 // ── Layout64: generic 64-slot layout (AVX-512 / tiered fallback) ───────────
@@ -304,7 +323,7 @@ impl<T: TagStrategy, O: OverflowStrategy> GroupLayout for Layout64And<T, O> {
     const BUCKET_STRIDE: usize = 64;
     const META_STRIDE: usize = 64;
     const SEPARATE_OVERFLOW: bool = true;
-    const AND_INDEX: bool = true;
+    const GROUP_INDEX_REGION: HashRegion = HashRegion::Low;
 }
 
 // ── Named layouts for existing designs ─────────────────────────────────────
@@ -387,7 +406,7 @@ pub type GapsEmbeddedOverflow = EmbeddedOverflow;
 // whose `overflow_channel` also comes from top bits (Byte7_128Ch /
 // Byte7_255Ch) to avoid correlation with the low-bit group index.
 macro_rules! define_embedded_layout {
-    ($name:ident, $grp:ty, $gs:expr, $bs:expr, $ms:expr, $and:expr) => {
+    ($name:ident, $grp:ty, $gs:expr, $bs:expr, $ms:expr, $index_region:expr) => {
         #[derive(Clone, Copy)]
         pub struct $name<T: TagStrategy>(PhantomData<T>);
         impl<T: TagStrategy> GroupLayout for $name<T> {
@@ -398,29 +417,64 @@ macro_rules! define_embedded_layout {
             const BUCKET_STRIDE: usize = $bs;
             const META_STRIDE: usize = $ms;
             const SEPARATE_OVERFLOW: bool = false;
-            const AND_INDEX: bool = $and;
+            const GROUP_INDEX_REGION: HashRegion = $index_region;
         }
     };
 }
 
 // 16-byte metadata, 15 usable slots (byte 15 is overflow)
-define_embedded_layout!(Layout16EmbCompact, Group<0x7FFF>, 15, 15, 16, false);
-define_embedded_layout!(Layout16EmbP2, Group<0x7FFF>, 15, 16, 16, false);
-define_embedded_layout!(Layout16EmbCompactAnd, Group<0x7FFF>, 15, 15, 16, true);
-define_embedded_layout!(Layout16EmbP2And, Group<0x7FFF>, 15, 16, 16, true);
+define_embedded_layout!(
+    Layout16EmbCompact,
+    Group<0x7FFF>,
+    15,
+    15,
+    16,
+    HashRegion::High
+);
+define_embedded_layout!(Layout16EmbP2, Group<0x7FFF>, 15, 16, 16, HashRegion::High);
+define_embedded_layout!(
+    Layout16EmbCompactAnd,
+    Group<0x7FFF>,
+    15,
+    15,
+    16,
+    HashRegion::Low
+);
+define_embedded_layout!(Layout16EmbP2And, Group<0x7FFF>, 15, 16, 16, HashRegion::Low);
 
 // 32-byte metadata, 31 usable slots (byte 31 is overflow)
-define_embedded_layout!(Layout32EmbCompact, Group32<0x7FFF_FFFF>, 31, 31, 32, false);
-define_embedded_layout!(Layout32EmbP2, Group32<0x7FFF_FFFF>, 31, 32, 32, false);
+define_embedded_layout!(
+    Layout32EmbCompact,
+    Group32<0x7FFF_FFFF>,
+    31,
+    31,
+    32,
+    HashRegion::High
+);
+define_embedded_layout!(
+    Layout32EmbP2,
+    Group32<0x7FFF_FFFF>,
+    31,
+    32,
+    32,
+    HashRegion::High
+);
 define_embedded_layout!(
     Layout32EmbCompactAnd,
     Group32<0x7FFF_FFFF>,
     31,
     31,
     32,
-    true
+    HashRegion::Low
 );
-define_embedded_layout!(Layout32EmbP2And, Group32<0x7FFF_FFFF>, 31, 32, 32, true);
+define_embedded_layout!(
+    Layout32EmbP2And,
+    Group32<0x7FFF_FFFF>,
+    31,
+    32,
+    32,
+    HashRegion::Low
+);
 
 // 64-byte metadata, 63 usable slots (byte 63 is overflow)
 define_embedded_layout!(
@@ -429,7 +483,7 @@ define_embedded_layout!(
     63,
     63,
     64,
-    false
+    HashRegion::High
 );
 define_embedded_layout!(
     Layout64EmbP2,
@@ -437,7 +491,7 @@ define_embedded_layout!(
     63,
     64,
     64,
-    false
+    HashRegion::High
 );
 define_embedded_layout!(
     Layout64EmbCompactAnd,
@@ -445,7 +499,7 @@ define_embedded_layout!(
     63,
     63,
     64,
-    true
+    HashRegion::Low
 );
 define_embedded_layout!(
     Layout64EmbP2And,
@@ -453,7 +507,7 @@ define_embedded_layout!(
     63,
     64,
     64,
-    true
+    HashRegion::Low
 );
 
 // ── UFM / Gaps layouts (byte-0 tag + embedded overflow at every width) ────

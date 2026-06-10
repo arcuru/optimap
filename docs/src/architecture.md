@@ -65,7 +65,7 @@ pub trait GroupLayout: 'static + Copy {
     const GROUP_SIZE: usize;      // 15 or 16
     const BUCKET_STRIDE: usize;   // 15 or 16
     const SEPARATE_OVERFLOW: bool; // Controls extra prefetch
-    const AND_INDEX: bool;         // Group index method (see below)
+    const GROUP_INDEX_REGION: HashRegion; // High = shift, Low = AND (see below)
 }
 ```
 
@@ -98,7 +98,7 @@ Beyond the three named designs, `Layout16<T, O>` and `Layout16And<T, O>` compose
 
 Strategy names follow `ByteN_VVV`: `N` is the byte index in the 64-bit hash (0=lowest, 7=highest), `VVV` is the count of distinct tag values.
 
-AND-indexed variants use `Layout16And` which sets `AND_INDEX = true`. See the "Group indexing" section below.
+AND-indexed variants use `Layout16And` which sets `GROUP_INDEX_REGION = HashRegion::Low`. See the "Group indexing" section below.
 
 ### Group indexing: shift vs AND
 

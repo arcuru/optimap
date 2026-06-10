@@ -12,7 +12,7 @@ use std::ptr;
 
 use super::bitmask::BitMaskOps;
 use super::generic_group::EMPTY;
-use super::group_layout::{GroupLayout, GroupOps};
+use super::group_layout::{GroupLayout, GroupOps, HashRegion};
 use super::hash;
 use super::kv_storage::{AoS, KvStorage};
 use super::overflow_strategy::OverflowStrategy;
@@ -74,14 +74,14 @@ pub struct RawTable<K, V, L: GroupLayout, S: KvStorage<K, V> = AoS> {
 }
 
 impl<K, V, L: GroupLayout, S: KvStorage<K, V>> RawTable<K, V, L, S> {
-    /// Map hash to group index. Uses AND (low bits) or shift (high bits) depending
-    /// on the layout's AND_INDEX const. The branch is eliminated at compile time.
+    /// Map hash to group index. Reads the low bits (AND) or the high bits (shift)
+    /// depending on the layout's `GROUP_INDEX_REGION`. The branch is eliminated at
+    /// compile time (const, monomorphized).
     #[inline(always)]
     pub(crate) fn group_index(&self, h: u64) -> usize {
-        if L::AND_INDEX {
-            (h as usize) & self.mask
-        } else {
-            (h.wrapping_shr(self.shift) as usize) & self.mask
+        match L::GROUP_INDEX_REGION {
+            HashRegion::Low => (h as usize) & self.mask,
+            HashRegion::High => (h.wrapping_shr(self.shift) as usize) & self.mask,
         }
     }
 
