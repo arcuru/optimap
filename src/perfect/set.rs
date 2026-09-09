@@ -109,7 +109,11 @@ where
         let slot = self.phf.index(hash);
         // SAFETY: same as contains.
         let stored = unsafe { self.slots.get_unchecked(slot) };
-        if stored.borrow() == key { Some(stored) } else { None }
+        if stored.borrow() == key {
+            Some(stored)
+        } else {
+            None
+        }
     }
 
     /// Number of keys.

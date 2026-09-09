@@ -12,8 +12,8 @@ use bench_helpers::Sfc64;
 fn time_pass<M: Map<u64, u64>>(map: &M, keys: &[u64], n_lookups: usize) -> f64 {
     let start = Instant::now();
     let mut sum = 0u64;
-    for i in 0..n_lookups {
-        sum = sum.wrapping_add(*map.get(&keys[i]).unwrap_or(&0));
+    for &k in &keys[..n_lookups] {
+        sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0));
     }
     std::hint::black_box(sum);
     let elapsed = start.elapsed().as_nanos() as f64;
@@ -42,8 +42,8 @@ fn run<M: Map<u64, u64>>(label: &str, keys: &[u64], warmup: bool) {
     let mut map = M::new();
     let mut prev = 0;
     for &n in &growth_points {
-        for i in prev..n {
-            map.insert(keys[i], i as u64);
+        for (i, &k) in (prev..n).zip(&keys[prev..n]) {
+            map.insert(k, i as u64);
         }
         prev = n;
         // I-cache warmup: call time_pass itself so the warmup primes the
