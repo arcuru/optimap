@@ -99,7 +99,11 @@ where
     where
         I: IntoIterator<Item = (K, V)>,
     {
-        Self::from_entries(entries, DefaultHashBuilder::default(), &BucketedConfig::default())
+        Self::from_entries(
+            entries,
+            DefaultHashBuilder::default(),
+            &BucketedConfig::default(),
+        )
     }
 }
 
@@ -228,14 +232,19 @@ where
             .enumerate()
             .flat_map(move |(b, bucket_tags)| {
                 let base = b * SLOTS_PER_BUCKET;
-                bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
-                    if tag != 0 {
-                        let entry = unsafe { self.entries.get_unchecked(base + s).assume_init_ref() };
-                        Some((&entry.0, &entry.1))
-                    } else {
-                        None
-                    }
-                })
+                bucket_tags
+                    .0
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(s, &tag)| {
+                        if tag != 0 {
+                            let entry =
+                                unsafe { self.entries.get_unchecked(base + s).assume_init_ref() };
+                            Some((&entry.0, &entry.1))
+                        } else {
+                            None
+                        }
+                    })
             })
     }
 
@@ -324,7 +333,11 @@ where
     where
         I: IntoIterator<Item = K>,
     {
-        Self::from_keys(keys, DefaultHashBuilder::default(), &BucketedConfig::default())
+        Self::from_keys(
+            keys,
+            DefaultHashBuilder::default(),
+            &BucketedConfig::default(),
+        )
     }
 }
 
@@ -334,7 +347,11 @@ where
     S: BuildHasher,
 {
     /// Build with a custom hash builder and configuration.
-    pub fn from_keys<I>(keys: I, hash_builder: S, config: &BucketedConfig) -> Result<Self, BuildError>
+    pub fn from_keys<I>(
+        keys: I,
+        hash_builder: S,
+        config: &BucketedConfig,
+    ) -> Result<Self, BuildError>
     where
         I: IntoIterator<Item = K>,
     {
@@ -437,13 +454,17 @@ where
             .enumerate()
             .flat_map(move |(b, bucket_tags)| {
                 let base = b * SLOTS_PER_BUCKET;
-                bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
-                    if tag != 0 {
-                        Some(unsafe { self.keys.get_unchecked(base + s).assume_init_ref() })
-                    } else {
-                        None
-                    }
-                })
+                bucket_tags
+                    .0
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(s, &tag)| {
+                        if tag != 0 {
+                            Some(unsafe { self.keys.get_unchecked(base + s).assume_init_ref() })
+                        } else {
+                            None
+                        }
+                    })
             })
     }
 }
@@ -497,8 +518,7 @@ mod tests {
 
     #[test]
     fn map_single_entry_round_trip() {
-        let m =
-            PerfectMapBucketed::<u64, &str>::from_iter_perfect([(42u64, "answer")]).unwrap();
+        let m = PerfectMapBucketed::<u64, &str>::from_iter_perfect([(42u64, "answer")]).unwrap();
         assert_eq!(m.len(), 1);
         assert_eq!(m.get(&42), Some(&"answer"));
         assert_eq!(m.get(&0), None);
@@ -542,9 +562,14 @@ mod tests {
 
     #[test]
     fn map_string_keys_round_trip() {
-        let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
-        let entries: Vec<(String, usize)> =
-            words.iter().enumerate().map(|(i, w)| (w.to_string(), i)).collect();
+        let words = [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ];
+        let entries: Vec<(String, usize)> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.to_string(), i))
+            .collect();
         let m = PerfectMapBucketed::<String, usize>::from_iter_perfect(entries.clone()).unwrap();
         for (k, v) in &entries {
             assert_eq!(m.get(k.as_str()), Some(v), "key={k}");
@@ -564,7 +589,8 @@ mod tests {
         }
         DROPS.store(0, Ordering::Relaxed);
         {
-            let entries: Vec<(u64, Dropper)> = (0..100u64).map(|i| (i, Dropper(i as u32))).collect();
+            let entries: Vec<(u64, Dropper)> =
+                (0..100u64).map(|i| (i, Dropper(i as u32))).collect();
             let _m = PerfectMapBucketed::<u64, Dropper>::from_iter_perfect(entries).unwrap();
         }
         assert_eq!(DROPS.load(Ordering::Relaxed), 100);

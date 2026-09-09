@@ -148,9 +148,7 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
     /// bucketed perfect hash with SIMD tag scan. Sibling to
     /// [`Self::make_perfect`]; trades `~K/λ` slot overhead + a tag byte per
     /// slot for fast construction and SIMD miss rejection.
-    pub fn make_perfect_bucketed(
-        self,
-    ) -> Result<crate::PerfectSetBucketed<T>, crate::BuildError> {
+    pub fn make_perfect_bucketed(self) -> Result<crate::PerfectSetBucketed<T>, crate::BuildError> {
         crate::PerfectSetBucketed::from_iter_perfect(self)
     }
 
@@ -182,11 +180,7 @@ impl<T: Hash + Eq + Ord + Clone> OptiSet<T> {
         self,
         config: &crate::MultilevelBucketedConfig,
     ) -> Result<crate::PerfectSetMultilevelBucketed<T>, crate::BuildError> {
-        crate::PerfectSetMultilevelBucketed::from_keys(
-            self,
-            DefaultHashBuilder::default(),
-            config,
-        )
+        crate::PerfectSetMultilevelBucketed::from_keys(self, DefaultHashBuilder::default(), config)
     }
 
     /// Create a set pinned to a specific backend type.
