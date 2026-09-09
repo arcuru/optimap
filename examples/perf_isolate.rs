@@ -38,7 +38,7 @@ fn main() {
 #[inline(never)]
 fn do_lookups<M: Map<u64, u64>>(map: &M, keys: &[u64], lookups: usize) -> u64 {
     let mut sum = 0u64;
-    for &k in keys.iter().take(lookups) {
+    for &k in &keys[..lookups] {
         sum = sum.wrapping_add(*map.get(&k).unwrap_or(&0));
     }
     sum
@@ -46,7 +46,7 @@ fn do_lookups<M: Map<u64, u64>>(map: &M, keys: &[u64], lookups: usize) -> u64 {
 
 fn run<M: Map<u64, u64>>(keys: &[u64], n: usize, lookups: usize, passes: usize) {
     let mut map = M::new();
-    for (i, &k) in keys.iter().enumerate().take(n) {
+    for (i, &k) in keys[..n].iter().enumerate() {
         map.insert(k, i as u64);
     }
     eprintln!(
