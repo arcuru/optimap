@@ -79,9 +79,7 @@ fn main() {
     for &n in &sizes {
         let m = ((n as f64) * m_factor).ceil() as usize;
         println!();
-        println!(
-            "─── ChdPhf::build_with_profile  n = {n}  m = {m}  (m/n = {m_factor:.3}) ───"
-        );
+        println!("─── ChdPhf::build_with_profile  n = {n}  m = {m}  (m/n = {m_factor:.3}) ───");
         let hashes = unique_hashes(n, 0x9E37_79B9_7F4A_7C15);
         let (phf, p) = ChdPhf::build_with_profile(&hashes, m)
             .expect("build at the default λ=5 should succeed");
@@ -90,14 +88,14 @@ fn main() {
         // Sum of the per-retry phase Durations. `total` covers everything
         // (duplicate check + this sum + leftover scheduling), so the
         // residual exposes any work outside the instrumented phases.
-        let inner_sum = p.bucket_assign
-            + p.counting_sort
-            + p.order_sort
-            + p.displacement_search;
+        let inner_sum = p.bucket_assign + p.counting_sort + p.order_sort + p.displacement_search;
         let accounted = p.duplicate_check + inner_sum;
         let residual = p.total.saturating_sub(accounted);
 
-        println!("  total              {}             100.0%", fmt_ms(p.total));
+        println!(
+            "  total              {}             100.0%",
+            fmt_ms(p.total)
+        );
         println!(
             "    duplicate check  {}             {}",
             fmt_ms(p.duplicate_check),
@@ -130,30 +128,18 @@ fn main() {
         );
 
         println!();
-        println!(
-            "  seed_retries           {:>10}",
-            p.seed_retries
-        );
+        println!("  seed_retries           {:>10}", p.seed_retries);
         println!(
             "  bucket_count           {:>10}    (n / λ = {} / 5)",
             p.bucket_count, n
         );
-        println!(
-            "  max_bucket_size        {:>10}",
-            p.max_bucket_size
-        );
+        println!("  max_bucket_size        {:>10}", p.max_bucket_size);
         println!(
             "  displacement_attempts  {:>10}    ({:.2} avg per bucket)",
             p.displacement_attempts,
             p.displacement_attempts as f64 / p.bucket_count.max(1) as f64
         );
-        println!(
-            "  max_displacement_used  {:>10}",
-            p.max_displacement_used
-        );
-        println!(
-            "  bits_per_key (PHF)     {:>10.3}",
-            phf.bits_per_key()
-        );
+        println!("  max_displacement_used  {:>10}", p.max_displacement_used);
+        println!("  bits_per_key (PHF)     {:>10.3}", phf.bits_per_key());
     }
 }

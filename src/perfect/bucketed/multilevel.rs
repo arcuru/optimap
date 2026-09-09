@@ -408,7 +408,10 @@ where
             });
         }
 
-        let hashes: Vec<u64> = entries.iter().map(|(k, _)| hash_builder.hash_one(k)).collect();
+        let hashes: Vec<u64> = entries
+            .iter()
+            .map(|(k, _)| hash_builder.hash_one(k))
+            .collect();
         let (phf, placements) =
             MultilevelBucketedPhf::build(&hashes, config.lambda_0, config.lambda_1)?;
 
@@ -478,8 +481,7 @@ where
         // SAFETY: classify guarantees bucket < tags.len() in each level
         // (length matches num_buckets_level_{0,1}).
         let bucket_tags = unsafe { tags.get_unchecked(bucket) };
-        let mask =
-            unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
+        let mask = unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
 
         let base = bucket * SLOTS_PER_BUCKET;
         for slot in mask {
@@ -581,14 +583,18 @@ fn iter_level<'a, K, V>(
 ) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
     tags.iter().enumerate().flat_map(move |(b, bucket_tags)| {
         let base = b * SLOTS_PER_BUCKET;
-        bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
-            if tag != 0 {
-                let entry = unsafe { entries.get_unchecked(base + s).assume_init_ref() };
-                Some((&entry.0, &entry.1))
-            } else {
-                None
-            }
-        })
+        bucket_tags
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(move |(s, &tag)| {
+                if tag != 0 {
+                    let entry = unsafe { entries.get_unchecked(base + s).assume_init_ref() };
+                    Some((&entry.0, &entry.1))
+                } else {
+                    None
+                }
+            })
     })
 }
 
@@ -777,8 +783,7 @@ where
         };
 
         let bucket_tags = unsafe { tags.get_unchecked(bucket) };
-        let mask =
-            unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
+        let mask = unsafe { crate::raw::group::match_byte_full_16(bucket_tags.0.as_ptr(), tag) };
 
         let base = bucket * SLOTS_PER_BUCKET;
         for slot in mask {
@@ -816,13 +821,17 @@ fn iter_level_set<'a, K>(
 ) -> impl Iterator<Item = &'a K> + 'a {
     tags.iter().enumerate().flat_map(move |(b, bucket_tags)| {
         let base = b * SLOTS_PER_BUCKET;
-        bucket_tags.0.iter().enumerate().filter_map(move |(s, &tag)| {
-            if tag != 0 {
-                Some(unsafe { stored.get_unchecked(base + s).assume_init_ref() })
-            } else {
-                None
-            }
-        })
+        bucket_tags
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(move |(s, &tag)| {
+                if tag != 0 {
+                    Some(unsafe { stored.get_unchecked(base + s).assume_init_ref() })
+                } else {
+                    None
+                }
+            })
     })
 }
 
@@ -864,8 +873,14 @@ mod tests {
             let s = placements.slot[i] as usize;
             assert!(s < SLOTS_PER_BUCKET, "slot {s} out of range at key {i}");
             match placements.level[i] {
-                0 => assert!(seen_l0.insert((b, s)), "duplicate level-0 placement at key {i}"),
-                1 => assert!(seen_l1.insert((b, s)), "duplicate level-1 placement at key {i}"),
+                0 => assert!(
+                    seen_l0.insert((b, s)),
+                    "duplicate level-0 placement at key {i}"
+                ),
+                1 => assert!(
+                    seen_l1.insert((b, s)),
+                    "duplicate level-1 placement at key {i}"
+                ),
                 other => panic!("invalid level marker {other} at key {i}"),
             }
         }
@@ -903,7 +918,10 @@ mod tests {
             assert_placements_unique(&placements, n);
             for (i, &h) in hashes.iter().enumerate() {
                 let (level, bucket) = phf.classify(h);
-                assert_eq!(level, placements.level[i], "level mismatch at key {i} (n={n})");
+                assert_eq!(
+                    level, placements.level[i],
+                    "level mismatch at key {i} (n={n})"
+                );
                 assert_eq!(
                     bucket, placements.bucket[i] as usize,
                     "bucket mismatch at key {i} (n={n})"
@@ -934,10 +952,7 @@ mod tests {
         let n = 5_000;
         let hashes = make_hashes(n);
         let (phf, placements) = MultilevelBucketedPhf::build(&hashes, 14.0, 4.0).unwrap();
-        assert!(
-            phf.has_level_1(),
-            "λ₀=14 at n={n} should produce overflow"
-        );
+        assert!(phf.has_level_1(), "λ₀=14 at n={n} should produce overflow");
         assert!(phf.overflow_buckets() > 0);
 
         let level_1_count = placements.level.iter().filter(|&&l| l == 1).count();
@@ -951,7 +966,10 @@ mod tests {
         for (i, &h) in hashes.iter().enumerate() {
             let (level, bucket) = phf.classify(h);
             assert_eq!(level, placements.level[i], "level mismatch at key {i}");
-            assert_eq!(bucket, placements.bucket[i] as usize, "bucket mismatch at key {i}");
+            assert_eq!(
+                bucket, placements.bucket[i] as usize,
+                "bucket mismatch at key {i}"
+            );
         }
     }
 
@@ -997,8 +1015,8 @@ mod tests {
 
     #[test]
     fn map_empty_round_trip() {
-        let m =
-            PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(std::iter::empty()).unwrap();
+        let m = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(std::iter::empty())
+            .unwrap();
         assert_eq!(m.len(), 0);
         assert!(m.is_empty());
         assert!(!m.has_level_1());
@@ -1062,11 +1080,13 @@ mod tests {
     #[test]
     fn map_string_keys() {
         let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
-        let entries: Vec<(String, usize)> =
-            words.iter().enumerate().map(|(i, w)| (w.to_string(), i)).collect();
-        let m =
-            PerfectMapMultilevelBucketed::<String, usize>::from_iter_perfect(entries.clone())
-                .unwrap();
+        let entries: Vec<(String, usize)> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.to_string(), i))
+            .collect();
+        let m = PerfectMapMultilevelBucketed::<String, usize>::from_iter_perfect(entries.clone())
+            .unwrap();
         for (k, v) in &entries {
             assert_eq!(m.get(k.as_str()), Some(v));
         }
@@ -1120,8 +1140,7 @@ mod tests {
     #[test]
     fn map_duplicate_keys_rejected() {
         let entries = vec![(1u64, 1u64), (2, 2), (1, 3)];
-        let err = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(entries)
-            .unwrap_err();
+        let err = PerfectMapMultilevelBucketed::<u64, u64>::from_iter_perfect(entries).unwrap_err();
         assert_eq!(err, BuildError::DuplicateHash);
     }
 

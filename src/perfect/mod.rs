@@ -635,9 +635,14 @@ mod tests {
 
     #[test]
     fn dense_string_keys_round_trip() {
-        let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
-        let entries: Vec<(String, usize)> =
-            words.iter().enumerate().map(|(i, w)| (w.to_string(), i)).collect();
+        let words = [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ];
+        let entries: Vec<(String, usize)> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.to_string(), i))
+            .collect();
         let m = PerfectMap::<String, usize>::from_iter_perfect(entries.clone()).unwrap();
         for (k, v) in &entries {
             assert_eq!(m.get(k.as_str()), Some(v), "key={k}");
